@@ -1,16 +1,25 @@
-# FastAPI 核心
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
+# 构建工具（Python 3.13 需要）
+setuptools>=69.0.0
+wheel>=0.42.0
+
+# 数据处理（需要先安装，因为其他包依赖它们，Python 3.13 兼容版本）
+numpy>=1.26.0
+pandas>=2.1.4
+
+# FastAPI 核心（升级到支持 Python 3.13 的版本）
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
 
 # 数据库
+sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
 neo4j==5.14.1
 pymilvus==2.3.4
 
 # 语音处理
-openai-whisper==20231117
+openai-whisper>=20231117
 vosk==0.3.45
 azure-cognitiveservices-speech==1.32.1
 edge-tts==6.1.9
@@ -23,7 +32,7 @@ sentence-transformers==2.2.2
 
 # 中文 NLP（用于实体识别）
 jieba==0.42.1
-pkuseg==0.0.25
+# pkuseg==0.0.25  # 已移除：代码中未使用，且与 Python 3.13 不兼容
 
 # 工具库
 python-multipart==0.0.6
@@ -32,8 +41,4 @@ passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0
 httpx==0.25.2
 aiofiles==23.2.1
-
-# 数据处理
-numpy==1.24.3
-pandas==2.1.3
 
