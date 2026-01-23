@@ -77,13 +77,16 @@ async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db
             if not session:
                 session_id = session_service.create_session(request.character_id)
         
-        # 获取角色信息（如果有）
+        # 获取角色信息（如果有）——即使出错也不影响整体回答
         character_prompt = None
         if request.character_id:
-            prisma = await get_prisma()
-            character = await prisma.character.find_unique(where={"id": request.character_id})
-            if character and character.prompt:
-                character_prompt = character.prompt
+            try:
+                prisma = await get_prisma()
+                character = await prisma.character.find_unique(where={"id": request.character_id})
+                if character and character.prompt:
+                    character_prompt = character.prompt
+            except Exception as e:
+                logger.error(f"Failed to load character prompt: {e}")
         
         # 获取对话历史
         conversation_history = session_service.get_conversation_history(session_id)

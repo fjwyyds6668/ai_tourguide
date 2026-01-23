@@ -32,18 +32,20 @@
             </div>
           </template>
           
-          <!-- 数字人容器 -->
+          <!-- 数字人容器：本地 Live2D 模型 -->
           <div class="avatar-wrapper">
-            <DigitalAvatar
-              ref="avatarRef"
-              :access-key-id="avatarConfig.accessKeyId"
-              :access-key-secret="avatarConfig.accessKeySecret"
-              :app-id="avatarConfig.appId"
-              :avatar-id="currentAvatarId"
-              @ready="onAvatarReady"
-              @error="onAvatarError"
-              @speaking="onAvatarSpeaking"
-              @stopped="onAvatarStopped"
+            <Live2DCanvas character-name="Mao" character-group="free" />
+          </div>
+
+          <!-- 文本输入区（与录音入口放在一起） -->
+          <div class="text-input-area under-avatar">
+            <el-input
+              v-model="textInput"
+              type="textarea"
+              :rows="3"
+              placeholder="在此输入要对数字人说的话（支持中文），也可以点击右侧按钮开始录音"
+              @keyup.enter.exact.prevent="handleSendText"
+              @keyup.ctrl.enter.prevent="handleSendText"
             />
           </div>
 
@@ -52,17 +54,12 @@
             <el-button
               type="primary"
               :icon="isRecording ? 'VideoPause' : 'Microphone'"
-              size="large"
               @click="toggleRecording"
               :loading="processing"
-              :disabled="!avatarReady"
+              circle
             >
-              {{ isRecording ? '停止录音' : '开始录音' }}
             </el-button>
-            <el-button
-              v-if="isSpeaking"
-              @click="stopSpeaking"
-            >
+            <el-button v-if="isSpeaking" @click="stopSpeaking">
               停止播报
             </el-button>
           </div>
@@ -116,21 +113,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import DigitalAvatar from '../components/DigitalAvatar.vue'
+import Live2DCanvas from '../components/Live2DCanvas.vue'
 import api from '../api'
 
-// 数字人配置（从环境变量读取）
-const avatarConfig = ref({
-  accessKeyId: import.meta.env.VITE_ALIYUN_AVATAR_ACCESS_KEY_ID || '',
-  accessKeySecret: import.meta.env.VITE_ALIYUN_AVATAR_ACCESS_KEY_SECRET || '',
-  appId: import.meta.env.VITE_ALIYUN_AVATAR_APP_ID || '',
-})
-
 // 状态管理
-const avatarRef = ref(null)
-const avatarReady = ref(false)
 const isRecording = ref(false)
 const isSpeaking = ref(false)
 const processing = ref(false)
@@ -138,14 +126,12 @@ const selectedCharacterId = ref(null)
 const sessionId = ref(null)
 const characters = ref([])
 const conversationHistory = ref([])
+const textInput = ref('')
 const showHistory = ref(false)
 const historyList = ref([])
 
 let mediaRecorder = null
 let audioChunks = []
-
-// 计算当前数字人ID（根据选择的角色）
-const currentAvatarId = ref('default')
 
 // 初始化
 onMounted(async () => {
@@ -183,25 +169,6 @@ const handleCharacterChange = (characterId) => {
       })
     }
   }
-}
-
-// 数字人事件处理
-const onAvatarReady = () => {
-  avatarReady.value = true
-  ElMessage.success('数字人已就绪')
-}
-
-const onAvatarError = (error) => {
-  console.error('数字人错误:', error)
-  ElMessage.error('数字人加载失败')
-}
-
-const onAvatarSpeaking = () => {
-  isSpeaking.value = true
-}
-
-const onAvatarStopped = () => {
-  isSpeaking.value = false
 }
 
 // 录音控制
@@ -276,28 +243,83 @@ const processAudio = async (audioBlob) => {
     // 添加到对话历史
     addMessage('assistant', answer)
     
-    // 3. 数字人播报
-    if (avatarRef.value && avatarReady.value) {
-      await avatarRef.value.speak(answer)
-    } else {
-      // 备用方案：使用TTS音频播放
-      const synthesizeRes = await api.post('/voice/synthesize', null, {
-        params: {
-          text: answer,
-          method: 'edge'
-        },
-        responseType: 'blob'
-      })
-      const audioUrl = URL.createObjectURL(synthesizeRes.data)
-      const audio = new Audio(audioUrl)
-      audio.play()
+    // 3. 语音播报（使用 Edge TTS）
+    const synthesizeRes = await api.post('/voice/synthesize', null, {
+      params: {
+        text: answer,
+        method: 'edge'
+      },
+      responseType: 'blob'
+    })
+    const audioUrl = URL.createObjectURL(synthesizeRes.data)
+    const audio = new Audio(audioUrl)
+    isSpeaking.value = true
+    audio.onended = () => {
+      isSpeaking.value = false
     }
+    audio.play()
     
     // 滚动到底部
     scrollToBottom()
   } catch (error) {
-    ElMessage.error('处理失败：' + error.message)
-    console.error(error)
+    const msg = error?.response?.data?.detail || error?.message || '未知错误'
+    ElMessage.error('处理失败：' + msg)
+    console.error('processAudio error:', error)
+  } finally {
+    processing.value = false
+  }
+}
+
+// 处理纯文本输入
+const handleSendText = async () => {
+  const queryText = textInput.value.trim()
+  if (!queryText) {
+    ElMessage.warning('请输入要对数字人说的话')
+    return
+  }
+
+  processing.value = true
+  textInput.value = ''
+  try {
+    // 添加到对话历史
+    addMessage('user', queryText)
+
+    // 调用同一套 RAG + 硅基模型
+    const generateRes = await api.post('/rag/generate', {
+      query: queryText,
+      session_id: sessionId.value,
+      character_id: selectedCharacterId.value,
+      use_rag: true
+    })
+
+    const answer = generateRes.data.answer
+    sessionId.value = generateRes.data.session_id
+
+    // 添加到对话历史
+    addMessage('assistant', answer)
+
+    // 语音播报（Edge TTS）
+    const synthesizeRes = await api.post('/voice/synthesize', null, {
+      params: {
+        text: answer,
+        method: 'edge'
+      },
+      responseType: 'blob'
+    })
+    const audioUrl = URL.createObjectURL(synthesizeRes.data)
+    const audio = new Audio(audioUrl)
+    isSpeaking.value = true
+    audio.onended = () => {
+      isSpeaking.value = false
+    }
+    audio.play()
+
+    // 滚动到底部
+    scrollToBottom()
+  } catch (error) {
+    const msg = error?.response?.data?.detail || error?.message || '未知错误'
+    ElMessage.error('处理失败：' + msg)
+    console.error('handleSendText error:', error)
   } finally {
     processing.value = false
   }
@@ -305,9 +327,8 @@ const processAudio = async (audioBlob) => {
 
 // 停止播报
 const stopSpeaking = () => {
-  if (avatarRef.value) {
-    avatarRef.value.stop()
-  }
+  // 当前实现使用浏览器 Audio 实例播放，简单地将状态重置即可
+  isSpeaking.value = false
 }
 
 // 添加消息到对话历史
@@ -384,8 +405,17 @@ const scrollToBottom = () => {
 
 .control-buttons {
   display: flex;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 10px;
+}
+
+.text-input-area {
+  margin: 10px 0 0;
+}
+
+.text-input-area.under-avatar {
+  margin-top: 0;
+  margin-bottom: 10px;
 }
 
 .conversation-list {

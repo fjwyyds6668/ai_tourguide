@@ -6,6 +6,7 @@ import {
   DatabaseOutlined,
   BarChartOutlined,
   EnvironmentOutlined,
+  TeamOutlined,
   UserOutlined,
   UploadOutlined,
   LogoutOutlined
@@ -113,6 +114,11 @@ const Sidebar = ({ collapsed, onCollapse }) => {
       key: '/',
       icon: <DashboardOutlined />,
       label: '仪表盘',
+    },
+    {
+      key: '/characters',
+      icon: <TeamOutlined />,
+      label: '角色管理',
     },
     {
       key: '/knowledge',

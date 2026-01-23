@@ -34,7 +34,7 @@
 </template>
 
 <script setup>
-import { Microphone, Location, Document } from '@element-plus/icons-vue'
+import { Microphone, Location, Document, Monitor } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>

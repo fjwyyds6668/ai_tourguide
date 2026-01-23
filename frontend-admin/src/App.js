@@ -6,6 +6,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
+import CharactersManagement from './pages/CharactersManagement';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Analytics from './pages/Analytics';
 import AttractionsManagement from './pages/AttractionsManagement';
@@ -37,6 +38,7 @@ function App() {
                   <Content style={{ margin: '24px 16px', padding: 24, background: '#fff', overflow: 'auto' }}>
                     <Routes>
                       <Route path="/" element={<Dashboard />} />
+                      <Route path="/characters" element={<CharactersManagement />} />
                       <Route path="/knowledge" element={<KnowledgeBase />} />
                       <Route path="/analytics" element={<Analytics />} />
                       <Route path="/attractions" element={<AttractionsManagement />} />
