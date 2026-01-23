@@ -1,17 +1,26 @@
 """
 管理员 API
 """
+import os
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
 from app.core.database import get_db
 from app.models.interaction import Interaction
+from app.models.user import User
+from app.api.auth import get_current_user
 from app.services.rag_service import rag_service
 from app.services.graph_builder import graph_builder
 from app.core.milvus_client import milvus_client
 from pydantic import BaseModel
 
 router = APIRouter()
+
+class DashboardStatsResponse(BaseModel):
+    total_users: int
+    attractions_count: int
+    interactions_count: int
 
 class KnowledgeBaseItem(BaseModel):
     text: str
@@ -113,4 +122,84 @@ async def get_popular_attractions(db: Session = Depends(get_db)):
     ).limit(10).all()
     
     return {"popular_attractions": popular}
+
+@router.get("/stats", response_model=DashboardStatsResponse)
+async def get_dashboard_stats(db: Session = Depends(get_db)):
+    """仪表盘统计（来自真实数据库）"""
+    try:
+        from app.models.attraction import Attraction
+
+        total_users = db.query(User).count()
+        attractions_count = db.query(Attraction).count()
+        interactions_count = db.query(Interaction).count()
+
+        return DashboardStatsResponse(
+            total_users=total_users,
+            attractions_count=attractions_count,
+            interactions_count=interactions_count,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/profile/avatar")
+async def upload_admin_avatar(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """管理员上传头像（保存到本地并写入 users.avatar_url）"""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可上传头像")
+
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="仅支持上传图片文件")
+
+    # 限制文件大小（5MB）
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="图片大小不能超过 5MB")
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in [".png", ".jpg", ".jpeg", ".webp", ".gif"]:
+        # 兜底：根据 content_type 猜扩展名
+        if file.content_type == "image/png":
+            ext = ".png"
+        elif file.content_type in ("image/jpg", "image/jpeg"):
+            ext = ".jpg"
+        elif file.content_type == "image/webp":
+            ext = ".webp"
+        elif file.content_type == "image/gif":
+            ext = ".gif"
+        else:
+            raise HTTPException(status_code=400, detail="不支持的图片格式")
+
+    # 保存路径：backend/uploads/avatars
+    uploads_root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
+    avatars_dir = os.path.join(uploads_root, "avatars")
+    os.makedirs(avatars_dir, exist_ok=True)
+
+    filename = f"{current_user.id}_{uuid.uuid4().hex}{ext}"
+    abs_path = os.path.join(avatars_dir, filename)
+    with open(abs_path, "wb") as f:
+        f.write(content)
+
+    # 可访问 URL：/uploads/avatars/xxx
+    avatar_url = f"/uploads/avatars/{filename}"
+    current_user.avatar_url = avatar_url
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+
+    return {
+        "message": "头像上传成功",
+        "avatar_url": avatar_url,
+        "user": {
+            "id": current_user.id,
+            "username": current_user.username,
+            "email": current_user.email,
+            "is_admin": current_user.is_admin,
+            "avatar_url": current_user.avatar_url,
+        },
+    }
 

@@ -4,6 +4,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
+from typing import Optional
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from app.core.database import get_db
@@ -34,6 +35,7 @@ class UserResponse(BaseModel):
     username: str
     email: str
     is_admin: bool
+    avatar_url: Optional[str] = None
 
 # 依赖项：获取当前用户
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -133,7 +135,8 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
             "id": user.id,
             "username": user.username,
             "email": user.email,
-            "is_admin": user.is_admin
+            "is_admin": user.is_admin,
+            "avatar_url": user.avatar_url,
         }
     )
 
@@ -144,6 +147,7 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
         id=current_user.id,
         username=current_user.username,
         email=current_user.email,
-        is_admin=current_user.is_admin
+        is_admin=current_user.is_admin,
+        avatar_url=current_user.avatar_url,
     )
 

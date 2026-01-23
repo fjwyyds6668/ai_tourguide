@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from 'antd';
 import Sidebar from './components/Sidebar';
@@ -14,6 +14,10 @@ import './App.css';
 const { Content } = Layout;
 
 function App() {
+  const [collapsed, setCollapsed] = useState(false);
+
+  const siderWidth = useMemo(() => (collapsed ? 80 : 200), [collapsed]);
+
   return (
     <Router>
       <Routes>
@@ -27,9 +31,10 @@ function App() {
           element={
             <ProtectedRoute>
               <Layout style={{ minHeight: '100vh' }}>
-                <Sidebar />
-                <Layout>
-                  <Content style={{ margin: '24px 16px', padding: 24, background: '#fff' }}>
+                <Sidebar collapsed={collapsed} onCollapse={setCollapsed} />
+                {/* 右侧内容区：给固定侧边栏预留空间，并让内容区独立滚动 */}
+                <Layout style={{ marginLeft: siderWidth, minHeight: '100vh' }}>
+                  <Content style={{ margin: '24px 16px', padding: 24, background: '#fff', overflow: 'auto' }}>
                     <Routes>
                       <Route path="/" element={<Dashboard />} />
                       <Route path="/knowledge" element={<KnowledgeBase />} />
