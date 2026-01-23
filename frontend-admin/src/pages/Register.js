@@ -11,7 +11,7 @@ const Register = () => {
   const onFinish = async (values) => {
     try {
       setLoading(true);
-      const response = await api.post('/auth/register', {
+      await api.post('/auth/register', {
         username: values.username,
         email: values.email,
         password: values.password,

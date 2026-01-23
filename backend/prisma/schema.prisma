@@ -1,0 +1,63 @@
+// Prisma Schema
+generator client {
+  provider = "prisma-client-py"
+  interface = "asyncio"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             Int       @id @default(autoincrement())
+  username       String    @unique @db.VarChar(100)
+  email          String    @unique @db.VarChar(200)
+  hashedPassword String    @map("hashed_password") @db.VarChar(255)
+  isAdmin        Boolean   @default(false) @map("is_admin")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastLogin      DateTime? @map("last_login") @db.Timestamptz(6)
+  
+  interactions   Interaction[]
+
+  @@map("users")
+  @@index([username])
+}
+
+model Attraction {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  description String?   @db.Text
+  location    String?   @db.VarChar(200)
+  latitude    Float?
+  longitude   Float?
+  category    String?   @db.VarChar(100)
+  imageUrl    String?   @map("image_url") @db.VarChar(500)
+  audioUrl    String?   @map("audio_url") @db.VarChar(500)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+  
+  interactions Interaction[]
+
+  @@map("attractions")
+  @@index([name])
+}
+
+model Interaction {
+  id             Int       @id @default(autoincrement())
+  userId         Int?      @map("user_id")
+  sessionId      String?   @map("session_id") @db.VarChar(100)
+  queryText      String?   @map("query_text") @db.Text
+  responseText   String?   @map("response_text") @db.Text
+  attractionId   Int?      @map("attraction_id")
+  interactionType String?  @map("interaction_type") @db.VarChar(50)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  attraction Attraction? @relation(fields: [attractionId], references: [id], onDelete: SetNull)
+
+  @@map("interactions")
+  @@index([sessionId])
+  @@index([userId])
+}
+
