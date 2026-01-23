@@ -16,7 +16,7 @@ pydantic-settings>=2.6.0
 sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
 neo4j==5.14.1
-pymilvus==2.3.4
+pymilvus>=2.6.0
 
 # 语音处理
 openai-whisper>=20231117
@@ -28,7 +28,9 @@ edge-tts==6.1.9
 openai==1.3.7
 langchain==0.0.350
 langchain-community==0.0.10
-sentence-transformers==2.2.2
+sentence-transformers>=2.3.0
+transformers>=4.30.0
+huggingface-hub>=0.16.0,<0.20.0
 
 # 中文 NLP（用于实体识别）
 jieba==0.42.1
@@ -38,7 +40,7 @@ jieba==0.42.1
 python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-python-dotenv==1.0.0
+python-dotenv>=1.0.1
 httpx==0.25.2
 aiofiles==23.2.1
 

@@ -25,8 +25,10 @@ class Settings(BaseSettings):
     AZURE_SPEECH_KEY: str = ""
     AZURE_SPEECH_REGION: str = ""
     
-    # OpenAI API
+    # OpenAI API（兼容硅基流动）
     OPENAI_API_KEY: str = ""
+    OPENAI_API_BASE: str = ""  # 硅基流动API地址，例如: https://api.siliconflow.cn/v1
+    OPENAI_MODEL: str = "deepseek-chat"  # 默认模型，可配置为硅基流动支持的模型
     
     # JWT 配置
     SECRET_KEY: str = "your-secret-key-change-in-production"

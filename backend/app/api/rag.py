@@ -17,6 +17,15 @@ class QueryResponse(BaseModel):
     graph_results: List[Dict[str, Any]]
     query: str
 
+class GenerateRequest(BaseModel):
+    query: str
+    use_rag: bool = True  # 是否使用RAG检索增强
+
+class GenerateResponse(BaseModel):
+    answer: str
+    query: str
+    context: str = ""
+
 @router.post("/search", response_model=QueryResponse)
 async def hybrid_search(request: QueryRequest):
     """混合检索"""
@@ -41,6 +50,31 @@ async def graph_search(entity_name: str, relation_type: str = None, limit: int =
     try:
         results = await rag_service.graph_search(entity_name, relation_type, limit)
         return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/generate", response_model=GenerateResponse)
+async def generate_answer(request: GenerateRequest):
+    """使用硅基流动生成回答（支持RAG增强）"""
+    try:
+        # 如果使用RAG，先获取上下文
+        context = ""
+        if request.use_rag:
+            rag_results = await rag_service.hybrid_search(request.query, top_k=5)
+            context = rag_results.get("enhanced_context", "")
+        
+        # 生成回答
+        answer = await rag_service.generate_answer(
+            query=request.query,
+            context=context,
+            use_rag=request.use_rag
+        )
+        
+        return GenerateResponse(
+            answer=answer,
+            query=request.query,
+            context=context
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

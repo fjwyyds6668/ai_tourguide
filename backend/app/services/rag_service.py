@@ -4,10 +4,11 @@ GraphRAG: 结合图数据库和向量检索的增强生成技术
 """
 import logging
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
 from app.core.milvus_client import milvus_client
 from app.core.neo4j_client import neo4j_client
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,10 @@ class RAGService:
     
     def __init__(self):
         self.embedding_model = None
+        self.llm_client = None
         self._init_embedding_model()
         self._init_ner()
+        self._init_llm_client()
     
     def _init_embedding_model(self):
         """初始化嵌入模型"""
@@ -55,6 +58,27 @@ class RAGService:
                 logger.info("NER model (jieba) initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize jieba: {e}")
+    
+    def _init_llm_client(self):
+        """初始化LLM客户端（硅基流动/OpenAI）"""
+        try:
+            if settings.OPENAI_API_KEY:
+                import openai
+                # 配置OpenAI客户端
+                client_kwargs = {
+                    "api_key": settings.OPENAI_API_KEY
+                }
+                # 如果配置了硅基流动的API地址，使用它
+                if settings.OPENAI_API_BASE:
+                    client_kwargs["base_url"] = settings.OPENAI_API_BASE
+                
+                self.llm_client = openai.OpenAI(**client_kwargs)
+                logger.info(f"LLM client initialized (base_url: {settings.OPENAI_API_BASE or 'default'})")
+            else:
+                logger.warning("OpenAI API key not configured, LLM generation disabled")
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM client: {e}")
+            self.llm_client = None
     
     def extract_entities(self, text: str) -> List[Dict[str, Any]]:
         """
@@ -327,6 +351,60 @@ class RAGService:
             context_parts.append(f"\n识别到的实体：{', '.join(entities[:5])}")
         
         return "\n".join(context_parts)
+    
+    async def generate_answer(self, query: str, context: Optional[str] = None, use_rag: bool = True) -> str:
+        """
+        使用LLM生成回答（支持硅基流动）
+        
+        Args:
+            query: 用户查询
+            context: 可选的上下文信息
+            use_rag: 是否使用RAG检索增强
+        
+        Returns:
+            生成的回答
+        """
+        if not self.llm_client:
+            return "抱歉，AI服务未配置，无法生成回答。"
+        
+        # 如果使用RAG，先进行检索
+        if use_rag:
+            rag_results = await self.hybrid_search(query, top_k=5)
+            context = rag_results.get("enhanced_context", "")
+        
+        # 构建提示词
+        system_prompt = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
+回答要求：
+1. 基于提供的上下文信息回答
+2. 语言简洁明了，适合口语化表达
+3. 如果信息不足，诚实说明
+4. 可以适当添加一些有趣的细节，但不要编造信息"""
+        
+        user_prompt = f"""用户问题：{query}
+
+上下文信息：
+{context if context else "无额外上下文信息"}
+
+请基于以上信息回答用户的问题。"""
+        
+        try:
+            response = self.llm_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            answer = response.choices[0].message.content
+            logger.info(f"Generated answer for query: {query[:50]}...")
+            return answer
+            
+        except Exception as e:
+            logger.error(f"Failed to generate answer: {e}")
+            return f"抱歉，生成回答时出现错误：{str(e)}"
 
 # 全局 RAG 服务实例
 rag_service = RAGService()
