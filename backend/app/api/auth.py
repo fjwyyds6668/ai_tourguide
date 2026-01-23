@@ -14,12 +14,11 @@ from app.core.config import settings
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
-# 请求模型
+# 请求模型（注册只用于创建管理员账号）
 class UserRegister(BaseModel):
     username: str
     email: EmailStr
     password: str
-    is_admin: bool = False
 
 class UserLogin(BaseModel):
     username: str
@@ -84,11 +83,12 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+    # 这里注册入口只面向“管理员端”，统一创建管理员账号
     new_user = User(
         username=user_data.username,
         email=user_data.email,
         hashed_password=hashed_password,
-        is_admin=user_data.is_admin
+        is_admin=True
     )
     
     db.add(new_user)

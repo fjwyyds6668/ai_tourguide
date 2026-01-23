@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Form, Input, Button, Card, message, Checkbox } from 'antd';
+import { Form, Input, Button, Card, message } from 'antd';
 import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
@@ -15,7 +15,7 @@ const Register = () => {
         username: values.username,
         email: values.email,
         password: values.password,
-        is_admin: values.is_admin || false,
+        // 后端会统一将通过此入口注册的用户标记为管理员
       });
 
       message.success('注册成功，请登录');
@@ -107,13 +107,6 @@ const Register = () => {
               prefix={<LockOutlined />}
               placeholder="确认密码"
             />
-          </Form.Item>
-
-          <Form.Item
-            name="is_admin"
-            valuePropName="checked"
-          >
-            <Checkbox>注册为管理员</Checkbox>
           </Form.Item>
 
           <Form.Item>
