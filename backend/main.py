@@ -9,7 +9,7 @@ from app.api import router
 app = FastAPI(
     title="AI 数字人导游系统 API",
     description="景区智能导览系统后端 API",
-    version="1.0.0"
+    version="1.0"
 )
 
 # CORS 配置
@@ -26,7 +26,7 @@ app.include_router(router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
-    return {"message": "AI 数字人导游系统 API", "version": "1.0.0"}
+    return {"message": "AI 数字人导游系统 API", "version": "1.0"}
 
 @app.get("/health")
 async def health_check():

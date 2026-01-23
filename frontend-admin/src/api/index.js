@@ -11,7 +11,11 @@ const api = axios.create({
 // 请求拦截器
 api.interceptors.request.use(
   (config) => {
-    // 可以在这里添加 token 等
+    // 添加 token
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
   },
   (error) => {
@@ -26,6 +30,12 @@ api.interceptors.response.use(
   },
   (error) => {
     console.error('API Error:', error);
+    // 如果 token 过期或无效，清除本地存储并跳转到登录页
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
+    }
     return Promise.reject(error);
   }
 );

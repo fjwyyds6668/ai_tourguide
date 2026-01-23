@@ -1,7 +1,10 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from 'antd';
 import Sidebar from './components/Sidebar';
+import ProtectedRoute from './components/ProtectedRoute';
+import Login from './pages/Login';
+import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Analytics from './pages/Analytics';
@@ -13,19 +16,34 @@ const { Content } = Layout;
 function App() {
   return (
     <Router>
-      <Layout style={{ minHeight: '100vh' }}>
-        <Sidebar />
-        <Layout>
-          <Content style={{ margin: '24px 16px', padding: 24, background: '#fff' }}>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/knowledge" element={<KnowledgeBase />} />
-              <Route path="/analytics" element={<Analytics />} />
-              <Route path="/attractions" element={<AttractionsManagement />} />
-            </Routes>
-          </Content>
-        </Layout>
-      </Layout>
+      <Routes>
+        {/* 公开路由 */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        
+        {/* 受保护的路由 */}
+        <Route
+          path="/*"
+          element={
+            <ProtectedRoute>
+              <Layout style={{ minHeight: '100vh' }}>
+                <Sidebar />
+                <Layout>
+                  <Content style={{ margin: '24px 16px', padding: 24, background: '#fff' }}>
+                    <Routes>
+                      <Route path="/" element={<Dashboard />} />
+                      <Route path="/knowledge" element={<KnowledgeBase />} />
+                      <Route path="/analytics" element={<Analytics />} />
+                      <Route path="/attractions" element={<AttractionsManagement />} />
+                      <Route path="*" element={<Navigate to="/" replace />} />
+                    </Routes>
+                  </Content>
+                </Layout>
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
     </Router>
   );
 }

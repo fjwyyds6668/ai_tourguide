@@ -2,10 +2,11 @@
 API 路由
 """
 from fastapi import APIRouter
-from app.api import voice, rag, attractions, admin, graph
+from app.api import voice, rag, attractions, admin, graph, auth
 
 router = APIRouter()
 
+router.include_router(auth.router, prefix="/auth", tags=["认证"])
 router.include_router(voice.router, prefix="/voice", tags=["语音"])
 router.include_router(rag.router, prefix="/rag", tags=["检索"])
 router.include_router(attractions.router, prefix="/attractions", tags=["景点"])
