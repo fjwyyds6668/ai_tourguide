@@ -261,3 +261,6 @@ models/
 # 备份文件
 *.bak
 *.backup
+
+# Docker 数据卷（不应提交到 Git）
+volumes/
