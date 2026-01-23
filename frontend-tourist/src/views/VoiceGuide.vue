@@ -1,52 +1,210 @@
 <template>
   <div class="voice-guide">
-    <el-card>
+    <!-- 角色选择 -->
+    <el-card style="margin-bottom: 20px">
       <template #header>
-        <h2>语音导览</h2>
+        <h3>选择数字人角色</h3>
       </template>
-      
-      <div class="voice-container">
-        <el-button
-          type="primary"
-          :icon="isRecording ? 'VideoPause' : 'Microphone'"
-          size="large"
-          @click="toggleRecording"
-          :loading="processing"
+      <el-radio-group v-model="selectedCharacterId" @change="handleCharacterChange">
+        <el-radio-button
+          v-for="character in characters"
+          :key="character.id"
+          :label="character.id"
         >
-          {{ isRecording ? '停止录音' : '开始录音' }}
-        </el-button>
-        
-        <div v-if="transcribedText" class="transcription">
-          <h3>您说：</h3>
-          <p>{{ transcribedText }}</p>
-        </div>
-        
-        <div v-if="responseText" class="response">
-          <h3>AI 导游回复：</h3>
-          <p>{{ responseText }}</p>
-        </div>
-        
-        <div v-if="audioUrl" class="audio-player">
-          <audio :src="audioUrl" controls autoplay></audio>
-        </div>
-      </div>
+          {{ character.name }}
+        </el-radio-button>
+      </el-radio-group>
     </el-card>
+
+    <el-row :gutter="20">
+      <!-- 左侧：数字人展示区 -->
+      <el-col :span="14">
+        <el-card>
+          <template #header>
+            <div class="card-header">
+              <h2>数字人导游</h2>
+              <el-button
+                type="text"
+                @click="showHistory = !showHistory"
+              >
+                {{ showHistory ? '隐藏历史' : '查看历史' }}
+              </el-button>
+            </div>
+          </template>
+          
+          <!-- 数字人容器 -->
+          <div class="avatar-wrapper">
+            <DigitalAvatar
+              ref="avatarRef"
+              :access-key-id="avatarConfig.accessKeyId"
+              :access-key-secret="avatarConfig.accessKeySecret"
+              :app-id="avatarConfig.appId"
+              :avatar-id="currentAvatarId"
+              @ready="onAvatarReady"
+              @error="onAvatarError"
+              @speaking="onAvatarSpeaking"
+              @stopped="onAvatarStopped"
+            />
+          </div>
+
+          <!-- 控制按钮 -->
+          <div class="control-buttons">
+            <el-button
+              type="primary"
+              :icon="isRecording ? 'VideoPause' : 'Microphone'"
+              size="large"
+              @click="toggleRecording"
+              :loading="processing"
+              :disabled="!avatarReady"
+            >
+              {{ isRecording ? '停止录音' : '开始录音' }}
+            </el-button>
+            <el-button
+              v-if="isSpeaking"
+              @click="stopSpeaking"
+            >
+              停止播报
+            </el-button>
+          </div>
+        </el-card>
+      </el-col>
+
+      <!-- 右侧：对话记录 -->
+      <el-col :span="10">
+        <el-card>
+          <template #header>
+            <h3>对话记录</h3>
+          </template>
+          
+          <div class="conversation-list" ref="conversationListRef">
+            <div
+              v-for="(msg, index) in conversationHistory"
+              :key="index"
+              :class="['message-item', msg.role]"
+            >
+              <div class="message-header">
+                <strong>{{ msg.role === 'user' ? '您' : 'AI导游' }}</strong>
+                <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
+              </div>
+              <div class="message-content">{{ msg.content }}</div>
+            </div>
+            <div v-if="conversationHistory.length === 0" class="empty-message">
+              还没有对话记录，开始与AI导游交流吧！
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- 历史记录对话框 -->
+    <el-dialog
+      v-model="showHistory"
+      title="历史记录"
+      width="800px"
+    >
+      <el-table :data="historyList" style="width: 100%">
+        <el-table-column prop="query_text" label="问题" width="300" />
+        <el-table-column prop="response_text" label="回答" />
+        <el-table-column prop="created_at" label="时间" width="180">
+          <template #default="{ row }">
+            {{ formatTime(row.created_at) }}
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
+import DigitalAvatar from '../components/DigitalAvatar.vue'
 import api from '../api'
 
+// 数字人配置（从环境变量读取）
+const avatarConfig = ref({
+  accessKeyId: import.meta.env.VITE_ALIYUN_AVATAR_ACCESS_KEY_ID || '',
+  accessKeySecret: import.meta.env.VITE_ALIYUN_AVATAR_ACCESS_KEY_SECRET || '',
+  appId: import.meta.env.VITE_ALIYUN_AVATAR_APP_ID || '',
+})
+
+// 状态管理
+const avatarRef = ref(null)
+const avatarReady = ref(false)
 const isRecording = ref(false)
+const isSpeaking = ref(false)
 const processing = ref(false)
-const transcribedText = ref('')
-const responseText = ref('')
-const audioUrl = ref('')
+const selectedCharacterId = ref(null)
+const sessionId = ref(null)
+const characters = ref([])
+const conversationHistory = ref([])
+const showHistory = ref(false)
+const historyList = ref([])
+
 let mediaRecorder = null
 let audioChunks = []
 
+// 计算当前数字人ID（根据选择的角色）
+const currentAvatarId = ref('default')
+
+// 初始化
+onMounted(async () => {
+  await loadCharacters()
+  // 默认选择第一个角色
+  if (characters.value.length > 0) {
+    selectedCharacterId.value = characters.value[0].id
+    currentAvatarId.value = characters.value[0].avatar_url || 'default'
+  }
+})
+
+// 加载角色列表
+const loadCharacters = async () => {
+  try {
+    const res = await api.get('/characters/characters', {
+      params: { active_only: true }
+    })
+    characters.value = res.data
+  } catch (error) {
+    console.error('加载角色失败:', error)
+    ElMessage.error('加载角色失败')
+  }
+}
+
+// 角色切换
+const handleCharacterChange = (characterId) => {
+  const character = characters.value.find(c => c.id === characterId)
+  if (character) {
+    currentAvatarId.value = character.avatar_url || 'default'
+    // 重新初始化数字人
+    if (avatarRef.value) {
+      avatarRef.value.destroy()
+      nextTick(() => {
+        avatarRef.value.init()
+      })
+    }
+  }
+}
+
+// 数字人事件处理
+const onAvatarReady = () => {
+  avatarReady.value = true
+  ElMessage.success('数字人已就绪')
+}
+
+const onAvatarError = (error) => {
+  console.error('数字人错误:', error)
+  ElMessage.error('数字人加载失败')
+}
+
+const onAvatarSpeaking = () => {
+  isSpeaking.value = true
+}
+
+const onAvatarStopped = () => {
+  isSpeaking.value = false
+}
+
+// 录音控制
 const toggleRecording = async () => {
   if (!isRecording.value) {
     startRecording()
@@ -86,10 +244,11 @@ const stopRecording = () => {
   }
 }
 
+// 处理音频
 const processAudio = async (audioBlob) => {
   processing.value = true
   try {
-    // 语音识别
+    // 1. 语音识别
     const formData = new FormData()
     formData.append('file', audioBlob, 'audio.wav')
     formData.append('method', 'whisper')
@@ -97,31 +256,45 @@ const processAudio = async (audioBlob) => {
     const transcribeRes = await api.post('/voice/transcribe', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
-    transcribedText.value = transcribeRes.data.text
     
-    // RAG 检索生成回复
-    const ragRes = await api.post('/rag/search', {
-      query: transcribedText.value,
-      top_k: 5
+    const queryText = transcribeRes.data.text
+    
+    // 添加到对话历史
+    addMessage('user', queryText)
+    
+    // 2. RAG 生成回答（支持多轮对话）
+    const generateRes = await api.post('/rag/generate', {
+      query: queryText,
+      session_id: sessionId.value,
+      character_id: selectedCharacterId.value,
+      use_rag: true
     })
     
-    // 简单处理：使用第一个结果作为回复
-    if (ragRes.data.vector_results && ragRes.data.vector_results.length > 0) {
-      responseText.value = `根据您的问题，我为您找到了相关信息...`
+    const answer = generateRes.data.answer
+    sessionId.value = generateRes.data.session_id
+    
+    // 添加到对话历史
+    addMessage('assistant', answer)
+    
+    // 3. 数字人播报
+    if (avatarRef.value && avatarReady.value) {
+      await avatarRef.value.speak(answer)
     } else {
-      responseText.value = '抱歉，我没有找到相关信息。'
+      // 备用方案：使用TTS音频播放
+      const synthesizeRes = await api.post('/voice/synthesize', null, {
+        params: {
+          text: answer,
+          method: 'edge'
+        },
+        responseType: 'blob'
+      })
+      const audioUrl = URL.createObjectURL(synthesizeRes.data)
+      const audio = new Audio(audioUrl)
+      audio.play()
     }
     
-    // 语音合成
-    const synthesizeRes = await api.post('/voice/synthesize', null, {
-      params: {
-        text: responseText.value,
-        method: 'edge'
-      },
-      responseType: 'blob'
-    })
-    
-    audioUrl.value = URL.createObjectURL(synthesizeRes.data)
+    // 滚动到底部
+    scrollToBottom()
   } catch (error) {
     ElMessage.error('处理失败：' + error.message)
     console.error(error)
@@ -129,31 +302,129 @@ const processAudio = async (audioBlob) => {
     processing.value = false
   }
 }
+
+// 停止播报
+const stopSpeaking = () => {
+  if (avatarRef.value) {
+    avatarRef.value.stop()
+  }
+}
+
+// 添加消息到对话历史
+const addMessage = (role, content) => {
+  conversationHistory.value.push({
+    role,
+    content,
+    timestamp: new Date().toISOString()
+  })
+}
+
+// 加载历史记录
+const loadHistory = async () => {
+  if (!sessionId.value) return
+  
+  try {
+    const res = await api.get('/history/history', {
+      params: {
+        session_id: sessionId.value,
+        limit: 50
+      }
+    })
+    historyList.value = res.data
+  } catch (error) {
+    console.error('加载历史失败:', error)
+  }
+}
+
+// 监听历史对话框显示
+watch(showHistory, (val) => {
+  if (val) {
+    loadHistory()
+  }
+})
+
+// 格式化时间
+const formatTime = (timeStr) => {
+  if (!timeStr) return ''
+  const date = new Date(timeStr)
+  return date.toLocaleString('zh-CN')
+}
+
+// 滚动到底部
+const scrollToBottom = () => {
+  nextTick(() => {
+    const listRef = document.querySelector('.conversation-list')
+    if (listRef) {
+      listRef.scrollTop = listRef.scrollHeight
+    }
+  })
+}
 </script>
 
 <style scoped>
 .voice-guide {
-  max-width: 800px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
 }
 
-.voice-container {
-  text-align: center;
-  padding: 40px 0;
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.transcription,
-.response {
-  margin: 30px 0;
-  padding: 20px;
-  background: #f5f7fa;
+.avatar-wrapper {
+  width: 100%;
+  height: 500px;
+  margin-bottom: 20px;
   border-radius: 8px;
+  overflow: hidden;
+}
+
+.control-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.conversation-list {
+  max-height: 600px;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.message-item {
+  margin-bottom: 15px;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.message-item.user {
+  background: #e3f2fd;
+  text-align: right;
+}
+
+.message-item.assistant {
+  background: #f5f5f5;
   text-align: left;
 }
 
-.audio-player {
-  margin-top: 20px;
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+  font-size: 12px;
+  color: #666;
+}
+
+.message-content {
+  word-break: break-word;
+}
+
+.empty-message {
+  text-align: center;
+  color: #999;
+  padding: 40px 0;
 }
 </style>
-

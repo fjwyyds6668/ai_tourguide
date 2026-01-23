@@ -31,7 +31,14 @@ const Login = () => {
       message.success('登录成功');
       navigate('/');
     } catch (error) {
-      message.error(error.response?.data?.detail || '登录失败，请检查用户名和密码');
+      console.error('Login error:', error);
+      // 尝试从不同位置获取错误信息
+      const errorMessage = 
+        error.response?.data?.detail || 
+        error.response?.data?.message || 
+        error.message || 
+        '登录失败，请检查用户名和密码';
+      message.error(errorMessage);
     } finally {
       setLoading(false);
     }

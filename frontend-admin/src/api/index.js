@@ -31,10 +31,14 @@ api.interceptors.response.use(
   (error) => {
     console.error('API Error:', error);
     // 如果 token 过期或无效，清除本地存储并跳转到登录页
-    if (error.response?.status === 401) {
+    // 但排除登录接口本身，让登录页可以显示错误信息
+    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/login')) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      // 如果不在登录页，才跳转
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

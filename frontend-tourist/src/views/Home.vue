@@ -7,18 +7,25 @@
         </div>
       </template>
       <el-row :gutter="20">
-        <el-col :span="12">
+        <el-col :span="8">
           <el-card shadow="hover" @click="$router.push('/voice-guide')">
             <el-icon :size="48"><Microphone /></el-icon>
             <h3>语音导览</h3>
             <p>与 AI 导游进行实时语音交互</p>
           </el-card>
         </el-col>
-        <el-col :span="12">
+        <el-col :span="8">
           <el-card shadow="hover" @click="$router.push('/attractions')">
             <el-icon :size="48"><Location /></el-icon>
             <h3>景点浏览</h3>
             <p>查看所有景点信息</p>
+          </el-card>
+        </el-col>
+        <el-col :span="8">
+          <el-card shadow="hover" @click="$router.push('/history')">
+            <el-icon :size="48"><Document /></el-icon>
+            <h3>历史记录</h3>
+            <p>查看对话历史记录</p>
           </el-card>
         </el-col>
       </el-row>
@@ -27,7 +34,7 @@
 </template>
 
 <script setup>
-import { Microphone, Location } from '@element-plus/icons-vue'
+import { Microphone, Location, Document } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>

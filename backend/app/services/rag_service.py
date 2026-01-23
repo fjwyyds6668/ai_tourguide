@@ -352,14 +352,23 @@ class RAGService:
         
         return "\n".join(context_parts)
     
-    async def generate_answer(self, query: str, context: Optional[str] = None, use_rag: bool = True) -> str:
+    async def generate_answer(
+        self, 
+        query: str, 
+        context: Optional[str] = None, 
+        use_rag: bool = True,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        character_prompt: Optional[str] = None
+    ) -> str:
         """
-        使用LLM生成回答（支持硅基流动）
+        使用LLM生成回答（支持硅基流动和多轮对话）
         
         Args:
             query: 用户查询
             context: 可选的上下文信息
             use_rag: 是否使用RAG检索增强
+            conversation_history: 对话历史记录
+            character_prompt: 角色提示词
         
         Returns:
             生成的回答
@@ -372,28 +381,40 @@ class RAGService:
             rag_results = await self.hybrid_search(query, top_k=5)
             context = rag_results.get("enhanced_context", "")
         
-        # 构建提示词
-        system_prompt = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
+        # 构建系统提示词
+        base_system_prompt = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
 回答要求：
 1. 基于提供的上下文信息回答
 2. 语言简洁明了，适合口语化表达
 3. 如果信息不足，诚实说明
 4. 可以适当添加一些有趣的细节，但不要编造信息"""
         
+        # 如果有角色提示词，合并到系统提示词中
+        if character_prompt:
+            system_prompt = f"{base_system_prompt}\n\n角色设定：{character_prompt}"
+        else:
+            system_prompt = base_system_prompt
+        
+        # 构建消息列表
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # 添加对话历史
+        if conversation_history:
+            messages.extend(conversation_history)
+        
+        # 添加当前查询和上下文
         user_prompt = f"""用户问题：{query}
 
 上下文信息：
 {context if context else "无额外上下文信息"}
 
 请基于以上信息回答用户的问题。"""
+        messages.append({"role": "user", "content": user_prompt})
         
         try:
             response = self.llm_client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+                messages=messages,
                 temperature=0.7,
                 max_tokens=1000
             )

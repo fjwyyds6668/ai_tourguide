@@ -77,7 +77,13 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
         )
     
     # 创建新用户
-    hashed_password = get_password_hash(user_data.password)
+    try:
+        hashed_password = get_password_hash(user_data.password)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     new_user = User(
         username=user_data.username,
         email=user_data.email,

@@ -1,7 +1,8 @@
 // Prisma Schema
 generator client {
-  provider = "prisma-client-py"
-  interface = "asyncio"
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = -1
 }
 
 datasource db {
@@ -43,10 +44,28 @@ model Attraction {
   @@index([name])
 }
 
+model Character {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(100)
+  description String?   @db.Text
+  avatarUrl   String?   @map("avatar_url") @db.VarChar(500)
+  style       String?   @db.VarChar(100)  // 亲切导游、专业学者、儿童版小伙伴
+  prompt      String?   @db.Text  // 角色提示词
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+  
+  interactions Interaction[]
+
+  @@map("characters")
+  @@index([isActive])
+}
+
 model Interaction {
   id             Int       @id @default(autoincrement())
   userId         Int?      @map("user_id")
   sessionId      String?   @map("session_id") @db.VarChar(100)
+  characterId    Int?      @map("character_id")
   queryText      String?   @map("query_text") @db.Text
   responseText   String?   @map("response_text") @db.Text
   attractionId   Int?      @map("attraction_id")
@@ -55,9 +74,11 @@ model Interaction {
   
   user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
   attraction Attraction? @relation(fields: [attractionId], references: [id], onDelete: SetNull)
+  character  Character?  @relation(fields: [characterId], references: [id], onDelete: SetNull)
 
   @@map("interactions")
   @@index([sessionId])
   @@index([userId])
+  @@index([characterId])
 }
 
