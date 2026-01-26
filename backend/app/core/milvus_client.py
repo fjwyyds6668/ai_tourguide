@@ -1,19 +1,35 @@
 """
 Milvus 向量数据库客户端
 """
-from pymilvus import connections, Collection, utility
-from app.core.config import settings
 import logging
+from app.core.config import settings
+
+try:
+    from pymilvus import connections, Collection, utility
+    _MILVUS_AVAILABLE = True
+except Exception as e:  # pragma: no cover
+    # 允许在未安装/未启用 Milvus 的环境中继续启动服务（向量检索会降级为空结果）
+    connections = None
+    Collection = None
+    utility = None
+    _MILVUS_AVAILABLE = False
+    _MILVUS_IMPORT_ERROR = e
 
 logger = logging.getLogger(__name__)
 
 class MilvusClient:
     def __init__(self):
         self.connected = False
-        self.connect()
+        # 不强制在 import/启动阶段连接，避免 Milvus 不可用导致服务直接启动失败
+        if _MILVUS_AVAILABLE:
+            self.connect()
     
     def connect(self):
         """连接到 Milvus"""
+        if not _MILVUS_AVAILABLE:
+            logger.warning(f"pymilvus not available, Milvus disabled: {_MILVUS_IMPORT_ERROR}")
+            self.connected = False
+            return
         try:
             connections.connect(
                 alias="default",
@@ -28,7 +44,7 @@ class MilvusClient:
     
     def disconnect(self):
         """断开连接"""
-        if self.connected:
+        if _MILVUS_AVAILABLE and self.connected:
             connections.disconnect("default")
             self.connected = False
     
@@ -36,12 +52,16 @@ class MilvusClient:
         """获取集合"""
         if not self.connected:
             self.connect()
+        if not _MILVUS_AVAILABLE or not self.connected:
+            raise RuntimeError("Milvus is not available/connected")
         return Collection(collection_name)
     
     def create_collection_if_not_exists(self, collection_name: str, dimension: int = 384):
         """创建集合（如果不存在）"""
         if not self.connected:
             self.connect()
+        if not _MILVUS_AVAILABLE or not self.connected:
+            raise RuntimeError("Milvus is not available/connected")
         
         if utility.has_collection(collection_name):
             return Collection(collection_name)

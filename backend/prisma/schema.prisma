@@ -50,8 +50,8 @@ model Character {
   name        String    @db.VarChar(100)
   description String?   @db.Text
   avatarUrl   String?   @map("avatar_url") @db.VarChar(500)
-  style       String?   @db.VarChar(100)  // 亲切导游、专业学者、儿童版小伙伴
-  prompt      String?   @db.Text  // 角色提示词
+  style       String?   @db.VarChar(100)  // Guide style: friendly, scholar, child-friendly
+  prompt      String?   @db.Text  // Character prompt/instructions
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)

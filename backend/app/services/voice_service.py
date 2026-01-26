@@ -4,7 +4,6 @@
 import os
 import tempfile
 from typing import Optional
-from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
@@ -102,7 +101,7 @@ class VoiceService:
             raise Exception(f"Azure TTS failed: {result.reason}")
     
     async def synthesize_edge(self, text: str, output_path: Optional[str] = None) -> str:
-        """使用 Edge TTS 进行语音合成"""
+        """使用 Edge TTS 进行语音合成（带重试机制）"""
         import edge_tts
         import asyncio
         
@@ -110,10 +109,43 @@ class VoiceService:
             output_path = tempfile.mktemp(suffix=".mp3")
         
         voice = "zh-CN-XiaoxiaoNeural"
-        communicate = edge_tts.Communicate(text, voice)
-        await communicate.save(output_path)
         
-        return output_path
+        # 重试机制：最多重试 3 次
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                communicate = edge_tts.Communicate(text, voice)
+                await communicate.save(output_path)
+                
+                # 检查文件是否成功生成
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    return output_path
+                else:
+                    raise Exception("生成的音频文件为空")
+                    
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Edge TTS 尝试 {attempt + 1}/{max_retries} 失败: {e}")
+                
+                if attempt < max_retries - 1:
+                    # 等待后重试（指数退避）
+                    await asyncio.sleep(0.5 * (2 ** attempt))
+                else:
+                    # 最后一次尝试失败，抛出更友好的错误
+                    error_msg = str(e)
+                    if "403" in error_msg or "Invalid response status" in error_msg:
+                        raise Exception(
+                            "Edge TTS 服务暂时不可用（403 错误）。"
+                            "这可能是因为网络问题或 API 访问限制。"
+                            "请稍后重试，或考虑使用 Azure TTS。"
+                        )
+                    else:
+                        raise Exception(f"Edge TTS 合成失败: {error_msg}")
+        
+        # 理论上不会到达这里
+        raise Exception(f"Edge TTS 合成失败: {last_error}")
 
 # 全局语音服务实例
 voice_service = VoiceService()

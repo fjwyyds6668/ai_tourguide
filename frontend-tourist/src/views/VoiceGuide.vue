@@ -237,20 +237,18 @@ const processAudio = async (audioBlob) => {
       use_rag: true
     })
     
-    const answer = generateRes.data.answer
+    const answer = generateRes.data.answer || ''
     sessionId.value = generateRes.data.session_id
     
-    // 添加到对话历史
-    addMessage('assistant', answer)
+    // 以“流式打字”方式展示助手回复
+    addAssistantStreamMessage(answer)
     
     // 3. 语音播报（使用 Edge TTS）
-    const synthesizeRes = await api.post('/voice/synthesize', null, {
-      params: {
-        text: answer,
-        method: 'edge'
-      },
-      responseType: 'blob'
-    })
+    const synthesizeRes = await api.post(
+      '/voice/synthesize',
+      { text: answer, method: 'edge' },
+      { responseType: 'blob' }
+    )
     const audioUrl = URL.createObjectURL(synthesizeRes.data)
     const audio = new Audio(audioUrl)
     isSpeaking.value = true
@@ -262,7 +260,7 @@ const processAudio = async (audioBlob) => {
     // 滚动到底部
     scrollToBottom()
   } catch (error) {
-    const msg = error?.response?.data?.detail || error?.message || '未知错误'
+    const msg = await extractErrorMessage(error)
     ElMessage.error('处理失败：' + msg)
     console.error('processAudio error:', error)
   } finally {
@@ -292,20 +290,18 @@ const handleSendText = async () => {
       use_rag: true
     })
 
-    const answer = generateRes.data.answer
+    const answer = generateRes.data.answer || ''
     sessionId.value = generateRes.data.session_id
 
-    // 添加到对话历史
-    addMessage('assistant', answer)
+    // 以“流式打字”方式展示助手回复
+    addAssistantStreamMessage(answer)
 
     // 语音播报（Edge TTS）
-    const synthesizeRes = await api.post('/voice/synthesize', null, {
-      params: {
-        text: answer,
-        method: 'edge'
-      },
-      responseType: 'blob'
-    })
+    const synthesizeRes = await api.post(
+      '/voice/synthesize',
+      { text: answer, method: 'edge' },
+      { responseType: 'blob' }
+    )
     const audioUrl = URL.createObjectURL(synthesizeRes.data)
     const audio = new Audio(audioUrl)
     isSpeaking.value = true
@@ -317,11 +313,32 @@ const handleSendText = async () => {
     // 滚动到底部
     scrollToBottom()
   } catch (error) {
-    const msg = error?.response?.data?.detail || error?.message || '未知错误'
+    const msg = await extractErrorMessage(error)
     ElMessage.error('处理失败：' + msg)
     console.error('handleSendText error:', error)
   } finally {
     processing.value = false
+  }
+}
+
+// 从后端错误响应中提取可读的错误信息（兼容 blob）
+const extractErrorMessage = async (error) => {
+  try {
+    const anyErr = error
+    const resp = anyErr?.response
+    if (resp?.data instanceof Blob) {
+      const text = await resp.data.text()
+      try {
+        const json = JSON.parse(text)
+        return json.detail || text
+      } catch {
+        return text || anyErr.message || '未知错误'
+      }
+    }
+    return resp?.data?.detail || anyErr.message || '未知错误'
+  } catch (e) {
+    console.error('extractErrorMessage failed:', e)
+    return error?.message || '未知错误'
   }
 }
 
@@ -338,6 +355,38 @@ const addMessage = (role, content) => {
     content,
     timestamp: new Date().toISOString()
   })
+}
+
+// “流式打字”方式添加助手消息
+const addAssistantStreamMessage = (fullText) => {
+  const index = conversationHistory.value.length
+  conversationHistory.value.push({
+    role: 'assistant',
+    content: '',
+    timestamp: new Date().toISOString()
+  })
+
+  if (!fullText) {
+    return
+  }
+
+  const chars = Array.from(fullText)
+  let i = 0
+  const interval = 30 // 毫秒
+
+  const timer = setInterval(() => {
+    if (i >= chars.length) {
+      clearInterval(timer)
+      return
+    }
+    const msg = conversationHistory.value[index]
+    if (!msg) {
+      clearInterval(timer)
+      return
+    }
+    msg.content += chars[i]
+    i += 1
+  }, interval)
 }
 
 // 加载历史记录

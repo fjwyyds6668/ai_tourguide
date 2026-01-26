@@ -143,12 +143,27 @@ class RAGService:
         if not milvus_client.connected:
             milvus_client.connect()
         
+        # 确保集合存在：首次使用/未上传知识库时，避免 SchemaNotReadyException
+        try:
+            collection = milvus_client.create_collection_if_not_exists(
+                collection_name,
+                dimension=384  # 与 embedding 模型维度保持一致
+            )
+        except Exception as e:
+            # Milvus 未安装/未启动/不可用时，向量检索降级为空（GraphRAG 仍可继续走图检索/LLM）
+            logger.warning(f"Milvus not available for vector search, fallback to empty results: {e}")
+            return []
+        
         # 生成查询向量
         query_vector = [self.generate_embedding(query)]
         
-        # 获取集合
-        collection = milvus_client.get_collection(collection_name)
-        collection.load()
+        # 加载集合（如果为空集合也允许 load；若 Milvus 未就绪则返回空结果）
+        try:
+            collection.load()
+        except Exception as e:
+            # 典型场景：collection/schema 尚未准备好
+            logger.warning(f"Milvus collection load failed for '{collection_name}': {e}")
+            return []
         
         # 搜索
         search_params = {"metric_type": "L2", "params": {"nprobe": 10}}

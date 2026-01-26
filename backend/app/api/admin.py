@@ -139,7 +139,11 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
             interactions_count=interactions_count,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_detail = f"获取统计信息失败: {str(e)}"
+        print(f"Error in get_dashboard_stats: {error_detail}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 @router.post("/profile/avatar")
