@@ -1,10 +1,20 @@
 """
 应用配置管理
 """
+import os
 from pydantic import PostgresDsn
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 from urllib.parse import quote_plus
+
+# 在加载配置之前设置编码环境变量
+# 这些变量对 Prisma 生成器和应用运行都重要
+# 如果 .env 中有这些变量，会在 Settings 加载时自动读取
+# 但为了确保在 Prisma 生成时也生效，我们在这里设置默认值
+if not os.environ.get('PYTHONIOENCODING'):
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+if not os.environ.get('PYTHONUTF8'):
+    os.environ['PYTHONUTF8'] = '1'
 
 class Settings(BaseSettings):
     # 数据库配置 - 优先使用 DATABASE_URL（现代化方式，Prisma 使用）
@@ -28,17 +38,13 @@ class Settings(BaseSettings):
         return url
     
     # Neo4j 配置
-    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_URI: str = "bolt://localhost:17687"  # Docker 映射端口
     NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = ""
+    NEO4J_PASSWORD: str = "12345678"  # 与 docker-compose.yml 中的密码一致
     
     # Milvus 配置
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: int = 19530
-    
-    # Azure TTS 配置
-    AZURE_SPEECH_KEY: str = ""
-    AZURE_SPEECH_REGION: str = ""
     
     # OpenAI API（兼容硅基流动）
     OPENAI_API_KEY: str = ""
@@ -56,6 +62,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"  # 确保 .env 文件以 UTF-8 编码读取
         case_sensitive = True
+        extra = "ignore"  # 忽略 .env 中未定义的字段（如 PYTHONIOENCODING, PYTHONUTF8）
 
 settings = Settings()
 

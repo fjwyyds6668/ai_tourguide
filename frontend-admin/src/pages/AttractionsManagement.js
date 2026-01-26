@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Button, Modal, Form, Input, InputNumber, message, Popconfirm } from 'antd';
+import { Card, Table, Button, Modal, Form, Input, InputNumber, message, Popconfirm, Upload } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import api from '../api';
 
@@ -9,6 +9,7 @@ const AttractionsManagement = () => {
   const [visible, setVisible] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
   const [form] = Form.useForm();
+  const [imageFileList, setImageFileList] = useState([]);
 
   useEffect(() => {
     fetchAttractions();
@@ -39,6 +40,7 @@ const AttractionsManagement = () => {
       setVisible(false);
       form.resetFields();
       setEditingRecord(null);
+      setImageFileList([]);
       fetchAttractions();
     } catch (error) {
       message.error('操作失败：' + error.message);
@@ -50,6 +52,18 @@ const AttractionsManagement = () => {
   const handleEdit = (record) => {
     setEditingRecord(record);
     form.setFieldsValue(record);
+    if (record?.image_url) {
+      setImageFileList([
+        {
+          uid: '-1',
+          name: 'image',
+          status: 'done',
+          url: record.image_url,
+        },
+      ]);
+    } else {
+      setImageFileList([]);
+    }
     setVisible(true);
   };
 
@@ -147,6 +161,7 @@ const AttractionsManagement = () => {
           setVisible(false);
           form.resetFields();
           setEditingRecord(null);
+          setImageFileList([]);
         }}
         onOk={() => form.submit()}
         confirmLoading={loading}
@@ -167,6 +182,7 @@ const AttractionsManagement = () => {
           <Form.Item
             name="description"
             label="描述"
+            rules={[{ required: true, message: '请输入景点描述' }]}
           >
             <Input.TextArea rows={4} />
           </Form.Item>
@@ -196,15 +212,46 @@ const AttractionsManagement = () => {
           </Form.Item>
           <Form.Item
             name="image_url"
-            label="图片URL"
+            label="图片"
           >
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="audio_url"
-            label="音频URL"
-          >
-            <Input />
+            <Upload
+              accept="image/*"
+              listType="picture-card"
+              maxCount={1}
+              fileList={imageFileList}
+              onChange={({ fileList }) => setImageFileList(fileList)}
+              customRequest={async ({ file, onSuccess, onError }) => {
+                try {
+                  const formData = new FormData();
+                  formData.append('file', file);
+                  const res = await api.post('/admin/uploads/image', formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                  });
+                  const url = res.data?.image_url;
+                  if (url) {
+                    form.setFieldsValue({ image_url: url });
+                    setImageFileList([
+                      {
+                        uid: file.uid,
+                        name: file.name,
+                        status: 'done',
+                        url,
+                      },
+                    ]);
+                  }
+                  onSuccess?.(res.data);
+                } catch (e) {
+                  message.error(e.response?.data?.detail || '图片上传失败');
+                  onError?.(e);
+                }
+              }}
+              onRemove={() => {
+                form.setFieldsValue({ image_url: undefined });
+                setImageFileList([]);
+              }}
+            >
+              {imageFileList.length >= 1 ? null : <div>上传</div>}
+            </Upload>
           </Form.Item>
         </Form>
       </Modal>

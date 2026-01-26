@@ -5,7 +5,7 @@ import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from app.core.database import get_db
 from app.models.interaction import Interaction
 from app.models.user import User
@@ -13,9 +13,53 @@ from app.api.auth import get_current_user
 from app.services.rag_service import rag_service
 from app.services.graph_builder import graph_builder
 from app.core.milvus_client import milvus_client
+from app.core.prisma_client import get_prisma, disconnect_prisma
 from pydantic import BaseModel
 
 router = APIRouter()
+
+@router.post("/uploads/image")
+async def upload_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """上传图片附件，返回可访问的 URL（/uploads/images/xxx）"""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可上传")
+
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="仅支持上传图片文件")
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="图片大小不能超过 10MB")
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in [".png", ".jpg", ".jpeg", ".webp", ".gif"]:
+        # 兜底：根据 content_type 猜扩展名
+        if file.content_type == "image/png":
+            ext = ".png"
+        elif file.content_type in ("image/jpg", "image/jpeg"):
+            ext = ".jpg"
+        elif file.content_type == "image/webp":
+            ext = ".webp"
+        elif file.content_type == "image/gif":
+            ext = ".gif"
+        else:
+            raise HTTPException(status_code=400, detail="不支持的图片格式")
+
+    # 保存路径：backend/uploads/images
+    uploads_root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
+    images_dir = os.path.join(uploads_root, "images")
+    os.makedirs(images_dir, exist_ok=True)
+
+    filename = f"img_{uuid.uuid4().hex}{ext}"
+    abs_path = os.path.join(images_dir, filename)
+    with open(abs_path, "wb") as f:
+        f.write(content)
+
+    image_url = f"/uploads/images/{filename}"
+    return {"message": "上传成功", "image_url": image_url}
 
 class DashboardStatsResponse(BaseModel):
     total_users: int
@@ -26,6 +70,77 @@ class KnowledgeBaseItem(BaseModel):
     text: str
     text_id: str
     metadata: dict = {}
+
+class ImportAttractionsRequest(BaseModel):
+    """
+    从 attractions 表批量导入到 GraphRAG：
+    - Milvus: attraction 文本 embedding -> collection
+    - Neo4j: Text 节点 + Entity 节点 + MENTIONS 关系
+    - 可选：Neo4j Attraction 节点 + NEARBY（同类）关系
+    """
+    collection_name: str = "tour_knowledge"
+    build_graph: bool = True
+    build_attraction_graph: bool = True
+    active_only: bool = False  # 预留：如后续 attractions 增加 isActive 字段
+    limit: Optional[int] = None
+
+def _attraction_to_text(attraction: dict) -> str:
+    """将景点记录拼接为用于向量/图谱的文本。"""
+    parts = []
+    name = attraction.get("name")
+    if name:
+        parts.append(f"景点：{name}")
+    category = attraction.get("category")
+    if category:
+        parts.append(f"类别：{category}")
+    location = attraction.get("location")
+    if location:
+        parts.append(f"位置：{location}")
+    desc = attraction.get("description")
+    if desc:
+        parts.append(f"介绍：{desc}")
+    # 坐标可选，避免噪声过大
+    lat = attraction.get("latitude")
+    lng = attraction.get("longitude")
+    if lat is not None and lng is not None:
+        parts.append(f"坐标：({lat}, {lng})")
+    return "\n".join(parts).strip()
+
+async def _upload_items_to_graphrag(items: List[KnowledgeBaseItem], collection_name: str, build_graph: bool) -> dict:
+    """复用 /admin/knowledge/upload 的逻辑，供批量导入调用。"""
+    # 步骤1: 创建集合（如果不存在）
+    collection = milvus_client.create_collection_if_not_exists(
+        collection_name,
+        dimension=384
+    )
+
+    # 步骤2: 生成嵌入向量并存储到 Milvus
+    texts = [item.text for item in items]
+    embeddings = [rag_service.generate_embedding(text) for text in texts]
+
+    # 准备数据（与 milvus schema: [text_id, embedding]）
+    entities = [
+        [item.text_id for item in items],
+        embeddings
+    ]
+
+    collection.insert(entities)
+    collection.flush()
+
+    # 步骤3: 构建图结构
+    total_entities = 0
+    if build_graph:
+        for item in items:
+            extracted = rag_service.extract_entities(item.text)
+            total_entities += len(extracted)
+            await graph_builder.extract_and_store_entities(item.text, item.text_id, extracted)
+
+    return {
+        "message": f"Uploaded {len(items)} items successfully",
+        "vector_stored": True,
+        "graph_built": build_graph,
+        "total_entities": total_entities
+    }
 
 @router.post("/knowledge/upload")
 async def upload_knowledge(
@@ -41,47 +156,67 @@ async def upload_knowledge(
     2. 提取实体并构建图结构到 Neo4j（用于关系查询）
     """
     try:
-        # 步骤1: 创建集合（如果不存在）
-        collection = milvus_client.create_collection_if_not_exists(
-            collection_name,
-            dimension=384  # 根据使用的模型调整
-        )
-        
-        # 步骤2: 生成嵌入向量并存储到 Milvus
-        texts = [item.text for item in items]
-        embeddings = [rag_service.generate_embedding(text) for text in texts]
-        
-        # 准备数据
-        entities = [
-            [item.text_id for item in items],
-            embeddings
-        ]
-        
-        # 插入数据
-        collection.insert(entities)
-        collection.flush()
-        
-        # 步骤3: 构建图结构（GraphRAG 核心功能）
-        if build_graph:
-            for item in items:
-                # 提取实体
-                entities = rag_service.extract_entities(item.text)
-                
-                # 存储到图数据库
-                await graph_builder.extract_and_store_entities(
-                    item.text,
-                    item.text_id,
-                    entities
-                )
-        
-        return {
-            "message": f"Uploaded {len(items)} items successfully",
-            "vector_stored": True,
-            "graph_built": build_graph,
-            "total_entities": sum(len(rag_service.extract_entities(item.text)) for item in items) if build_graph else 0
-        }
+        return await _upload_items_to_graphrag(items, collection_name, build_graph)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/knowledge/import_attractions")
+async def import_attractions_to_graphrag(req: ImportAttractionsRequest):
+    """
+    从 PostgreSQL 的 attractions 表批量导入到：
+    - Milvus（向量库）
+    - Neo4j（图数据库：Text/Entity/MENTIONS）
+    - 可选：Neo4j（Attraction 节点与 NEARBY 关系）
+    """
+    prisma = None
+    try:
+        prisma = await get_prisma()
+
+        # Prisma 返回的是对象，这里统一转 dict（通过 __dict__ 不稳定，手动映射）
+        attractions = await prisma.attraction.find_many(
+            order={"id": "asc"},
+            take=req.limit
+        )
+
+        att_dicts = []
+        for a in attractions:
+            att_dicts.append({
+                "id": a.id,
+                "name": a.name,
+                "description": a.description,
+                "location": a.location,
+                "latitude": a.latitude,
+                "longitude": a.longitude,
+                "category": a.category,
+            })
+
+        # 1) 可选：构建 Attraction 图谱（节点+同类 NEARBY）
+        if req.build_attraction_graph:
+            await graph_builder.build_attraction_graph(att_dicts)
+
+        # 2) 写入 GraphRAG（向量 + Text/Entity/MENTIONS）
+        items: List[KnowledgeBaseItem] = []
+        for att in att_dicts:
+            text_id = f"attraction_{att['id']}"
+            text = _attraction_to_text(att)
+            if not text:
+                continue
+            items.append(KnowledgeBaseItem(text=text, text_id=text_id, metadata={"source": "attractions"}))
+
+        result = await _upload_items_to_graphrag(items, req.collection_name, req.build_graph)
+        result.update({
+            "imported_attractions": len(items),
+            "build_attraction_graph": req.build_attraction_graph
+        })
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # 避免脚本/一次性任务场景下连接泄露
+        try:
+            await disconnect_prisma()
+        except Exception:
+            pass
 
 @router.get("/analytics/interactions")
 async def get_interaction_analytics(

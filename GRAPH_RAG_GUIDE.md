@@ -187,3 +187,182 @@ POST /api/v1/graph/relationships
 3. **动态图更新**：实时更新图结构
 4. **图神经网络**：使用 GNN 进行更复杂的推理
 
+---
+
+## 数据导入指南
+
+### 前置条件
+
+#### 1. 确保服务已启动
+
+```bash
+# 启动 Neo4j 和 Milvus（如果使用 Docker）
+docker-compose up -d neo4j standalone
+
+# 或者单独启动
+docker-compose up -d neo4j
+docker-compose up -d standalone  # Milvus
+```
+
+#### 2. 确保数据库连接配置正确
+
+检查 `backend/.env` 文件中的配置：
+
+```env
+# PostgreSQL（用于读取 attractions 数据）
+DATABASE_URL=postgresql://postgres:123456@localhost:5432/ai_tourguide
+
+# Neo4j（图数据库）
+NEO4J_URI=bolt://localhost:17687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=12345678
+
+# Milvus（向量数据库）
+MILVUS_HOST=localhost
+MILVUS_PORT=19530
+```
+
+#### 3. 确保 Prisma 客户端已生成
+
+```bash
+cd backend
+prisma generate
+```
+
+### 执行导入
+
+#### 方式一：使用命令行脚本（推荐）
+
+在 `backend` 目录下执行：
+
+```bash
+# 导入所有景点数据（同时写入 Milvus 和 Neo4j）
+python import_graphrag_data.py --source attractions --collection tour_knowledge --build-graph --build-attraction-graph
+
+# 只导入前 5 条数据（测试用）
+python import_graphrag_data.py --source attractions --collection tour_knowledge --build-graph --build-attraction-graph --limit 5
+
+# 只构建景点图结构（不构建文本-实体图）
+python import_graphrag_data.py --source attractions --collection tour_knowledge --build-attraction-graph
+
+# 只写入向量数据库（不构建图）
+python import_graphrag_data.py --source attractions --collection tour_knowledge
+```
+
+#### 方式二：使用 API 接口
+
+通过管理后台或 API 调用：
+
+```bash
+# 使用 curl
+curl -X POST "http://localhost:18000/api/v1/admin/data/import_attractions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "collection_name": "tour_knowledge",
+    "build_graph": true,
+    "build_attraction_graph": true
+  }'
+```
+
+或在管理后台的"数据导入"页面点击"导入景点数据"按钮。
+
+### 参数说明
+
+- `--source attractions`: 数据源，当前只支持从 attractions 表导入
+- `--collection tour_knowledge`: Milvus 集合名称（默认：tour_knowledge）
+- `--build-graph`: 是否构建文本-实体图（Text/Entity/MENTIONS 关系）
+- `--build-attraction-graph`: 是否构建景点图（Attraction/NEARBY 关系）
+- `--limit N`: 限制导入数量（用于测试）
+
+### 导入内容
+
+#### 1. 向量数据库（Milvus）
+
+每个景点会生成一个文本描述，包含：
+- 景点名称
+- 类别
+- 位置
+- 介绍
+- 坐标
+
+文本会被转换为 384 维向量并存储到 Milvus。
+
+#### 2. 图数据库（Neo4j）
+
+**如果启用 `--build-graph`：**
+- **Text 节点**：每个景点的文本描述
+- **Entity 节点**：从文本中提取的实体（地名、人名等）
+- **MENTIONS 关系**：Text → Entity（文本提及实体）
+
+**如果启用 `--build-attraction-graph`：**
+- **Attraction 节点**：景点节点，包含完整信息
+- **NEARBY 关系**：相同类别的景点之间建立 NEARBY 关系
+
+### 验证导入结果
+
+#### 检查 Milvus
+
+```python
+from pymilvus import connections, Collection
+
+connections.connect(alias="default", host="localhost", port=19530)
+collection = Collection("tour_knowledge")
+collection.load()
+print(f"向量数量: {collection.num_entities}")
+```
+
+#### 检查 Neo4j
+
+访问 Neo4j Browser: http://localhost:17474
+
+执行查询：
+
+```cypher
+// 查看所有景点节点
+MATCH (a:Attraction) RETURN a LIMIT 10
+
+// 查看文本节点
+MATCH (t:Text) RETURN t LIMIT 10
+
+// 查看实体节点
+MATCH (e:ENTITY) RETURN e LIMIT 10
+
+// 查看关系
+MATCH (a:Attraction)-[r:NEARBY]->(b:Attraction) RETURN a, r, b LIMIT 10
+```
+
+### 常见问题
+
+#### 1. 连接失败
+
+- 检查 Neo4j 和 Milvus 服务是否运行
+- 检查端口是否正确（Neo4j: 17687, Milvus: 19530）
+- 检查防火墙设置
+
+#### 2. Prisma 客户端未生成
+
+```bash
+cd backend
+prisma generate
+```
+
+#### 3. 依赖缺失
+
+```bash
+pip install -r requirements.txt
+```
+
+#### 4. 导入速度慢
+
+- 向量生成需要时间，大量数据建议分批导入
+- 可以使用 `--limit` 参数先测试少量数据
+
+### 下一步
+
+导入完成后，可以：
+
+1. 使用 GraphRAG 检索：`POST /api/v1/rag/search`
+2. 查询图结构：`GET /api/v1/graph/subgraph?entities=景点名`
+3. 在管理后台查看导入的数据
+

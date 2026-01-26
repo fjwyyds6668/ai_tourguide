@@ -5,6 +5,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
+
+# 在导入其他模块之前设置编码环境变量（从 .env 读取）
+# 这些变量需要在 Python 启动时设置，对 Prisma 生成器也有效
+if not os.environ.get('PYTHONIOENCODING'):
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+if not os.environ.get('PYTHONUTF8'):
+    os.environ['PYTHONUTF8'] = '1'
+
 from app.core.config import settings
 from app.api import router
 

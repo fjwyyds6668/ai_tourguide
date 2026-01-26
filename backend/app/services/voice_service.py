@@ -3,13 +3,14 @@
 """
 import os
 import tempfile
+import re
 from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
 class VoiceService:
-    """语音处理服务，支持 Whisper/Vosk 识别和 Azure/Edge TTS 合成"""
+    """语音处理服务，支持 Whisper/Vosk 识别和 Edge TTS 合成"""
     
     def __init__(self):
         self.whisper_model = None
@@ -74,75 +75,121 @@ class VoiceService:
         
         return " ".join(text_parts)
     
-    async def synthesize_azure(self, text: str, output_path: Optional[str] = None) -> str:
-        """使用 Azure TTS 进行语音合成"""
-        from app.core.config import settings
-        import azure.cognitiveservices.speech as speechsdk
+    async def synthesize_edge(self, text: str, output_path: Optional[str] = None, voice: Optional[str] = None) -> str:
+        """使用 Edge TTS 进行语音合成（带重试机制）
         
-        speech_config = speechsdk.SpeechConfig(
-            subscription=settings.AZURE_SPEECH_KEY,
-            region=settings.AZURE_SPEECH_REGION
-        )
-        speech_config.speech_synthesis_voice_name = "zh-CN-XiaoxiaoNeural"
-        
-        if not output_path:
-            output_path = tempfile.mktemp(suffix=".wav")
-        
-        audio_config = speechsdk.audio.AudioOutputConfig(filename=output_path)
-        synthesizer = speechsdk.SpeechSynthesizer(
-            speech_config=speech_config,
-            audio_config=audio_config
-        )
-        
-        result = synthesizer.speak_text_async(text).get()
-        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-            return output_path
-        else:
-            raise Exception(f"Azure TTS failed: {result.reason}")
-    
-    async def synthesize_edge(self, text: str, output_path: Optional[str] = None) -> str:
-        """使用 Edge TTS 进行语音合成（带重试机制）"""
+        Args:
+            text: 要合成的文本
+            output_path: 输出文件路径（可选）
+            voice: 语音名称（可选，默认使用 zh-CN-XiaoxiaoNeural）
+        """
         import edge_tts
         import asyncio
         
         if not output_path:
             output_path = tempfile.mktemp(suffix=".mp3")
         
-        voice = "zh-CN-XiaoxiaoNeural"
+        # 使用传入的语音，如果没有则使用默认语音
+        if not voice:
+            voice = "zh-CN-XiaoxiaoNeural"
         
-        # 重试机制：最多重试 3 次
-        max_retries = 3
+        # 再次清理文本，确保没有无效的 Unicode 字符和标点符号
+        try:
+            # 尝试编码为 UTF-8，过滤掉无效字符
+            text = text.encode('utf-8', errors='ignore').decode('utf-8')
+        except Exception as e:
+            logger.warning(f"文本清理失败: {e}")
+            # 如果编码失败，使用更严格的方式过滤
+            text = ''.join(char for char in text if ord(char) < 0x110000 and not (0xD800 <= ord(char) <= 0xDFFF))
+        
+        # 移除所有标点符号，只保留中文、数字和空格
+        text = re.sub(r"[^\u4e00-\u9fff0-9\s]", "", text)
+        # 将多个连续空格替换为单个空格
+        text = re.sub(r"\s+", " ", text)
+        text = text.strip()
+        
+        # 重试机制：最多重试 5 次，针对连接错误增加重试
+        max_retries = 5
         last_error = None
         
         for attempt in range(max_retries):
             try:
+                # 设置超时时间（30秒）
                 communicate = edge_tts.Communicate(text, voice)
-                await communicate.save(output_path)
+                await asyncio.wait_for(communicate.save(output_path), timeout=30.0)
                 
                 # 检查文件是否成功生成
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    logger.info(f"Edge TTS 合成成功 (尝试 {attempt + 1}/{max_retries})")
                     return output_path
                 else:
                     raise Exception("生成的音频文件为空")
                     
+            except asyncio.TimeoutError:
+                last_error = Exception("Edge TTS 请求超时")
+                error_msg = "请求超时 (timeout)"
+                logger.warning(f"Edge TTS 尝试 {attempt + 1}/{max_retries} 超时")
             except Exception as e:
                 last_error = e
+                error_msg = str(e)
                 logger.warning(f"Edge TTS 尝试 {attempt + 1}/{max_retries} 失败: {e}")
                 
-                if attempt < max_retries - 1:
-                    # 等待后重试（指数退避）
-                    await asyncio.sleep(0.5 * (2 ** attempt))
-                else:
-                    # 最后一次尝试失败，抛出更友好的错误
-                    error_msg = str(e)
-                    if "403" in error_msg or "Invalid response status" in error_msg:
-                        raise Exception(
-                            "Edge TTS 服务暂时不可用（403 错误）。"
-                            "这可能是因为网络问题或 API 访问限制。"
-                            "请稍后重试，或考虑使用 Azure TTS。"
+                # 如果是编码错误，尝试清理文本后重试
+                if "surrogates not allowed" in error_msg or "codec can't encode" in error_msg:
+                    if attempt < max_retries - 1:
+                        logger.info("检测到编码错误，清理文本后重试...")
+                        # 更严格的文本清理：移除所有代理对字符
+                        text = ''.join(
+                            char for char in text 
+                            if ord(char) < 0x110000 and not (0xD800 <= ord(char) <= 0xDFFF)
                         )
-                    else:
-                        raise Exception(f"Edge TTS 合成失败: {error_msg}")
+                        # 移除所有 emoji 和特殊符号
+                        text = re.sub(r'[\U0001F300-\U0001F9FF\U0001FA00-\U0001FAFF]', '', text)
+                        text = re.sub(r'[\U00002700-\U000027BF]', '', text)
+                        # 移除所有标点符号，只保留中文、数字和空格
+                        text = re.sub(r"[^\u4e00-\u9fff0-9\s]", "", text)
+                        text = re.sub(r"\s+", " ", text)
+                        text = text.strip()
+                        if not text.strip():
+                            raise Exception("文本清理后为空，无法合成")
+                        continue
+            
+            # 判断是否为连接错误
+            is_connection_error = (
+                "Cannot connect" in error_msg or 
+                "远程主机强迫关闭" in error_msg or
+                "Connection" in error_msg or
+                "timeout" in error_msg.lower() or
+                "timed out" in error_msg.lower()
+            )
+            
+            if attempt < max_retries - 1:
+                # 根据错误类型调整等待时间
+                if is_connection_error:
+                    # 连接错误：使用更长的等待时间（2秒、4秒、8秒、16秒）
+                    wait_time = 2.0 * (2 ** attempt)
+                    logger.info(f"检测到连接错误，等待 {wait_time:.1f} 秒后重试...")
+                else:
+                    # 其他错误：使用较短的等待时间（指数退避）
+                    wait_time = 0.5 * (2 ** attempt)
+                
+                await asyncio.sleep(wait_time)
+            else:
+                # 最后一次尝试失败，抛出更友好的错误
+                if "403" in error_msg or "Invalid response status" in error_msg:
+                    raise Exception(
+                        "Edge TTS 服务暂时不可用（403 错误）。"
+                        "这可能是因为网络问题或 API 访问限制。"
+                        "请稍后重试。"
+                    )
+                elif is_connection_error:
+                    raise Exception(
+                        f"Edge TTS 连接失败（已重试 {max_retries} 次）。"
+                        "请检查网络连接或稍后重试。"
+                        f"错误详情: {error_msg}"
+                    )
+                else:
+                    raise Exception(f"Edge TTS 合成失败: {error_msg}")
         
         # 理论上不会到达这里
         raise Exception(f"Edge TTS 合成失败: {last_error}")
