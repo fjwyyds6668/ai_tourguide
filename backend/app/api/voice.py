@@ -97,7 +97,7 @@ class SynthesizeRequest(BaseModel):
 async def synthesize_speech(
     req: SynthesizeRequest
 ):
-    """语音合成（优先 Edge TTS，失败可降级到离线本地 TTS：PaddleSpeech）"""
+    """语音合成（优先 Edge TTS，失败可降级到离线本地 TTS：Bert-VITS2）"""
     try:
         text = _normalize_tts_text(req.text)
 
@@ -131,14 +131,13 @@ async def synthesize_speech(
 
         if (audio_path is None) and settings.LOCAL_TTS_ENABLED:
             try:
-                # 备用方案：使用 PaddleSpeech（离线本地 TTS）
-                # - voice 传入 settings.PADDLESPEECH_VOICES_JSON 的 key，可实现多音色
-                audio_path = await voice_service.synthesize_local_paddlespeech(text, voice=voice)
-                logger.info("使用 PaddleSpeech TTS（备用方案）合成成功")
+                # 备用方案：使用 Bert-VITS2（离线本地 TTS）
+                audio_path = await voice_service.synthesize_local_bertvits2(text, voice=voice)
+                logger.info("使用 Bert-VITS2 TTS（备用方案）合成成功")
                 last_error = None
             except Exception as e:
                 last_error = e
-                logger.error(f"PaddleSpeech TTS（备用方案）合成失败: {e}")
+                logger.error(f"Bert-VITS2 TTS（备用方案）合成失败: {e}")
 
         if audio_path is None:
             raise HTTPException(status_code=400, detail=f"TTS 合成失败：{str(last_error) if last_error else 'unknown error'}")
@@ -163,6 +162,6 @@ async def synthesize_speech(
         # 提供更友好的错误信息
         error_detail = str(e)
         if "403" in error_detail or "Invalid response status" in error_detail:
-            error_detail = "Edge TTS 服务暂时不可用（403）。建议启用离线本地 TTS（PaddleSpeech）或检查网络/限制。"
+            error_detail = "Edge TTS 服务暂时不可用（403）。建议启用离线本地 TTS（Bert-VITS2）或检查网络/限制。"
         raise HTTPException(status_code=400, detail=f"TTS 合成失败：{error_detail}")
 

@@ -11,13 +11,11 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 class VoiceService:
-    """语音处理服务，支持 Whisper/Vosk 识别和 Edge TTS/本地 TTS（PaddleSpeech）合成"""
+    """语音处理服务，支持 Whisper/Vosk 识别和 Edge TTS/本地 TTS（Bert-VITS2）合成"""
     
     def __init__(self):
         self.whisper_model = None
         self.vosk_model = None
-        # PaddleSpeech TTSExecutor 缓存（按 am+voc 组合缓存）
-        self._paddlespeech_executors: dict[str, any] = {}
         self._init_models()
     
     def _init_models(self):
@@ -173,110 +171,79 @@ class VoiceService:
         
         raise Exception(f"Edge TTS 合成失败: {last_error}")
 
-    async def synthesize_local_paddlespeech(
+    async def synthesize_local_bertvits2(
         self,
         text: str,
         output_path: Optional[str] = None,
         voice: Optional[str] = None,
     ) -> str:
         """
-        离线本地 TTS（PaddleSpeech）- 优化版本，使用进程内调用和模型缓存。
+        离线本地 TTS（Bert-VITS2）- 高质量语音合成。
 
-        直接使用 Python API 调用 PaddleSpeech，避免子进程开销，并缓存 TTSExecutor 实例。
-        voice: 使用 settings.paddlespeech_voices 的 key；找不到则回退到 settings.PADDLESPEECH_DEFAULT_VOICE
+        voice: 说话人名称（如果为 None，使用配置中的默认说话人）
         """
         import asyncio
-        import threading
+        from app.services.bertvits2_service import bertvits2_service
 
         if not output_path:
             output_path = tempfile.mktemp(suffix=".wav")
 
-        voices = settings.paddlespeech_voices
-        voice_key = voice if (voice and voice in voices) else settings.PADDLESPEECH_DEFAULT_VOICE
-        cfg = voices.get(voice_key, {})
-
-        am = cfg.get("am", voice_key)
-        voc = cfg.get("voc", "pwgan_csmsc")
-        lang = cfg.get("lang", "zh")
-        spk_id = cfg.get("spk_id", None)
-
-        cache_key = f"{am}_{voc}_{lang}"
-        if spk_id is not None:
-            cache_key += f"_spk{spk_id}"
-
-        executor_lock = threading.Lock()
-        loop = asyncio.get_event_loop()
-        
-        with executor_lock:
-            if cache_key not in self._paddlespeech_executors:
-                try:
-                    logger.info(f"初始化 PaddleSpeech TTSExecutor (am={am}, voc={voc})...")
-                    logger.info("注意: 首次运行会下载模型（可能较慢，请耐心等待）...")
-                    
-                    executor = await loop.run_in_executor(
-                        None,
-                        self._init_paddlespeech_executor,
-                        am, voc, lang
-                    )
-                    self._paddlespeech_executors[cache_key] = executor
-                    logger.info(f"PaddleSpeech TTSExecutor 已缓存: {cache_key}")
-                except Exception as e:
-                    logger.error(f"初始化 PaddleSpeech TTSExecutor 失败: {e}")
-                    raise Exception(f"PaddleSpeech 初始化失败: {e}")
+        if not bertvits2_service._initialized:
+            config_path = settings.BERTVITS2_CONFIG_PATH
+            model_path = settings.BERTVITS2_MODEL_PATH
+            device = settings.BERTVITS2_DEVICE
             
-            executor = self._paddlespeech_executors[cache_key]
+            if not config_path or not model_path:
+                raise Exception("Bert-VITS2 配置路径或模型路径未设置")
+            
+            # 将相对路径转换为绝对路径（相对于项目根目录）
+            if not os.path.isabs(config_path):
+                # backend/app/services/voice_service.py -> backend/app/services -> backend/app -> backend -> 项目根目录
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+                config_path = os.path.join(project_root, config_path)
+            if not os.path.isabs(model_path):
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+                model_path = os.path.join(project_root, model_path)
+            
+            if not os.path.exists(config_path):
+                raise Exception(f"Bert-VITS2 配置文件不存在: {config_path}")
+            if not os.path.exists(model_path):
+                raise Exception(f"Bert-VITS2 模型文件不存在: {model_path}")
+            
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                bertvits2_service.initialize,
+                config_path,
+                model_path,
+                device
+            )
 
+        speaker = voice or settings.BERTVITS2_DEFAULT_SPEAKER
+        language = settings.BERTVITS2_LANGUAGE
+
+        loop = asyncio.get_event_loop()
         try:
             await loop.run_in_executor(
                 None,
-                self._run_paddlespeech_synthesis,
-                executor,
+                bertvits2_service.synthesize,
                 text,
-                am,
-                voc,
-                lang,
-                spk_id,
+                speaker,
+                language,
+                settings.BERTVITS2_SDP_RATIO,
+                settings.BERTVITS2_NOISE_SCALE,
+                settings.BERTVITS2_NOISE_SCALE_W,
+                settings.BERTVITS2_LENGTH_SCALE,
                 output_path
             )
         except Exception as e:
-            logger.error(f"PaddleSpeech 合成失败: {e}")
-            raise Exception(f"PaddleSpeech TTS 合成失败: {e}")
+            logger.error(f"Bert-VITS2 合成失败: {e}")
+            raise Exception(f"Bert-VITS2 TTS 合成失败: {e}")
 
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            raise Exception("PaddleSpeech 生成的音频文件为空")
+            raise Exception("Bert-VITS2 生成的音频文件为空")
 
         return output_path
-
-    def _init_paddlespeech_executor(self, am: str, voc: str, lang: str):
-        """初始化 PaddleSpeech TTSExecutor（在后台线程中调用）"""
-        import sys
-        
-        user_site_paths = []
-        for path in sys.path[:]:
-            if 'AppData\\Roaming\\Python' in path or 'AppData/Roaming/Python' in path:
-                user_site_paths.append(path)
-                sys.path.remove(path)
-            elif os.path.expanduser('~/.local') in path:
-                user_site_paths.append(path)
-                sys.path.remove(path)
-        
-        from paddlespeech.cli.tts.infer import TTSExecutor
-        executor = TTSExecutor()
-        return executor
-
-    def _run_paddlespeech_synthesis(self, executor, text: str, am: str, voc: str, lang: str, spk_id: Optional[int], output_path: str):
-        """运行 PaddleSpeech 合成（在后台线程中调用）"""
-        kwargs = {
-            "text": text,
-            "am": am,
-            "voc": voc,
-            "lang": lang,
-            "output": output_path,
-        }
-        if spk_id is not None:
-            kwargs["spk_id"] = spk_id
-        
-        executor(**kwargs)
 
 # 全局语音服务实例
 voice_service = VoiceService()

@@ -243,89 +243,48 @@ unzip vosk-model-cn-0.22.zip
 
 无需配置，可直接使用。支持重试机制和连接错误处理。
 
-### 离线本地 TTS（方案A：PaddleSpeech，多音色）
+### 离线本地 TTS（Bert-VITS2，高质量语音合成）
 
-当你遇到 Edge TTS 403/网络限制时，可以使用 **PaddleSpeech** 在本机离线合成语音，并支持多音色（通过配置多套 am/voc/spk）。
+当你遇到 Edge TTS 403/网络限制时，可以使用 **Bert-VITS2** 在本机离线合成高质量语音，支持声音克隆和多说话人。
 
-#### 1. 安装 PaddleSpeech（离线部署）
+#### 1. 准备 Bert-VITS2 模型
 
-在目标机器的 Python 环境中安装（可提前下载 whl 离线安装）：
+确保已克隆 Bert-VITS2 项目到项目根目录，并准备好模型文件：
+
+- 配置文件：`Bert-VITS2/configs/config.json`
+- 模型文件：`Bert-VITS2/models/G_latest.pth`（或其他 .pth 模型文件）
+
+#### 2. 安装依赖
 
 ```bash
-pip install paddlepaddle paddlespeech
+pip install torch soundfile librosa pypinyin cn2an pyyaml
 ```
 
-#### 2. 配置 `.env`
+#### 3. 配置 `.env`
 
 在 `backend/.env` 中添加以下配置：
 
 ```env
-# 启用离线 TTS（Edge TTS 失败时自动降级到 PaddleSpeech）
+# 启用离线 TTS（Edge TTS 失败时自动降级到 Bert-VITS2）
 LOCAL_TTS_ENABLED=true
 
 # 可选：强制始终使用本地 TTS（不走 Edge TTS）
 # LOCAL_TTS_FORCE=false
 
-# PaddleSpeech Python 解释器（留空则自动使用当前环境）
-# PADDLESPEECH_PYTHON=
+# Bert-VITS2 配置文件路径
+BERTVITS2_CONFIG_PATH=Bert-VITS2/configs/config.json
 
-# 默认音色 key
-PADDLESPEECH_DEFAULT_VOICE=fastspeech2_csmsc
+# Bert-VITS2 模型文件路径
+BERTVITS2_MODEL_PATH=Bert-VITS2/models/G_latest.pth
 
-# 多音色配置（JSON 字符串）
-PADDLESPEECH_VOICES_JSON={"fastspeech2_csmsc":{"am":"fastspeech2_csmsc","voc":"pwgan_csmsc","lang":"zh"}}
-```
+# Bert-VITS2 设备（cpu/cuda，如果有 GPU 建议使用 cuda）
+BERTVITS2_DEVICE=cpu
 
-#### 3. 多音色配置示例
+# Bert-VITS2 默认说话人（可选，留空使用模型中的第一个说话人）
+# BERTVITS2_DEFAULT_SPEAKER=
 
-**基础配置（单音色）：**
-```json
-{
-  "fastspeech2_csmsc": {
-    "am": "fastspeech2_csmsc",
-    "voc": "pwgan_csmsc",
-    "lang": "zh"
-  }
-}
-```
-
-**多音色配置：**
-```json
-{
-  "fastspeech2_csmsc": {
-    "am": "fastspeech2_csmsc",
-    "voc": "pwgan_csmsc",
-    "lang": "zh"
-  },
-  "fastspeech2_aishell3": {
-    "am": "fastspeech2_aishell3",
-    "voc": "pwgan_aishell3",
-    "lang": "zh"
-  }
-}
-```
-
-**带说话人 ID 的配置：**
-```json
-{
-  "fastspeech2_csmsc": {
-    "am": "fastspeech2_csmsc",
-    "voc": "pwgan_csmsc",
-    "lang": "zh"
-  },
-  "fastspeech2_aishell3_female": {
-    "am": "fastspeech2_aishell3",
-    "voc": "pwgan_aishell3",
-    "lang": "zh",
-    "spk_id": 0
-  },
-  "fastspeech2_aishell3_male": {
-    "am": "fastspeech2_aishell3",
-    "voc": "pwgan_aishell3",
-    "lang": "zh",
-    "spk_id": 1
-  }
-}
+# Bert-VITS2 语言（ZH/JP/EN）
+BERTVITS2_LANGUAGE=ZH
 ```
 
 #### 4. 使用方法
@@ -336,7 +295,7 @@ curl -X POST http://localhost:18000/api/v1/voice/synthesize \
   -H "Content-Type: application/json" \
   -d '{
     "text": "你好，这是测试",
-    "voice": "fastspeech2_csmsc"
+    "voice": "说话人名称"
   }' \
   --output speech.wav
 ```
@@ -345,63 +304,53 @@ curl -X POST http://localhost:18000/api/v1/voice/synthesize \
 ```python
 from app.services.voice_service import voice_service
 
-# 使用默认音色
-audio_path = await voice_service.synthesize_local_paddlespeech(
+# 使用默认说话人
+audio_path = await voice_service.synthesize_local_bertvits2(
     text="你好，这是测试"
 )
 
-# 使用指定音色
-audio_path = await voice_service.synthesize_local_paddlespeech(
+# 使用指定说话人
+audio_path = await voice_service.synthesize_local_bertvits2(
     text="你好，这是测试",
-    voice="fastspeech2_csmsc"
+    voice="说话人名称"
 )
 ```
 
-#### 5. 音色选择规则
+#### 5. 说话人选择规则
 
 `/api/v1/voice/synthesize` 会：
 
 - 优先用 Edge TTS
-- 如果 Edge 失败且 `LOCAL_TTS_ENABLED=true`，自动降级到 PaddleSpeech
+- 如果 Edge 失败且 `LOCAL_TTS_ENABLED=true`，自动降级到 Bert-VITS2
 
-音色选择规则：
+说话人选择规则：
 
-- `voice` 传入 **PADDLESPEECH_VOICES_JSON 的 key**（如 `fastspeech2_csmsc`）会使用对应配置
-- 否则使用 `PADDLESPEECH_DEFAULT_VOICE`
+- `voice` 传入说话人名称会使用对应说话人
+- 如果未指定或说话人不存在，使用 `BERTVITS2_DEFAULT_SPEAKER` 或模型中的第一个说话人
 
-你可以把角色表的 `voice` 字段改成 PaddleSpeech key（例如 `fastspeech2_csmsc`），即可实现多角色多音色离线播报。
+你可以把角色表的 `voice` 字段改成 Bert-VITS2 说话人名称，即可实现多角色多音色离线播报。
 
 #### 6. 测试
 
 ```bash
 # 测试基础功能
 cd backend
-python test_paddlespeech_tts.py --text "你好，我是离线语音测试" --voice fastspeech2_csmsc --out test.wav
-
-# 测试 API 集成（需要后端服务运行）
-python test_api_integration.py
+python test_bertvits2.py --text "你好，我是离线语音测试" --voice "说话人名称" --out test.wav
 ```
 
 #### 7. 常见问题
 
 **Q: 首次运行很慢？**  
-A: 首次运行会下载模型（几百MB到几GB），需要等待。后续运行会快很多。
+A: 首次运行会加载模型（可能需要几秒到几十秒），后续运行会快很多。
 
-**Q: 如何查看可用的音色？**  
-A: PaddleSpeech 支持的音色取决于已安装的模型。常用音色：
-- `fastspeech2_csmsc`（中文女声，默认）
-- `fastspeech2_aishell3`（中文多说话人）
-- `fastspeech2_ljspeech`（英文）
+**Q: 如何查看可用的说话人？**  
+A: 说话人列表在模型的 `config.json` 中的 `spk2id` 字段定义，或查看模型训练时的配置。
 
-**Q: 如何添加新音色？**  
-A: 在 `PADDLESPEECH_VOICES_JSON` 中添加新的 key-value 对，确保对应的模型已安装。
+**Q: 如何添加新说话人？**  
+A: 需要重新训练模型或使用支持多说话人的预训练模型。
 
-**Q: 模型下载位置？**  
-A: PaddleSpeech 模型默认下载到：
-- Windows: `C:\Users\<用户名>\.paddlespeech\models\`
-- Linux/Mac: `~/.paddlespeech/models/`
-
-首次运行会自动下载，也可以手动下载后放到对应目录。
+**Q: 模型文件在哪里？**  
+A: 模型文件需要从 Bert-VITS2 项目获取，或使用自己训练的模型。
 
 ## 常见问题
 

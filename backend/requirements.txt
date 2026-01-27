@@ -24,6 +24,13 @@ openai-whisper>=20231117
 vosk==0.3.45
 azure-cognitiveservices-speech==1.32.1
 edge-tts==6.1.9
+# Bert-VITS2 依赖
+torch>=2.0.0
+soundfile>=0.12.0
+librosa>=0.10.0
+pypinyin>=0.50.0
+cn2an>=0.5.17
+pyyaml>=6.0
 
 # AI 和向量
 openai==1.3.7

@@ -2,10 +2,9 @@
 应用配置管理
 """
 import os
-import json
 from pydantic import PostgresDsn
 from pydantic_settings import BaseSettings
-from typing import List, Optional, Dict
+from typing import List, Optional
 from urllib.parse import quote_plus
 
 # 在加载配置之前设置编码环境变量
@@ -59,34 +58,28 @@ class Settings(BaseSettings):
     AUTO_UPDATE_GRAPH_RAG: bool = True  # 是否在创建/更新景点/知识时自动更新 GraphRAG
     GRAPHRAG_COLLECTION_NAME: str = "tour_knowledge"  # GraphRAG 集合名称
 
-    # ===== 离线 TTS（备用方案：本地 PaddleSpeech）=====
-    # 开关：启用后，Edge TTS 失败（403/网络）会自动降级到本地 PaddleSpeech TTS
+    # ===== 离线 TTS（备用方案：本地 Bert-VITS2）=====
+    # 开关：启用后，Edge TTS 失败（403/网络）会自动降级到本地 Bert-VITS2 TTS
     LOCAL_TTS_ENABLED: bool = False
     # 若为 True，则强制始终使用本地 TTS（不走 Edge）
     LOCAL_TTS_FORCE: bool = False
     
-    # PaddleSpeech 配置
-    # PaddleSpeech 运行方式（建议用当前虚拟环境 python）。
-    # 留空则自动使用当前进程的 sys.executable，避免误用系统/基础 python。
-    # Windows 如需指定可填：E:\\Anaconda\\envs\\ai_tourguide\\python.exe
-    PADDLESPEECH_PYTHON: str = ""
-    # PaddleSpeech TTS 默认 voice key（在 PADDLESPEECH_VOICES_JSON 中配置）
-    PADDLESPEECH_DEFAULT_VOICE: str = "fastspeech2_csmsc"
-    # 多音色映射（JSON 字符串）：
-    # {
-    #   "fastspeech2_csmsc": {"am":"fastspeech2_csmsc","voc":"pwgan_csmsc"},
-    #   "fastspeech2_male": {"am":"fastspeech2_csmsc","voc":"pwgan_csmsc","speaker":"male"}
-    # }
-    PADDLESPEECH_VOICES_JSON: str = "{}"
-
-    @property
-    def paddlespeech_voices(self) -> Dict[str, dict]:
-        """解析 PaddleSpeech 多音色映射。"""
-        try:
-            data = json.loads(self.PADDLESPEECH_VOICES_JSON or "{}")
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
+    # Bert-VITS2 配置
+    # Bert-VITS2 配置文件路径（config.json）
+    BERTVITS2_CONFIG_PATH: str = ""
+    # Bert-VITS2 模型文件路径（.pth）
+    BERTVITS2_MODEL_PATH: str = ""
+    # Bert-VITS2 设备（cpu/cuda）
+    BERTVITS2_DEVICE: str = "cpu"
+    # Bert-VITS2 默认说话人（从模型配置中获取，如果未设置则使用第一个可用说话人）
+    BERTVITS2_DEFAULT_SPEAKER: Optional[str] = None
+    # Bert-VITS2 语言（仅支持中文 ZH）
+    BERTVITS2_LANGUAGE: str = "ZH"
+    # Bert-VITS2 合成参数
+    BERTVITS2_SDP_RATIO: float = 0.5
+    BERTVITS2_NOISE_SCALE: float = 0.6
+    BERTVITS2_NOISE_SCALE_W: float = 0.8
+    BERTVITS2_LENGTH_SCALE: float = 1.0
     
     class Config:
         env_file = ".env"

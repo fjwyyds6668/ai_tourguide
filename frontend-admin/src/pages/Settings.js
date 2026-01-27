@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Card, Switch, Form, Input, Button, message, Space, Typography, Alert } from 'antd';
 import { SettingOutlined, SaveOutlined } from '@ant-design/icons';
 import api from '../api';
@@ -12,14 +12,12 @@ const Settings = () => {
   const [config, setConfig] = useState({
     local_tts_enabled: false,
     local_tts_force: false,
-    paddlespeech_default_voice: 'fastspeech2_csmsc',
+    bertvits2_config_path: '',
+    bertvits2_model_path: '',
+    bertvits2_default_speaker: null,
   });
 
-  useEffect(() => {
-    fetchConfig();
-  }, []);
-
-  const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api.get('/admin/settings/tts');
@@ -31,7 +29,11 @@ const Settings = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [form]);
+
+  useEffect(() => {
+    fetchConfig();
+  }, [fetchConfig]);
 
   const handleSave = async (values) => {
     setSaving(true);
@@ -60,7 +62,7 @@ const Settings = () => {
       >
         <Alert
           message="配置说明"
-          description="修改配置后需要重启后端服务才能生效。保底TTS会在Edge TTS失败时自动切换到本地TTS（PaddleSpeech）。"
+          description="修改配置后需要重启后端服务才能生效。保底TTS会在Edge TTS失败时自动切换到本地TTS（Bert-VITS2）。"
           type="info"
           showIcon
           style={{ marginBottom: 24 }}
@@ -91,11 +93,27 @@ const Settings = () => {
           </Form.Item>
 
           <Form.Item
-            label="PaddleSpeech 默认音色"
-            name="paddlespeech_default_voice"
-            tooltip="PaddleSpeech的默认音色配置，例如：fastspeech2_csmsc"
+            label="Bert-VITS2 配置文件路径"
+            name="bertvits2_config_path"
+            tooltip="Bert-VITS2配置文件路径（config.json），例如：Bert-VITS2/configs/config.json"
           >
-            <Input placeholder="fastspeech2_csmsc" />
+            <Input placeholder="Bert-VITS2/configs/config.json" />
+          </Form.Item>
+
+          <Form.Item
+            label="Bert-VITS2 模型文件路径"
+            name="bertvits2_model_path"
+            tooltip="Bert-VITS2模型文件路径（.pth），例如：Bert-VITS2/models/G_latest.pth"
+          >
+            <Input placeholder="Bert-VITS2/models/G_latest.pth" />
+          </Form.Item>
+
+          <Form.Item
+            label="Bert-VITS2 默认说话人（可选）"
+            name="bertvits2_default_speaker"
+            tooltip="Bert-VITS2默认说话人名称，如果留空则使用模型中的第一个说话人"
+          >
+            <Input placeholder="留空使用默认说话人" allowClear />
           </Form.Item>
 
           <Form.Item>
@@ -130,9 +148,19 @@ const Settings = () => {
             </Text>
           </div>
           <div style={{ marginTop: 4 }}>
-            <Text>PaddleSpeech音色：</Text>
-            <Text code>{config.paddlespeech_default_voice}</Text>
+            <Text>Bert-VITS2配置：</Text>
+            <Text code>{config.bertvits2_config_path || '未设置'}</Text>
           </div>
+          <div style={{ marginTop: 4 }}>
+            <Text>Bert-VITS2模型：</Text>
+            <Text code>{config.bertvits2_model_path || '未设置'}</Text>
+          </div>
+          {config.bertvits2_default_speaker && (
+            <div style={{ marginTop: 4 }}>
+              <Text>Bert-VITS2说话人：</Text>
+              <Text code>{config.bertvits2_default_speaker}</Text>
+            </div>
+          )}
         </div>
       </Card>
     </div>
