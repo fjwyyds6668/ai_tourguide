@@ -17,16 +17,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
-# 粗略去掉常见 emoji 范围（避免 edge-tts 在少数字符上报错）
 _EMOJI_RE = re.compile(
     r"[\U0001F300-\U0001FAFF\U00002700-\U000027BF\U0001F1E6-\U0001F1FF]+",
     flags=re.UNICODE,
 )
-# 匹配中文字符（包括中文标点）
-_CHINESE_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
-# 匹配数字
-_DIGIT_RE = re.compile(r"[0-9]")
-# 匹配所有标点符号和特殊字符（保留空格和换行）
 _PUNCTUATION_RE = re.compile(r"[^\u4e00-\u9fff0-9\s]")
 
 def _remove_invalid_unicode(text: str) -> str:
@@ -103,7 +97,7 @@ class SynthesizeRequest(BaseModel):
 async def synthesize_speech(
     req: SynthesizeRequest
 ):
-    """语音合成（优先 Edge TTS，失败可降级到离线本地 TTS：PaddleSpeech 或 Coqui TTS）"""
+    """语音合成（优先 Edge TTS，失败可降级到离线本地 TTS：PaddleSpeech）"""
     try:
         text = _normalize_tts_text(req.text)
 
@@ -137,25 +131,19 @@ async def synthesize_speech(
 
         if (audio_path is None) and settings.LOCAL_TTS_ENABLED:
             try:
-                # 根据配置选择本地 TTS 引擎
-                if settings.LOCAL_TTS_ENGINE.lower() == "coqui":
-                    # 使用 Coqui TTS
-                    audio_path = await voice_service.synthesize_local_coqui(text, voice=voice)
-                    logger.info("使用 Coqui TTS 合成成功")
-                else:
-                    # 默认使用 PaddleSpeech
-                    # - voice 传入 settings.PADDLESPEECH_VOICES_JSON 的 key，可实现多音色
-                    audio_path = await voice_service.synthesize_local_paddlespeech(text, voice=voice)
-                    logger.info("使用 PaddleSpeech TTS 合成成功")
+                # 备用方案：使用 PaddleSpeech（离线本地 TTS）
+                # - voice 传入 settings.PADDLESPEECH_VOICES_JSON 的 key，可实现多音色
+                audio_path = await voice_service.synthesize_local_paddlespeech(text, voice=voice)
+                logger.info("使用 PaddleSpeech TTS（备用方案）合成成功")
                 last_error = None
             except Exception as e:
                 last_error = e
-                logger.error(f"本地 TTS ({settings.LOCAL_TTS_ENGINE}) 合成失败: {e}")
+                logger.error(f"PaddleSpeech TTS（备用方案）合成失败: {e}")
 
         if audio_path is None:
             raise HTTPException(status_code=400, detail=f"TTS 合成失败：{str(last_error) if last_error else 'unknown error'}")
         
-        if not audio_path or not os.path.exists(audio_path):
+        if not os.path.exists(audio_path):
             raise HTTPException(status_code=500, detail="音频文件生成失败")
 
         # 根据输出文件扩展名设置 media_type
@@ -175,6 +163,6 @@ async def synthesize_speech(
         # 提供更友好的错误信息
         error_detail = str(e)
         if "403" in error_detail or "Invalid response status" in error_detail:
-            error_detail = "Edge TTS 服务暂时不可用（403）。建议启用离线本地 TTS（PaddleSpeech 或 Coqui TTS）或检查网络/限制。"
+            error_detail = "Edge TTS 服务暂时不可用（403）。建议启用离线本地 TTS（PaddleSpeech）或检查网络/限制。"
         raise HTTPException(status_code=400, detail=f"TTS 合成失败：{error_detail}")
 

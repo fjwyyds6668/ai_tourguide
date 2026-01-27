@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Switch, Form, Input, Button, message, Space, Typography, Alert, Select } from 'antd';
+import { Card, Switch, Form, Input, Button, message, Space, Typography, Alert } from 'antd';
 import { SettingOutlined, SaveOutlined } from '@ant-design/icons';
 import api from '../api';
 
 const { Title, Text } = Typography;
-const { Option } = Select;
 
 const Settings = () => {
   const [form] = Form.useForm();
@@ -13,10 +12,7 @@ const Settings = () => {
   const [config, setConfig] = useState({
     local_tts_enabled: false,
     local_tts_force: false,
-    local_tts_engine: 'paddlespeech',
     paddlespeech_default_voice: 'fastspeech2_csmsc',
-    coqui_tts_model: 'tts_models/zh-CN/baker/tacotron2-DDC-GST',
-    coqui_tts_speaker: null,
   });
 
   useEffect(() => {
@@ -42,7 +38,6 @@ const Settings = () => {
     try {
       await api.put('/admin/settings/tts', values);
       message.success('配置已保存（需要重启后端服务才能生效）');
-      // 保存后立即刷新配置，确保显示最新值
       await fetchConfig();
     } catch (error) {
       console.error('Failed to save TTS config:', error);
@@ -65,7 +60,7 @@ const Settings = () => {
       >
         <Alert
           message="配置说明"
-          description="修改配置后需要重启后端服务才能生效。保底TTS会在Edge TTS失败时自动切换到本地TTS（PaddleSpeech 或 Coqui TTS）。"
+          description="修改配置后需要重启后端服务才能生效。保底TTS会在Edge TTS失败时自动切换到本地TTS（PaddleSpeech）。"
           type="info"
           showIcon
           style={{ marginBottom: 24 }}
@@ -96,54 +91,11 @@ const Settings = () => {
           </Form.Item>
 
           <Form.Item
-            label="本地TTS引擎"
-            name="local_tts_engine"
-            tooltip="选择本地TTS引擎：PaddleSpeech（中文优化）或 Coqui TTS（多语言支持）"
+            label="PaddleSpeech 默认音色"
+            name="paddlespeech_default_voice"
+            tooltip="PaddleSpeech的默认音色配置，例如：fastspeech2_csmsc"
           >
-            <Select>
-              <Option value="paddlespeech">PaddleSpeech</Option>
-              <Option value="coqui">Coqui TTS</Option>
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            noStyle
-            shouldUpdate={(prevValues, currentValues) => prevValues.local_tts_engine !== currentValues.local_tts_engine}
-          >
-            {({ getFieldValue }) => {
-              const engine = getFieldValue('local_tts_engine');
-              if (engine === 'paddlespeech') {
-                return (
-                  <Form.Item
-                    label="PaddleSpeech 默认音色"
-                    name="paddlespeech_default_voice"
-                    tooltip="PaddleSpeech的默认音色配置，例如：fastspeech2_csmsc"
-                  >
-                    <Input placeholder="fastspeech2_csmsc" />
-                  </Form.Item>
-                );
-              } else if (engine === 'coqui') {
-                return (
-                  <>
-                    <Form.Item
-                      label="Coqui TTS 模型"
-                      name="coqui_tts_model"
-                      tooltip="Coqui TTS模型名称，例如：tts_models/zh-CN/baker/tacotron2-DDC-GST（中文）或 tts_models/en/ljspeech/tacotron2-DDC（英文）"
-                    >
-                      <Input placeholder="tts_models/zh-CN/baker/tacotron2-DDC-GST" />
-                    </Form.Item>
-                    <Form.Item
-                      label="Coqui TTS 说话人（可选）"
-                      name="coqui_tts_speaker"
-                      tooltip="某些Coqui TTS模型支持多说话人，可以指定说话人ID（留空使用默认）"
-                    >
-                      <Input placeholder="留空使用默认说话人" allowClear />
-                    </Form.Item>
-                  </>
-                );
-              }
-              return null;
-            }}
+            <Input placeholder="fastspeech2_csmsc" />
           </Form.Item>
 
           <Form.Item>
@@ -178,29 +130,9 @@ const Settings = () => {
             </Text>
           </div>
           <div style={{ marginTop: 4 }}>
-            <Text>本地TTS引擎：</Text>
-            <Text code>{config.local_tts_engine || 'paddlespeech'}</Text>
+            <Text>PaddleSpeech音色：</Text>
+            <Text code>{config.paddlespeech_default_voice}</Text>
           </div>
-          {config.local_tts_engine === 'paddlespeech' && (
-            <div style={{ marginTop: 4 }}>
-              <Text>PaddleSpeech音色：</Text>
-              <Text code>{config.paddlespeech_default_voice}</Text>
-            </div>
-          )}
-          {config.local_tts_engine === 'coqui' && (
-            <>
-              <div style={{ marginTop: 4 }}>
-                <Text>Coqui模型：</Text>
-                <Text code>{config.coqui_tts_model || '未设置'}</Text>
-              </div>
-              {config.coqui_tts_speaker && (
-                <div style={{ marginTop: 4 }}>
-                  <Text>Coqui说话人：</Text>
-                  <Text code>{config.coqui_tts_speaker}</Text>
-                </div>
-              )}
-            </>
-          )}
         </div>
       </Card>
     </div>

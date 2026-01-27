@@ -544,19 +544,18 @@ class TTSConfigResponse(BaseModel):
     """TTS配置响应"""
     local_tts_enabled: bool
     local_tts_force: bool
-    local_tts_engine: str
     paddlespeech_default_voice: str
-    coqui_tts_model: str
-    coqui_tts_speaker: Optional[str] = None
 
 class TTSConfigUpdateRequest(BaseModel):
     """TTS配置更新请求"""
     local_tts_enabled: Optional[bool] = None
     local_tts_force: Optional[bool] = None
-    local_tts_engine: Optional[str] = None
     paddlespeech_default_voice: Optional[str] = None
-    coqui_tts_model: Optional[str] = None
-    coqui_tts_speaker: Optional[str] = None
+
+def _get_env_file_path():
+    """获取 .env 文件路径"""
+    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    return os.path.join(backend_dir, ".env")
 
 @router.get("/settings/tts", response_model=TTSConfigResponse)
 async def get_tts_config(
@@ -566,19 +565,12 @@ async def get_tts_config(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可查看配置")
     
-    # 从 .env 文件实时读取配置（而不是从已加载的 settings 对象）
-    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    env_file = os.path.join(backend_dir, ".env")
+    env_file = _get_env_file_path()
     
-    # 默认值
     local_tts_enabled = settings.LOCAL_TTS_ENABLED
     local_tts_force = settings.LOCAL_TTS_FORCE
-    local_tts_engine = settings.LOCAL_TTS_ENGINE
     paddlespeech_default_voice = settings.PADDLESPEECH_DEFAULT_VOICE
-    coqui_tts_model = settings.COQUI_TTS_MODEL
-    coqui_tts_speaker = settings.COQUI_TTS_SPEAKER
     
-    # 从 .env 文件读取最新值
     if os.path.exists(env_file):
         with open(env_file, "r", encoding="utf-8") as f:
             for line in f:
@@ -589,29 +581,15 @@ async def get_tts_config(
                 elif line.startswith("LOCAL_TTS_FORCE="):
                     value = line.split("=", 1)[1].strip()
                     local_tts_force = value.lower() in ("true", "1", "yes")
-                elif line.startswith("LOCAL_TTS_ENGINE="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        local_tts_engine = value
                 elif line.startswith("PADDLESPEECH_DEFAULT_VOICE="):
                     value = line.split("=", 1)[1].strip()
                     if value:
                         paddlespeech_default_voice = value
-                elif line.startswith("COQUI_TTS_MODEL="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        coqui_tts_model = value
-                elif line.startswith("COQUI_TTS_SPEAKER="):
-                    value = line.split("=", 1)[1].strip()
-                    coqui_tts_speaker = value if value else None
     
     return TTSConfigResponse(
         local_tts_enabled=local_tts_enabled,
         local_tts_force=local_tts_force,
-        local_tts_engine=local_tts_engine,
         paddlespeech_default_voice=paddlespeech_default_voice,
-        coqui_tts_model=coqui_tts_model,
-        coqui_tts_speaker=coqui_tts_speaker,
     )
 
 @router.put("/settings/tts")
@@ -623,20 +601,15 @@ async def update_tts_config(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可修改配置")
     
-    # 找到 .env 文件路径
-    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    env_file = os.path.join(backend_dir, ".env")
+    env_file = _get_env_file_path()
     
-    # 如果 .env 不存在，创建它
     if not os.path.exists(env_file):
         with open(env_file, "w", encoding="utf-8") as f:
             f.write("# TTS Configuration\n")
     
-    # 读取现有 .env 内容
     env_lines = []
-    if os.path.exists(env_file):
-        with open(env_file, "r", encoding="utf-8") as f:
-            env_lines = f.readlines()
+    with open(env_file, "r", encoding="utf-8") as f:
+        env_lines = f.readlines()
     
     # 更新或添加配置项
     updated_keys = set()
@@ -662,28 +635,10 @@ async def update_tts_config(
                 updated_keys.add("LOCAL_TTS_FORCE")
             else:
                 new_lines.append(line)
-        elif stripped.startswith("LOCAL_TTS_ENGINE="):
-            if req.local_tts_engine is not None:
-                new_lines.append(f"LOCAL_TTS_ENGINE={req.local_tts_engine}\n")
-                updated_keys.add("LOCAL_TTS_ENGINE")
-            else:
-                new_lines.append(line)
         elif stripped.startswith("PADDLESPEECH_DEFAULT_VOICE="):
             if req.paddlespeech_default_voice is not None:
                 new_lines.append(f"PADDLESPEECH_DEFAULT_VOICE={req.paddlespeech_default_voice}\n")
                 updated_keys.add("PADDLESPEECH_DEFAULT_VOICE")
-            else:
-                new_lines.append(line)
-        elif stripped.startswith("COQUI_TTS_MODEL="):
-            if req.coqui_tts_model is not None:
-                new_lines.append(f"COQUI_TTS_MODEL={req.coqui_tts_model}\n")
-                updated_keys.add("COQUI_TTS_MODEL")
-            else:
-                new_lines.append(line)
-        elif stripped.startswith("COQUI_TTS_SPEAKER="):
-            if req.coqui_tts_speaker is not None:
-                new_lines.append(f"COQUI_TTS_SPEAKER={req.coqui_tts_speaker}\n")
-                updated_keys.add("COQUI_TTS_SPEAKER")
             else:
                 new_lines.append(line)
         else:
@@ -694,15 +649,8 @@ async def update_tts_config(
         new_lines.append(f"LOCAL_TTS_ENABLED={str(req.local_tts_enabled).lower()}\n")
     if req.local_tts_force is not None and "LOCAL_TTS_FORCE" not in updated_keys:
         new_lines.append(f"LOCAL_TTS_FORCE={str(req.local_tts_force).lower()}\n")
-    if req.local_tts_engine is not None and "LOCAL_TTS_ENGINE" not in updated_keys:
-        new_lines.append(f"LOCAL_TTS_ENGINE={req.local_tts_engine}\n")
     if req.paddlespeech_default_voice is not None and "PADDLESPEECH_DEFAULT_VOICE" not in updated_keys:
         new_lines.append(f"PADDLESPEECH_DEFAULT_VOICE={req.paddlespeech_default_voice}\n")
-    if req.coqui_tts_model is not None and "COQUI_TTS_MODEL" not in updated_keys:
-        new_lines.append(f"COQUI_TTS_MODEL={req.coqui_tts_model}\n")
-    if req.coqui_tts_speaker is not None and "COQUI_TTS_SPEAKER" not in updated_keys:
-        speaker_value = req.coqui_tts_speaker if req.coqui_tts_speaker else ""
-        new_lines.append(f"COQUI_TTS_SPEAKER={speaker_value}\n")
     
     # 写回 .env 文件
     try:
@@ -716,10 +664,7 @@ async def update_tts_config(
         "updated": {
             "local_tts_enabled": req.local_tts_enabled if req.local_tts_enabled is not None else settings.LOCAL_TTS_ENABLED,
             "local_tts_force": req.local_tts_force if req.local_tts_force is not None else settings.LOCAL_TTS_FORCE,
-            "local_tts_engine": req.local_tts_engine if req.local_tts_engine is not None else settings.LOCAL_TTS_ENGINE,
             "paddlespeech_default_voice": req.paddlespeech_default_voice if req.paddlespeech_default_voice is not None else settings.PADDLESPEECH_DEFAULT_VOICE,
-            "coqui_tts_model": req.coqui_tts_model if req.coqui_tts_model is not None else settings.COQUI_TTS_MODEL,
-            "coqui_tts_speaker": req.coqui_tts_speaker if req.coqui_tts_speaker is not None else settings.COQUI_TTS_SPEAKER,
         }
     }
 
