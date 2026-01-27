@@ -283,7 +283,7 @@ BERTVITS2_DEVICE=cpu
 # Bert-VITS2 默认说话人（可选，留空使用模型中的第一个说话人）
 # BERTVITS2_DEFAULT_SPEAKER=
 
-# Bert-VITS2 语言（ZH/JP/EN）
+# Bert-VITS2 语言（仅支持中文 ZH）
 BERTVITS2_LANGUAGE=ZH
 ```
 
