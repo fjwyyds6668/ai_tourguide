@@ -3,6 +3,7 @@
 """
 import os
 import uuid
+import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -16,6 +17,8 @@ from app.core.milvus_client import milvus_client
 from app.core.prisma_client import get_prisma, disconnect_prisma
 from app.core.config import settings
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -107,6 +110,122 @@ def _attraction_to_text(attraction: dict) -> str:
         parts.append(f"坐标：({lat}, {lng})")
     return "\n".join(parts).strip()
 
+async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "upsert"):
+    """
+    同步单个景点到 GraphRAG（Milvus + Neo4j）
+    
+    Args:
+        attraction_dict: 景点字典，包含 id, name, description 等字段
+        operation: "upsert"（创建/更新）或 "delete"（删除）
+    """
+    if not settings.AUTO_UPDATE_GRAPH_RAG:
+        logger.debug("GraphRAG 自动更新已禁用，跳过同步")
+        return
+    
+    try:
+        text_id = f"attraction_{attraction_dict.get('id')}"
+        collection_name = settings.GRAPHRAG_COLLECTION_NAME
+        
+        if operation == "delete":
+            # 删除操作：从 Milvus 和 Neo4j 中移除
+            try:
+                # 从 Milvus 删除
+                from pymilvus import utility
+                if utility.has_collection(collection_name):
+                    collection = milvus_client.get_collection(collection_name)
+                    # Milvus 需要通过表达式删除，使用 text_id 字段
+                    expr = f'text_id == "{text_id}"'
+                    collection.delete(expr)
+                    collection.flush()
+                    logger.info(f"已从 Milvus 删除景点: {text_id}")
+            except Exception as e:
+                logger.warning(f"从 Milvus 删除失败: {e}")
+            
+            try:
+                # 从 Neo4j 删除 Text 节点和相关关系
+                query = """
+                MATCH (t:Text {id: $text_id})
+                DETACH DELETE t
+                """
+                graph_builder.client.execute_query(query, {"text_id": text_id})
+                logger.info(f"已从 Neo4j 删除文本节点: {text_id}")
+            except Exception as e:
+                logger.warning(f"从 Neo4j 删除失败: {e}")
+            
+            # 删除 Attraction 节点（如果存在）
+            try:
+                query = """
+                MATCH (a:Attraction {id: $id})
+                DETACH DELETE a
+                """
+                graph_builder.client.execute_query(query, {"id": attraction_dict.get('id')})
+                logger.info(f"已从 Neo4j 删除景点节点: {attraction_dict.get('id')}")
+            except Exception as e:
+                logger.warning(f"从 Neo4j 删除景点节点失败: {e}")
+        
+        else:
+            # 创建/更新操作
+            text = _attraction_to_text(attraction_dict)
+            if not text:
+                logger.warning(f"景点 {attraction_dict.get('id')} 文本为空，跳过 GraphRAG 同步")
+                return
+            
+            # 1. 更新 Milvus（先删除旧的，再插入新的）
+            try:
+                collection = milvus_client.create_collection_if_not_exists(
+                    collection_name,
+                    dimension=384
+                )
+                
+                # 删除旧数据（如果存在）
+                from pymilvus import utility
+                if utility.has_collection(collection_name):
+                    expr = f'text_id == "{text_id}"'
+                    collection.delete(expr)
+                    collection.flush()
+                
+                # 生成新的嵌入向量并插入
+                embedding = rag_service.generate_embedding(text)
+                entities = [
+                    [text_id],
+                    [embedding]
+                ]
+                collection.insert(entities)
+                collection.flush()
+                logger.info(f"已更新 Milvus 中的景点: {text_id}")
+            except Exception as e:
+                logger.error(f"更新 Milvus 失败: {e}")
+                raise
+            
+            # 2. 更新 Neo4j（创建/更新 Text 节点和实体）
+            try:
+                # 删除旧的 Text 节点和相关关系
+                query = """
+                MATCH (t:Text {id: $text_id})
+                DETACH DELETE t
+                """
+                graph_builder.client.execute_query(query, {"text_id": text_id})
+                
+                # 提取实体并创建新的图结构
+                extracted = rag_service.extract_entities(text)
+                await graph_builder.extract_and_store_entities(text, text_id, extracted)
+                logger.info(f"已更新 Neo4j 中的景点: {text_id}, 提取了 {len(extracted)} 个实体")
+            except Exception as e:
+                logger.error(f"更新 Neo4j 失败: {e}")
+                raise
+            
+            # 3. 创建/更新 Attraction 节点（用于景点图谱）
+            try:
+                await graph_builder.create_attraction_node(attraction_dict)
+                logger.info(f"已更新 Neo4j 中的景点节点: {attraction_dict.get('name')}")
+            except Exception as e:
+                logger.warning(f"更新景点节点失败: {e}")
+                # 不抛出异常，因为这不是关键操作
+        
+    except Exception as e:
+        logger.error(f"同步景点到 GraphRAG 失败: {e}", exc_info=True)
+        # 不抛出异常，避免影响主流程
+
 async def _upload_items_to_graphrag(items: List[KnowledgeBaseItem], collection_name: str, build_graph: bool) -> dict:
     """复用 /admin/knowledge/upload 的逻辑，供批量导入调用。"""
     # 步骤1: 创建集合（如果不存在）
@@ -150,7 +269,7 @@ async def upload_knowledge(
     build_graph: bool = True
 ):
     """
-    上传知识库内容到向量数据库和图数据库
+    上传知识库内容到向量数据库和图数据库（自动同步到 GraphRAG）
     
     GraphRAG 知识构建：
     1. 存储向量嵌入到 Milvus（用于语义搜索）
@@ -158,6 +277,84 @@ async def upload_knowledge(
     """
     try:
         return await _upload_items_to_graphrag(items, collection_name, build_graph)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/knowledge/{text_id}")
+async def update_knowledge(
+    text_id: str,
+    item: KnowledgeBaseItem,
+    collection_name: str = "tour_knowledge",
+    build_graph: bool = True
+):
+    """更新知识库内容（自动同步到 GraphRAG）"""
+    if not settings.AUTO_UPDATE_GRAPH_RAG:
+        raise HTTPException(status_code=400, detail="GraphRAG 自动更新已禁用")
+    
+    try:
+        # 确保 text_id 一致
+        item.text_id = text_id
+        
+        # 先删除旧数据
+        try:
+            from pymilvus import utility
+            if utility.has_collection(collection_name):
+                collection = milvus_client.get_collection(collection_name)
+                expr = f'text_id == "{text_id}"'
+                collection.delete(expr)
+                collection.flush()
+        except Exception as e:
+            logger.warning(f"删除旧知识库数据失败: {e}")
+        
+        # 删除 Neo4j 中的旧节点
+        try:
+            query = """
+            MATCH (t:Text {id: $text_id})
+            DETACH DELETE t
+            """
+            graph_builder.client.execute_query(query, {"text_id": text_id})
+        except Exception as e:
+            logger.warning(f"删除 Neo4j 旧节点失败: {e}")
+        
+        # 重新上传（使用现有的上传逻辑）
+        return await _upload_items_to_graphrag([item], collection_name, build_graph)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/knowledge/{text_id}")
+async def delete_knowledge(
+    text_id: str,
+    collection_name: str = "tour_knowledge"
+):
+    """删除知识库内容（自动从 GraphRAG 删除）"""
+    if not settings.AUTO_UPDATE_GRAPH_RAG:
+        raise HTTPException(status_code=400, detail="GraphRAG 自动更新已禁用")
+    
+    try:
+        # 从 Milvus 删除
+        try:
+            from pymilvus import utility
+            if utility.has_collection(collection_name):
+                collection = milvus_client.get_collection(collection_name)
+                expr = f'text_id == "{text_id}"'
+                collection.delete(expr)
+                collection.flush()
+                logger.info(f"已从 Milvus 删除知识库: {text_id}")
+        except Exception as e:
+            logger.warning(f"从 Milvus 删除失败: {e}")
+        
+        # 从 Neo4j 删除
+        try:
+            query = """
+            MATCH (t:Text {id: $text_id})
+            DETACH DELETE t
+            """
+            graph_builder.client.execute_query(query, {"text_id": text_id})
+            logger.info(f"已从 Neo4j 删除知识库: {text_id}")
+        except Exception as e:
+            logger.warning(f"从 Neo4j 删除失败: {e}")
+        
+        return {"message": f"Knowledge item {text_id} deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -347,13 +544,19 @@ class TTSConfigResponse(BaseModel):
     """TTS配置响应"""
     local_tts_enabled: bool
     local_tts_force: bool
+    local_tts_engine: str
     paddlespeech_default_voice: str
+    coqui_tts_model: str
+    coqui_tts_speaker: Optional[str] = None
 
 class TTSConfigUpdateRequest(BaseModel):
     """TTS配置更新请求"""
     local_tts_enabled: Optional[bool] = None
     local_tts_force: Optional[bool] = None
+    local_tts_engine: Optional[str] = None
     paddlespeech_default_voice: Optional[str] = None
+    coqui_tts_model: Optional[str] = None
+    coqui_tts_speaker: Optional[str] = None
 
 @router.get("/settings/tts", response_model=TTSConfigResponse)
 async def get_tts_config(
@@ -370,7 +573,10 @@ async def get_tts_config(
     # 默认值
     local_tts_enabled = settings.LOCAL_TTS_ENABLED
     local_tts_force = settings.LOCAL_TTS_FORCE
+    local_tts_engine = settings.LOCAL_TTS_ENGINE
     paddlespeech_default_voice = settings.PADDLESPEECH_DEFAULT_VOICE
+    coqui_tts_model = settings.COQUI_TTS_MODEL
+    coqui_tts_speaker = settings.COQUI_TTS_SPEAKER
     
     # 从 .env 文件读取最新值
     if os.path.exists(env_file):
@@ -383,15 +589,29 @@ async def get_tts_config(
                 elif line.startswith("LOCAL_TTS_FORCE="):
                     value = line.split("=", 1)[1].strip()
                     local_tts_force = value.lower() in ("true", "1", "yes")
+                elif line.startswith("LOCAL_TTS_ENGINE="):
+                    value = line.split("=", 1)[1].strip()
+                    if value:
+                        local_tts_engine = value
                 elif line.startswith("PADDLESPEECH_DEFAULT_VOICE="):
                     value = line.split("=", 1)[1].strip()
                     if value:
                         paddlespeech_default_voice = value
+                elif line.startswith("COQUI_TTS_MODEL="):
+                    value = line.split("=", 1)[1].strip()
+                    if value:
+                        coqui_tts_model = value
+                elif line.startswith("COQUI_TTS_SPEAKER="):
+                    value = line.split("=", 1)[1].strip()
+                    coqui_tts_speaker = value if value else None
     
     return TTSConfigResponse(
         local_tts_enabled=local_tts_enabled,
         local_tts_force=local_tts_force,
+        local_tts_engine=local_tts_engine,
         paddlespeech_default_voice=paddlespeech_default_voice,
+        coqui_tts_model=coqui_tts_model,
+        coqui_tts_speaker=coqui_tts_speaker,
     )
 
 @router.put("/settings/tts")
@@ -442,10 +662,28 @@ async def update_tts_config(
                 updated_keys.add("LOCAL_TTS_FORCE")
             else:
                 new_lines.append(line)
+        elif stripped.startswith("LOCAL_TTS_ENGINE="):
+            if req.local_tts_engine is not None:
+                new_lines.append(f"LOCAL_TTS_ENGINE={req.local_tts_engine}\n")
+                updated_keys.add("LOCAL_TTS_ENGINE")
+            else:
+                new_lines.append(line)
         elif stripped.startswith("PADDLESPEECH_DEFAULT_VOICE="):
             if req.paddlespeech_default_voice is not None:
                 new_lines.append(f"PADDLESPEECH_DEFAULT_VOICE={req.paddlespeech_default_voice}\n")
                 updated_keys.add("PADDLESPEECH_DEFAULT_VOICE")
+            else:
+                new_lines.append(line)
+        elif stripped.startswith("COQUI_TTS_MODEL="):
+            if req.coqui_tts_model is not None:
+                new_lines.append(f"COQUI_TTS_MODEL={req.coqui_tts_model}\n")
+                updated_keys.add("COQUI_TTS_MODEL")
+            else:
+                new_lines.append(line)
+        elif stripped.startswith("COQUI_TTS_SPEAKER="):
+            if req.coqui_tts_speaker is not None:
+                new_lines.append(f"COQUI_TTS_SPEAKER={req.coqui_tts_speaker}\n")
+                updated_keys.add("COQUI_TTS_SPEAKER")
             else:
                 new_lines.append(line)
         else:
@@ -456,8 +694,15 @@ async def update_tts_config(
         new_lines.append(f"LOCAL_TTS_ENABLED={str(req.local_tts_enabled).lower()}\n")
     if req.local_tts_force is not None and "LOCAL_TTS_FORCE" not in updated_keys:
         new_lines.append(f"LOCAL_TTS_FORCE={str(req.local_tts_force).lower()}\n")
+    if req.local_tts_engine is not None and "LOCAL_TTS_ENGINE" not in updated_keys:
+        new_lines.append(f"LOCAL_TTS_ENGINE={req.local_tts_engine}\n")
     if req.paddlespeech_default_voice is not None and "PADDLESPEECH_DEFAULT_VOICE" not in updated_keys:
         new_lines.append(f"PADDLESPEECH_DEFAULT_VOICE={req.paddlespeech_default_voice}\n")
+    if req.coqui_tts_model is not None and "COQUI_TTS_MODEL" not in updated_keys:
+        new_lines.append(f"COQUI_TTS_MODEL={req.coqui_tts_model}\n")
+    if req.coqui_tts_speaker is not None and "COQUI_TTS_SPEAKER" not in updated_keys:
+        speaker_value = req.coqui_tts_speaker if req.coqui_tts_speaker else ""
+        new_lines.append(f"COQUI_TTS_SPEAKER={speaker_value}\n")
     
     # 写回 .env 文件
     try:
@@ -471,7 +716,10 @@ async def update_tts_config(
         "updated": {
             "local_tts_enabled": req.local_tts_enabled if req.local_tts_enabled is not None else settings.LOCAL_TTS_ENABLED,
             "local_tts_force": req.local_tts_force if req.local_tts_force is not None else settings.LOCAL_TTS_FORCE,
+            "local_tts_engine": req.local_tts_engine if req.local_tts_engine is not None else settings.LOCAL_TTS_ENGINE,
             "paddlespeech_default_voice": req.paddlespeech_default_voice if req.paddlespeech_default_voice is not None else settings.PADDLESPEECH_DEFAULT_VOICE,
+            "coqui_tts_model": req.coqui_tts_model if req.coqui_tts_model is not None else settings.COQUI_TTS_MODEL,
+            "coqui_tts_speaker": req.coqui_tts_speaker if req.coqui_tts_speaker is not None else settings.COQUI_TTS_SPEAKER,
         }
     }
 

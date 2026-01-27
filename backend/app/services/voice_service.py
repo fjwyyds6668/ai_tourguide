@@ -11,7 +11,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 class VoiceService:
-    """语音处理服务，支持 Whisper/Vosk 识别和 Edge TTS 合成"""
+    """语音处理服务，支持 Whisper/Vosk 识别和 Edge TTS/本地 TTS（PaddleSpeech/Coqui TTS）合成"""
     
     def __init__(self):
         self.whisper_model = None
@@ -268,6 +268,89 @@ class VoiceService:
             raise Exception("PaddleSpeech 生成的音频文件为空")
 
         return output_path
+
+    async def synthesize_local_coqui(
+        self,
+        text: str,
+        output_path: Optional[str] = None,
+        voice: Optional[str] = None,
+    ) -> str:
+        """
+        离线本地 TTS（Coqui TTS）。
+
+        使用 Coqui TTS 库进行语音合成，支持多种语言和音色。
+        voice: 如果提供，将作为 speaker 参数（某些模型支持多说话人）
+        """
+        try:
+            from TTS.api import TTS
+        except ImportError:
+            raise Exception("Coqui TTS 未安装，请运行: pip install TTS")
+
+        if not output_path:
+            output_path = tempfile.mktemp(suffix=".wav")
+
+        # 获取模型配置
+        model_name = settings.COQUI_TTS_MODEL
+        speaker = voice or settings.COQUI_TTS_SPEAKER
+        lang = settings.COQUI_TTS_LANG
+
+        try:
+            logger.info(f"初始化 Coqui TTS 模型: {model_name}")
+            logger.info("注意: 首次运行会下载模型（可能较慢，请耐心等待）...")
+            
+            # 尝试配置使用 Hugging Face 作为备用源（如果官方源不可用）
+            # Coqui TTS 会自动尝试多个源，包括 Hugging Face
+            try:
+                # 设置 TTS_HOME 环境变量（如果未设置）
+                if 'TTS_HOME' not in os.environ:
+                    tts_home = os.path.join(os.path.expanduser('~'), '.local', 'share', 'tts')
+                    # Windows 使用 AppData\Local\tts
+                    if os.name == 'nt':
+                        tts_home = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'tts')
+                    os.environ['TTS_HOME'] = tts_home
+                    logger.debug(f"设置 TTS_HOME: {tts_home}")
+            except Exception as e:
+                logger.warning(f"设置 TTS_HOME 时出错: {e}，使用默认值")
+            
+            # 初始化 TTS 引擎
+            # Coqui TTS 会自动尝试从多个源下载模型（包括 Hugging Face）
+            tts = TTS(model_name=model_name)
+            
+            # 准备参数
+            kwargs = {
+                "text": text,
+                "file_path": output_path,
+            }
+            
+            # 如果模型支持 speaker，添加 speaker 参数
+            if speaker:
+                # Coqui TTS 的 speaker 参数直接传递给 tts_to_file
+                # 如果模型不支持该 speaker，会在调用时抛出异常
+                try:
+                    kwargs["speaker"] = speaker
+                    logger.info(f"使用说话人: {speaker}")
+                except Exception as e:
+                    logger.warning(f"设置说话人时出错: {e}，将尝试不使用说话人参数")
+                    # 如果设置失败，移除 speaker 参数
+                    kwargs.pop("speaker", None)
+            
+            # 如果指定了语言，添加语言参数
+            if lang:
+                kwargs["language"] = lang
+            
+            logger.info(f"Coqui TTS 合成: {text[:50]}...")
+            tts.tts_to_file(**kwargs)
+            
+            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                raise Exception("Coqui TTS 生成的音频文件为空")
+            
+            logger.info(f"Coqui TTS 合成成功: {output_path}")
+            return output_path
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Coqui TTS 合成失败: {error_msg}")
+            raise Exception(f"Coqui TTS 合成失败: {error_msg}")
 
 # 全局语音服务实例
 voice_service = VoiceService()

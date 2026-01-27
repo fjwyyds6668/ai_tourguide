@@ -58,12 +58,20 @@ class Settings(BaseSettings):
     
     # CORS 配置
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    
+    # GraphRAG 自动更新配置
+    AUTO_UPDATE_GRAPH_RAG: bool = True  # 是否在创建/更新景点/知识时自动更新 GraphRAG
+    GRAPHRAG_COLLECTION_NAME: str = "tour_knowledge"  # GraphRAG 集合名称
 
     # ===== 离线 TTS（方案A：本地 PaddleSpeech）=====
-    # 开关：启用后，Edge TTS 失败（403/网络）会自动降级到本地 PaddleSpeech
+    # 开关：启用后，Edge TTS 失败（403/网络）会自动降级到本地 TTS
     LOCAL_TTS_ENABLED: bool = False
     # 若为 True，则强制始终使用本地 TTS（不走 Edge）
     LOCAL_TTS_FORCE: bool = False
+    # 本地 TTS 引擎选择：paddlespeech 或 coqui
+    LOCAL_TTS_ENGINE: str = "paddlespeech"  # paddlespeech 或 coqui
+    
+    # PaddleSpeech 配置
     # PaddleSpeech 运行方式（建议用当前虚拟环境 python）。
     # 留空则自动使用当前进程的 sys.executable，避免误用系统/基础 python。
     # Windows 如需指定可填：E:\\Anaconda\\envs\\ai_tourguide\\python.exe
@@ -76,6 +84,16 @@ class Settings(BaseSettings):
     #   "fastspeech2_male": {"am":"fastspeech2_csmsc","voc":"pwgan_csmsc","speaker":"male"}
     # }
     PADDLESPEECH_VOICES_JSON: str = "{}"
+
+    # Coqui TTS 配置
+    # Coqui TTS 模型名称（从 https://github.com/coqui-ai/TTS 选择）
+    # 中文推荐：tts_models/zh-CN/baker/tacotron2-DDC-GST
+    # 英文推荐：tts_models/en/ljspeech/tacotron2-DDC
+    COQUI_TTS_MODEL: str = "tts_models/zh-CN/baker/tacotron2-DDC-GST"
+    # Coqui TTS 默认说话人（speaker，某些模型支持多说话人）
+    COQUI_TTS_SPEAKER: Optional[str] = None
+    # Coqui TTS 语言（自动从模型推断，通常不需要设置）
+    COQUI_TTS_LANG: Optional[str] = None
 
     @property
     def paddlespeech_voices(self) -> Dict[str, dict]:
