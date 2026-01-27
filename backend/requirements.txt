@@ -31,6 +31,8 @@ librosa>=0.10.0
 pypinyin>=0.50.0
 cn2an>=0.5.17
 pyyaml>=6.0
+# CosyVoice2 依赖
+modelscope>=1.9.0
 
 # AI 和向量
 openai==1.3.7

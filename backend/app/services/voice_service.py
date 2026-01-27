@@ -245,6 +245,62 @@ class VoiceService:
 
         return output_path
 
+    async def synthesize_local_cosyvoice2(
+        self,
+        text: str,
+        output_path: Optional[str] = None,
+        voice: Optional[str] = None,
+    ) -> str:
+        """
+        离线本地 TTS（CosyVoice2）- 阿里巴巴达摩院高质量语音合成。
+
+        voice: 说话人名称（可选）
+        """
+        import asyncio
+        from app.services.cosyvoice2_service import cosyvoice2_service
+
+        if not output_path:
+            output_path = tempfile.mktemp(suffix=".wav")
+
+        if not cosyvoice2_service._initialized:
+            model_path = settings.COSYVOICE2_MODEL_PATH
+            device = settings.COSYVOICE2_DEVICE
+            
+            # 将相对路径转换为绝对路径（如果提供了相对路径）
+            if model_path and not os.path.isabs(model_path):
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+                model_path = os.path.join(project_root, model_path)
+            
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                cosyvoice2_service.initialize,
+                model_path if model_path else None,
+                device
+            )
+
+        speaker = voice or settings.COSYVOICE2_SPEAKER
+        language = settings.COSYVOICE2_LANGUAGE
+
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(
+                None,
+                cosyvoice2_service.synthesize,
+                text,
+                speaker,
+                language,
+                output_path
+            )
+        except Exception as e:
+            logger.error(f"CosyVoice2 合成失败: {e}")
+            raise Exception(f"CosyVoice2 TTS 合成失败: {e}")
+
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            raise Exception("CosyVoice2 生成的音频文件为空")
+
+        return output_path
+
 # 全局语音服务实例
 voice_service = VoiceService()
 

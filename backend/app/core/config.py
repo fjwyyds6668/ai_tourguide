@@ -58,11 +58,13 @@ class Settings(BaseSettings):
     AUTO_UPDATE_GRAPH_RAG: bool = True  # 是否在创建/更新景点/知识时自动更新 GraphRAG
     GRAPHRAG_COLLECTION_NAME: str = "tour_knowledge"  # GraphRAG 集合名称
 
-    # ===== 离线 TTS（备用方案：本地 Bert-VITS2）=====
-    # 开关：启用后，Edge TTS 失败（403/网络）会自动降级到本地 Bert-VITS2 TTS
+    # ===== 离线 TTS（备用方案：本地 TTS）=====
+    # 开关：启用后，Edge TTS 失败（403/网络）会自动降级到本地 TTS
     LOCAL_TTS_ENABLED: bool = False
     # 若为 True，则强制始终使用本地 TTS（不走 Edge）
     LOCAL_TTS_FORCE: bool = False
+    # 本地 TTS 引擎选择：bertvits2 或 cosyvoice2
+    LOCAL_TTS_ENGINE: str = "cosyvoice2"  # 默认使用 CosyVoice2
     
     # Bert-VITS2 配置
     # Bert-VITS2 配置文件路径（config.json）
@@ -80,6 +82,16 @@ class Settings(BaseSettings):
     BERTVITS2_NOISE_SCALE: float = 0.6
     BERTVITS2_NOISE_SCALE_W: float = 0.8
     BERTVITS2_LENGTH_SCALE: float = 1.0
+    
+    # CosyVoice2 配置
+    # CosyVoice2 模型路径（可选，如果为空则从 ModelScope/HuggingFace 自动下载）
+    COSYVOICE2_MODEL_PATH: str = ""
+    # CosyVoice2 设备（cpu/cuda）
+    COSYVOICE2_DEVICE: str = "cpu"
+    # CosyVoice2 语言（zh/en/ja 等）
+    COSYVOICE2_LANGUAGE: str = "zh"
+    # CosyVoice2 说话人（可选）
+    COSYVOICE2_SPEAKER: Optional[str] = None
     
     class Config:
         env_file = ".env"

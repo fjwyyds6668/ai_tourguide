@@ -20,9 +20,8 @@ logger = logging.getLogger(__name__)
 class MilvusClient:
     def __init__(self):
         self.connected = False
-        # 不强制在 import/启动阶段连接，避免 Milvus 不可用导致服务直接启动失败
-        if _MILVUS_AVAILABLE:
-            self.connect()
+        # 懒连接：不在 import/启动阶段连接，避免 Milvus 未启动时刷屏报错。
+        # 需要向量检索时（如 RAGService.vector_search）再显式 connect()
     
     def connect(self):
         """连接到 Milvus"""

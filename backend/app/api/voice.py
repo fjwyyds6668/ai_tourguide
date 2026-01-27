@@ -131,13 +131,18 @@ async def synthesize_speech(
 
         if (audio_path is None) and settings.LOCAL_TTS_ENABLED:
             try:
-                # 备用方案：使用 Bert-VITS2（离线本地 TTS）
-                audio_path = await voice_service.synthesize_local_bertvits2(text, voice=voice)
-                logger.info("使用 Bert-VITS2 TTS（备用方案）合成成功")
+                # 备用方案：使用本地 TTS（CosyVoice2 或 Bert-VITS2）
+                if settings.LOCAL_TTS_ENGINE == "cosyvoice2":
+                    audio_path = await voice_service.synthesize_local_cosyvoice2(text, voice=voice)
+                    logger.info("使用 CosyVoice2 TTS（备用方案）合成成功")
+                else:
+                    audio_path = await voice_service.synthesize_local_bertvits2(text, voice=voice)
+                    logger.info("使用 Bert-VITS2 TTS（备用方案）合成成功")
                 last_error = None
             except Exception as e:
                 last_error = e
-                logger.error(f"Bert-VITS2 TTS（备用方案）合成失败: {e}")
+                engine_name = settings.LOCAL_TTS_ENGINE.upper()
+                logger.error(f"{engine_name} TTS（备用方案）合成失败: {e}")
 
         if audio_path is None:
             raise HTTPException(status_code=400, detail=f"TTS 合成失败：{str(last_error) if last_error else 'unknown error'}")
