@@ -17,6 +17,7 @@ prisma>=0.11.0
 psycopg2-binary==2.9.9
 neo4j==5.14.1
 pymilvus>=2.6.0
+protobuf>=4.21.0  # pymilvus 需要 protobuf 4.x 版本
 
 # 语音处理
 openai-whisper>=20231117

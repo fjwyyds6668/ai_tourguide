@@ -359,14 +359,39 @@ class TTSConfigUpdateRequest(BaseModel):
 async def get_tts_config(
     current_user: User = Depends(get_current_user),
 ):
-    """获取TTS配置（仅管理员）"""
+    """获取TTS配置（仅管理员，从.env文件实时读取）"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可查看配置")
     
+    # 从 .env 文件实时读取配置（而不是从已加载的 settings 对象）
+    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    env_file = os.path.join(backend_dir, ".env")
+    
+    # 默认值
+    local_tts_enabled = settings.LOCAL_TTS_ENABLED
+    local_tts_force = settings.LOCAL_TTS_FORCE
+    paddlespeech_default_voice = settings.PADDLESPEECH_DEFAULT_VOICE
+    
+    # 从 .env 文件读取最新值
+    if os.path.exists(env_file):
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("LOCAL_TTS_ENABLED="):
+                    value = line.split("=", 1)[1].strip()
+                    local_tts_enabled = value.lower() in ("true", "1", "yes")
+                elif line.startswith("LOCAL_TTS_FORCE="):
+                    value = line.split("=", 1)[1].strip()
+                    local_tts_force = value.lower() in ("true", "1", "yes")
+                elif line.startswith("PADDLESPEECH_DEFAULT_VOICE="):
+                    value = line.split("=", 1)[1].strip()
+                    if value:
+                        paddlespeech_default_voice = value
+    
     return TTSConfigResponse(
-        local_tts_enabled=settings.LOCAL_TTS_ENABLED,
-        local_tts_force=settings.LOCAL_TTS_FORCE,
-        paddlespeech_default_voice=settings.PADDLESPEECH_DEFAULT_VOICE,
+        local_tts_enabled=local_tts_enabled,
+        local_tts_force=local_tts_force,
+        paddlespeech_default_voice=paddlespeech_default_voice,
     )
 
 @router.put("/settings/tts")

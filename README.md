@@ -178,6 +178,7 @@ npm start
 | **Neo4j Bolt** | localhost | 30001 | bolt://localhost:30001 | Neo4j 数据库连接 |
 | **Milvus API** | localhost | 30002 | localhost:30002 | Milvus 向量数据库 |
 | **Milvus 健康检查** | localhost | 30003 | http://localhost:30003/healthz | Milvus 健康检查 |
+| **Milvus Insight** | localhost | 30006 | http://localhost:30006 | Milvus Web 管理界面 |
 | **MinIO API** | localhost | 30004 | http://localhost:30004 | MinIO 对象存储 |
 | **MinIO 控制台** | localhost | 30005 | http://localhost:30005 | MinIO Web 管理界面 |
 

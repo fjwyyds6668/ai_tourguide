@@ -77,6 +77,16 @@ services:
       timeout: 5s
       retries: 5
 
+  milvus-insight:
+    container_name: milvus-insight
+    image: zilliz/attu:v2.3.0
+    environment:
+      MILVUS_URL: standalone:19530
+    ports:
+      - "30006:3000"  # Milvus Insight Web UI
+    depends_on:
+      - "standalone"
+
 networks:
   default:
     name: milvus

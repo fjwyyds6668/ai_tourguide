@@ -38,7 +38,8 @@ const Settings = () => {
     try {
       await api.put('/admin/settings/tts', values);
       message.success('配置已保存（需要重启后端服务才能生效）');
-      setConfig(values);
+      // 保存后立即刷新配置，确保显示最新值
+      await fetchConfig();
     } catch (error) {
       console.error('Failed to save TTS config:', error);
       message.error(error.response?.data?.detail || '保存配置失败');
