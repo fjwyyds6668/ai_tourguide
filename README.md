@@ -243,51 +243,43 @@ unzip vosk-model-cn-0.22.zip
 
 无需配置，可直接使用。支持重试机制和连接错误处理。
 
-### 离线本地 TTS（Bert-VITS2，高质量语音合成）
+### 离线本地 TTS（CosyVoice2，备用/强制）
 
-当你遇到 Edge TTS 403/网络限制时，可以使用 **Bert-VITS2** 在本机离线合成高质量语音，支持声音克隆和多说话人。
+当你遇到 Edge TTS 403/网络限制时，可以启用 **CosyVoice2** 作为本地备用合成（也可强制始终使用本地 TTS）。
 
-#### 1. 准备 Bert-VITS2 模型
+#### 1. 准备 CosyVoice 代码
 
-确保已克隆 Bert-VITS2 项目到项目根目录，并准备好模型文件：
-
-- 配置文件：`Bert-VITS2/configs/config.json`
-- 模型文件：`Bert-VITS2/models/G_latest.pth`（或其他 .pth 模型文件）
-
-#### 2. 安装依赖
+将 CosyVoice 官方仓库克隆到项目根目录 `CosyVoice/`（或通过环境变量 `COSYVOICE_REPO_PATH` 指定路径）：
 
 ```bash
-pip install torch soundfile librosa pypinyin cn2an pyyaml
+git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git
 ```
 
-#### 3. 配置 `.env`
+#### 2. 配置 `.env`
 
 在 `backend/.env` 中添加以下配置：
 
 ```env
-# 启用离线 TTS（Edge TTS 失败时自动降级到 Bert-VITS2）
+# 启用本地 TTS（Edge TTS 失败时自动降级到 CosyVoice2）
 LOCAL_TTS_ENABLED=true
 
 # 可选：强制始终使用本地 TTS（不走 Edge TTS）
 # LOCAL_TTS_FORCE=false
 
-# Bert-VITS2 配置文件路径
-BERTVITS2_CONFIG_PATH=Bert-VITS2/configs/config.json
+# 本地 TTS 引擎（目前仅支持 cosyvoice2）
+LOCAL_TTS_ENGINE=cosyvoice2
 
-# Bert-VITS2 模型文件路径
-BERTVITS2_MODEL_PATH=Bert-VITS2/models/G_latest.pth
+# 可选：CosyVoice2 模型缓存/目录（留空则由 ModelScope 自动下载/使用缓存）
+# COSYVOICE2_MODEL_PATH=
 
-# Bert-VITS2 设备（cpu/cuda，如果有 GPU 建议使用 cuda）
-BERTVITS2_DEVICE=cpu
+# CosyVoice2 设备（cpu/cuda，如果有 GPU 建议使用 cuda）
+COSYVOICE2_DEVICE=cpu
 
-# Bert-VITS2 默认说话人（可选，留空使用模型中的第一个说话人）
-# BERTVITS2_DEFAULT_SPEAKER=
-
-# Bert-VITS2 语言（仅支持中文 ZH）
-BERTVITS2_LANGUAGE=ZH
+# CosyVoice2 语言（zh/en/ja 等）
+COSYVOICE2_LANGUAGE=zh
 ```
 
-#### 4. 使用方法
+#### 3. 使用方法
 
 **API 调用：**
 ```bash
@@ -295,62 +287,10 @@ curl -X POST http://localhost:18000/api/v1/voice/synthesize \
   -H "Content-Type: application/json" \
   -d '{
     "text": "你好，这是测试",
-    "voice": "说话人名称"
+    "voice": "zh-CN-XiaoxiaoNeural"
   }' \
   --output speech.wav
 ```
-
-**Python 代码调用：**
-```python
-from app.services.voice_service import voice_service
-
-# 使用默认说话人
-audio_path = await voice_service.synthesize_local_bertvits2(
-    text="你好，这是测试"
-)
-
-# 使用指定说话人
-audio_path = await voice_service.synthesize_local_bertvits2(
-    text="你好，这是测试",
-    voice="说话人名称"
-)
-```
-
-#### 5. 说话人选择规则
-
-`/api/v1/voice/synthesize` 会：
-
-- 优先用 Edge TTS
-- 如果 Edge 失败且 `LOCAL_TTS_ENABLED=true`，自动降级到 Bert-VITS2
-
-说话人选择规则：
-
-- `voice` 传入说话人名称会使用对应说话人
-- 如果未指定或说话人不存在，使用 `BERTVITS2_DEFAULT_SPEAKER` 或模型中的第一个说话人
-
-你可以把角色表的 `voice` 字段改成 Bert-VITS2 说话人名称，即可实现多角色多音色离线播报。
-
-#### 6. 测试
-
-```bash
-# 测试基础功能
-cd backend
-python test_bertvits2.py --text "你好，我是离线语音测试" --voice "说话人名称" --out test.wav
-```
-
-#### 7. 常见问题
-
-**Q: 首次运行很慢？**  
-A: 首次运行会加载模型（可能需要几秒到几十秒），后续运行会快很多。
-
-**Q: 如何查看可用的说话人？**  
-A: 说话人列表在模型的 `config.json` 中的 `spk2id` 字段定义，或查看模型训练时的配置。
-
-**Q: 如何添加新说话人？**  
-A: 需要重新训练模型或使用支持多说话人的预训练模型。
-
-**Q: 模型文件在哪里？**  
-A: 模型文件需要从 Bert-VITS2 项目获取，或使用自己训练的模型。
 
 ## 常见问题
 

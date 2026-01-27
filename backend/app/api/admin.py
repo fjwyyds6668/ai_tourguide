@@ -545,9 +545,6 @@ class TTSConfigResponse(BaseModel):
     local_tts_enabled: bool
     local_tts_force: bool
     local_tts_engine: str
-    bertvits2_config_path: str
-    bertvits2_model_path: str
-    bertvits2_default_speaker: Optional[str] = None
     cosyvoice2_model_path: str
     cosyvoice2_device: str
     cosyvoice2_language: str
@@ -557,9 +554,6 @@ class TTSConfigUpdateRequest(BaseModel):
     local_tts_enabled: Optional[bool] = None
     local_tts_force: Optional[bool] = None
     local_tts_engine: Optional[str] = None
-    bertvits2_config_path: Optional[str] = None
-    bertvits2_model_path: Optional[str] = None
-    bertvits2_default_speaker: Optional[str] = None
     cosyvoice2_model_path: Optional[str] = None
     cosyvoice2_device: Optional[str] = None
     cosyvoice2_language: Optional[str] = None
@@ -582,9 +576,6 @@ async def get_tts_config(
     local_tts_enabled = settings.LOCAL_TTS_ENABLED
     local_tts_force = settings.LOCAL_TTS_FORCE
     local_tts_engine = settings.LOCAL_TTS_ENGINE
-    bertvits2_config_path = settings.BERTVITS2_CONFIG_PATH
-    bertvits2_model_path = settings.BERTVITS2_MODEL_PATH
-    bertvits2_default_speaker = settings.BERTVITS2_DEFAULT_SPEAKER
     cosyvoice2_model_path = settings.COSYVOICE2_MODEL_PATH
     cosyvoice2_device = settings.COSYVOICE2_DEVICE
     cosyvoice2_language = settings.COSYVOICE2_LANGUAGE
@@ -603,17 +594,6 @@ async def get_tts_config(
                     value = line.split("=", 1)[1].strip()
                     if value:
                         local_tts_engine = value
-                elif line.startswith("BERTVITS2_CONFIG_PATH="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        bertvits2_config_path = value
-                elif line.startswith("BERTVITS2_MODEL_PATH="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        bertvits2_model_path = value
-                elif line.startswith("BERTVITS2_DEFAULT_SPEAKER="):
-                    value = line.split("=", 1)[1].strip()
-                    bertvits2_default_speaker = value if value else None
                 elif line.startswith("COSYVOICE2_MODEL_PATH="):
                     value = line.split("=", 1)[1].strip()
                     if value:
@@ -631,9 +611,6 @@ async def get_tts_config(
         local_tts_enabled=local_tts_enabled,
         local_tts_force=local_tts_force,
         local_tts_engine=local_tts_engine,
-        bertvits2_config_path=bertvits2_config_path,
-        bertvits2_model_path=bertvits2_model_path,
-        bertvits2_default_speaker=bertvits2_default_speaker,
         cosyvoice2_model_path=cosyvoice2_model_path,
         cosyvoice2_device=cosyvoice2_device,
         cosyvoice2_language=cosyvoice2_language,
@@ -682,25 +659,6 @@ async def update_tts_config(
                 updated_keys.add("LOCAL_TTS_FORCE")
             else:
                 new_lines.append(line)
-        elif stripped.startswith("BERTVITS2_CONFIG_PATH="):
-            if req.bertvits2_config_path is not None:
-                new_lines.append(f"BERTVITS2_CONFIG_PATH={req.bertvits2_config_path}\n")
-                updated_keys.add("BERTVITS2_CONFIG_PATH")
-            else:
-                new_lines.append(line)
-        elif stripped.startswith("BERTVITS2_MODEL_PATH="):
-            if req.bertvits2_model_path is not None:
-                new_lines.append(f"BERTVITS2_MODEL_PATH={req.bertvits2_model_path}\n")
-                updated_keys.add("BERTVITS2_MODEL_PATH")
-            else:
-                new_lines.append(line)
-        elif stripped.startswith("BERTVITS2_DEFAULT_SPEAKER="):
-            if req.bertvits2_default_speaker is not None:
-                speaker_value = req.bertvits2_default_speaker if req.bertvits2_default_speaker else ""
-                new_lines.append(f"BERTVITS2_DEFAULT_SPEAKER={speaker_value}\n")
-                updated_keys.add("BERTVITS2_DEFAULT_SPEAKER")
-            else:
-                new_lines.append(line)
         elif stripped.startswith("LOCAL_TTS_ENGINE="):
             if req.local_tts_engine is not None:
                 new_lines.append(f"LOCAL_TTS_ENGINE={req.local_tts_engine}\n")
@@ -735,13 +693,6 @@ async def update_tts_config(
         new_lines.append(f"LOCAL_TTS_FORCE={str(req.local_tts_force).lower()}\n")
     if req.local_tts_engine is not None and "LOCAL_TTS_ENGINE" not in updated_keys:
         new_lines.append(f"LOCAL_TTS_ENGINE={req.local_tts_engine}\n")
-    if req.bertvits2_config_path is not None and "BERTVITS2_CONFIG_PATH" not in updated_keys:
-        new_lines.append(f"BERTVITS2_CONFIG_PATH={req.bertvits2_config_path}\n")
-    if req.bertvits2_model_path is not None and "BERTVITS2_MODEL_PATH" not in updated_keys:
-        new_lines.append(f"BERTVITS2_MODEL_PATH={req.bertvits2_model_path}\n")
-    if req.bertvits2_default_speaker is not None and "BERTVITS2_DEFAULT_SPEAKER" not in updated_keys:
-        speaker_value = req.bertvits2_default_speaker if req.bertvits2_default_speaker else ""
-        new_lines.append(f"BERTVITS2_DEFAULT_SPEAKER={speaker_value}\n")
     if req.cosyvoice2_model_path is not None and "COSYVOICE2_MODEL_PATH" not in updated_keys:
         new_lines.append(f"COSYVOICE2_MODEL_PATH={req.cosyvoice2_model_path}\n")
     if req.cosyvoice2_device is not None and "COSYVOICE2_DEVICE" not in updated_keys:
@@ -762,9 +713,6 @@ async def update_tts_config(
             "local_tts_enabled": req.local_tts_enabled if req.local_tts_enabled is not None else settings.LOCAL_TTS_ENABLED,
             "local_tts_force": req.local_tts_force if req.local_tts_force is not None else settings.LOCAL_TTS_FORCE,
             "local_tts_engine": req.local_tts_engine if req.local_tts_engine is not None else settings.LOCAL_TTS_ENGINE,
-            "bertvits2_config_path": req.bertvits2_config_path if req.bertvits2_config_path is not None else settings.BERTVITS2_CONFIG_PATH,
-            "bertvits2_model_path": req.bertvits2_model_path if req.bertvits2_model_path is not None else settings.BERTVITS2_MODEL_PATH,
-            "bertvits2_default_speaker": req.bertvits2_default_speaker if req.bertvits2_default_speaker is not None else settings.BERTVITS2_DEFAULT_SPEAKER,
             "cosyvoice2_model_path": req.cosyvoice2_model_path if req.cosyvoice2_model_path is not None else settings.COSYVOICE2_MODEL_PATH,
             "cosyvoice2_device": req.cosyvoice2_device if req.cosyvoice2_device is not None else settings.COSYVOICE2_DEVICE,
             "cosyvoice2_language": req.cosyvoice2_language if req.cosyvoice2_language is not None else settings.COSYVOICE2_LANGUAGE,

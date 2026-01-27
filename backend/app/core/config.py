@@ -63,25 +63,8 @@ class Settings(BaseSettings):
     LOCAL_TTS_ENABLED: bool = False
     # 若为 True，则强制始终使用本地 TTS（不走 Edge）
     LOCAL_TTS_FORCE: bool = False
-    # 本地 TTS 引擎选择：bertvits2 或 cosyvoice2
+    # 本地 TTS 引擎选择：目前仅支持 cosyvoice2
     LOCAL_TTS_ENGINE: str = "cosyvoice2"  # 默认使用 CosyVoice2
-    
-    # Bert-VITS2 配置
-    # Bert-VITS2 配置文件路径（config.json）
-    BERTVITS2_CONFIG_PATH: str = ""
-    # Bert-VITS2 模型文件路径（.pth）
-    BERTVITS2_MODEL_PATH: str = ""
-    # Bert-VITS2 设备（cpu/cuda）
-    BERTVITS2_DEVICE: str = "cpu"
-    # Bert-VITS2 默认说话人（从模型配置中获取，如果未设置则使用第一个可用说话人）
-    BERTVITS2_DEFAULT_SPEAKER: Optional[str] = None
-    # Bert-VITS2 语言（仅支持中文 ZH）
-    BERTVITS2_LANGUAGE: str = "ZH"
-    # Bert-VITS2 合成参数
-    BERTVITS2_SDP_RATIO: float = 0.5
-    BERTVITS2_NOISE_SCALE: float = 0.6
-    BERTVITS2_NOISE_SCALE_W: float = 0.8
-    BERTVITS2_LENGTH_SCALE: float = 1.0
     
     # CosyVoice2 配置
     # CosyVoice2 模型路径（可选，如果为空则从 ModelScope/HuggingFace 自动下载）
@@ -92,6 +75,10 @@ class Settings(BaseSettings):
     COSYVOICE2_LANGUAGE: str = "zh"
     # CosyVoice2 说话人（可选）
     COSYVOICE2_SPEAKER: Optional[str] = None
+    # CosyVoice zero-shot 默认提示（可选：不配置则使用 CosyVoice 仓库自带的示例）
+    # 说明：CosyVoice-300M 为 zero-shot 方案，需要参考音频 + 参考文本作为提示
+    COSYVOICE_PROMPT_WAV: str = ""
+    COSYVOICE_PROMPT_TEXT: str = ""
     
     class Config:
         env_file = ".env"

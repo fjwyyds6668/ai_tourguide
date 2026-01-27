@@ -11,7 +11,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 class VoiceService:
-    """语音处理服务，支持 Whisper/Vosk 识别和 Edge TTS/本地 TTS（Bert-VITS2）合成"""
+    """语音处理服务，支持 Whisper/Vosk 识别和 Edge TTS/本地 TTS（CosyVoice2）合成"""
     
     def __init__(self):
         self.whisper_model = None
@@ -170,80 +170,6 @@ class VoiceService:
                     raise Exception(f"Edge TTS 合成失败: {error_msg}")
         
         raise Exception(f"Edge TTS 合成失败: {last_error}")
-
-    async def synthesize_local_bertvits2(
-        self,
-        text: str,
-        output_path: Optional[str] = None,
-        voice: Optional[str] = None,
-    ) -> str:
-        """
-        离线本地 TTS（Bert-VITS2）- 高质量语音合成。
-
-        voice: 说话人名称（如果为 None，使用配置中的默认说话人）
-        """
-        import asyncio
-        from app.services.bertvits2_service import bertvits2_service
-
-        if not output_path:
-            output_path = tempfile.mktemp(suffix=".wav")
-
-        if not bertvits2_service._initialized:
-            config_path = settings.BERTVITS2_CONFIG_PATH
-            model_path = settings.BERTVITS2_MODEL_PATH
-            device = settings.BERTVITS2_DEVICE
-            
-            if not config_path or not model_path:
-                raise Exception("Bert-VITS2 配置路径或模型路径未设置")
-            
-            # 将相对路径转换为绝对路径（相对于项目根目录）
-            if not os.path.isabs(config_path):
-                # backend/app/services/voice_service.py -> backend/app/services -> backend/app -> backend -> 项目根目录
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-                config_path = os.path.join(project_root, config_path)
-            if not os.path.isabs(model_path):
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-                model_path = os.path.join(project_root, model_path)
-            
-            if not os.path.exists(config_path):
-                raise Exception(f"Bert-VITS2 配置文件不存在: {config_path}")
-            if not os.path.exists(model_path):
-                raise Exception(f"Bert-VITS2 模型文件不存在: {model_path}")
-            
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                bertvits2_service.initialize,
-                config_path,
-                model_path,
-                device
-            )
-
-        speaker = voice or settings.BERTVITS2_DEFAULT_SPEAKER
-        language = settings.BERTVITS2_LANGUAGE
-
-        loop = asyncio.get_event_loop()
-        try:
-            await loop.run_in_executor(
-                None,
-                bertvits2_service.synthesize,
-                text,
-                speaker,
-                language,
-                settings.BERTVITS2_SDP_RATIO,
-                settings.BERTVITS2_NOISE_SCALE,
-                settings.BERTVITS2_NOISE_SCALE_W,
-                settings.BERTVITS2_LENGTH_SCALE,
-                output_path
-            )
-        except Exception as e:
-            logger.error(f"Bert-VITS2 合成失败: {e}")
-            raise Exception(f"Bert-VITS2 TTS 合成失败: {e}")
-
-        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            raise Exception("Bert-VITS2 生成的音频文件为空")
-
-        return output_path
 
     async def synthesize_local_cosyvoice2(
         self,
