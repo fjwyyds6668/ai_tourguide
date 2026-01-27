@@ -264,3 +264,11 @@ models/
 
 # Docker 数据卷（不应提交到 Git）
 volumes/
+
+# Local TTS (Piper) binaries/models (keep local)
+backend/tts/piper/
+backend/tts/piper_voices/
+
+# If you place piper.exe under repo root `piper/`, don't commit it
+piper/piper.exe
+piper/piper

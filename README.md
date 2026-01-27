@@ -96,13 +96,13 @@ cp .env.example .env
 DATABASE_URL=postgresql://postgres:123456@localhost:5432/ai_tourguide
 
 # Neo4j 图数据库
-NEO4J_URI=bolt://localhost:17687
+NEO4J_URI=bolt://localhost:30001
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=12345678
 
 # Milvus 向量数据库
 MILVUS_HOST=localhost
-MILVUS_PORT=19530
+MILVUS_PORT=30002
 
 # OpenAI API（兼容硅基流动）
 OPENAI_API_KEY=your-api-key
@@ -143,7 +143,7 @@ python init_db.py
 
 ```bash
 cd backend
-python -m uvicorn main:app --host 0.0.0.0 --port 18000 --reload
+uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 ```
 
 后端服务将在 http://localhost:18000 启动
@@ -174,12 +174,12 @@ npm start
 | **前端管理端** | localhost | 3000 | http://localhost:3000 | React 管理后台 |
 | **前端游客端** | localhost | 5173 | http://localhost:5173 | Vue3 游客端 |
 | **PostgreSQL** | localhost | 5432 | localhost:5432 | 主数据库 |
-| **Neo4j HTTP** | localhost | 17474 | http://localhost:17474 | Neo4j Browser |
-| **Neo4j Bolt** | localhost | 17687 | bolt://localhost:17687 | Neo4j 数据库连接 |
-| **Milvus API** | localhost | 19530 | localhost:19530 | Milvus 向量数据库 |
-| **Milvus 健康检查** | localhost | 9091 | http://localhost:9091/healthz | Milvus 健康检查 |
-| **MinIO API** | localhost | 9000 | http://localhost:9000 | MinIO 对象存储 |
-| **MinIO 控制台** | localhost | 9001 | http://localhost:9001 | MinIO Web 管理界面 |
+| **Neo4j HTTP** | localhost | 30000 | http://localhost:30000 | Neo4j Browser |
+| **Neo4j Bolt** | localhost | 30001 | bolt://localhost:30001 | Neo4j 数据库连接 |
+| **Milvus API** | localhost | 30002 | localhost:30002 | Milvus 向量数据库 |
+| **Milvus 健康检查** | localhost | 30003 | http://localhost:30003/healthz | Milvus 健康检查 |
+| **MinIO API** | localhost | 30004 | http://localhost:30004 | MinIO 对象存储 |
+| **MinIO 控制台** | localhost | 30005 | http://localhost:30005 | MinIO Web 管理界面 |
 
 ## API 文档
 
@@ -242,6 +242,166 @@ unzip vosk-model-cn-0.22.zip
 
 无需配置，可直接使用。支持重试机制和连接错误处理。
 
+### 离线本地 TTS（方案A：PaddleSpeech，多音色）
+
+当你遇到 Edge TTS 403/网络限制时，可以使用 **PaddleSpeech** 在本机离线合成语音，并支持多音色（通过配置多套 am/voc/spk）。
+
+#### 1. 安装 PaddleSpeech（离线部署）
+
+在目标机器的 Python 环境中安装（可提前下载 whl 离线安装）：
+
+```bash
+pip install paddlepaddle paddlespeech
+```
+
+#### 2. 配置 `.env`
+
+在 `backend/.env` 中添加以下配置：
+
+```env
+# 启用离线 TTS（Edge TTS 失败时自动降级到 PaddleSpeech）
+LOCAL_TTS_ENABLED=true
+
+# 可选：强制始终使用本地 TTS（不走 Edge TTS）
+# LOCAL_TTS_FORCE=false
+
+# PaddleSpeech Python 解释器（留空则自动使用当前环境）
+# PADDLESPEECH_PYTHON=
+
+# 默认音色 key
+PADDLESPEECH_DEFAULT_VOICE=fastspeech2_csmsc
+
+# 多音色配置（JSON 字符串）
+PADDLESPEECH_VOICES_JSON={"fastspeech2_csmsc":{"am":"fastspeech2_csmsc","voc":"pwgan_csmsc","lang":"zh"}}
+```
+
+#### 3. 多音色配置示例
+
+**基础配置（单音色）：**
+```json
+{
+  "fastspeech2_csmsc": {
+    "am": "fastspeech2_csmsc",
+    "voc": "pwgan_csmsc",
+    "lang": "zh"
+  }
+}
+```
+
+**多音色配置：**
+```json
+{
+  "fastspeech2_csmsc": {
+    "am": "fastspeech2_csmsc",
+    "voc": "pwgan_csmsc",
+    "lang": "zh"
+  },
+  "fastspeech2_aishell3": {
+    "am": "fastspeech2_aishell3",
+    "voc": "pwgan_aishell3",
+    "lang": "zh"
+  }
+}
+```
+
+**带说话人 ID 的配置：**
+```json
+{
+  "fastspeech2_csmsc": {
+    "am": "fastspeech2_csmsc",
+    "voc": "pwgan_csmsc",
+    "lang": "zh"
+  },
+  "fastspeech2_aishell3_female": {
+    "am": "fastspeech2_aishell3",
+    "voc": "pwgan_aishell3",
+    "lang": "zh",
+    "spk_id": 0
+  },
+  "fastspeech2_aishell3_male": {
+    "am": "fastspeech2_aishell3",
+    "voc": "pwgan_aishell3",
+    "lang": "zh",
+    "spk_id": 1
+  }
+}
+```
+
+#### 4. 使用方法
+
+**API 调用：**
+```bash
+curl -X POST http://localhost:18000/api/v1/voice/synthesize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "你好，这是测试",
+    "voice": "fastspeech2_csmsc"
+  }' \
+  --output speech.wav
+```
+
+**Python 代码调用：**
+```python
+from app.services.voice_service import voice_service
+
+# 使用默认音色
+audio_path = await voice_service.synthesize_local_paddlespeech(
+    text="你好，这是测试"
+)
+
+# 使用指定音色
+audio_path = await voice_service.synthesize_local_paddlespeech(
+    text="你好，这是测试",
+    voice="fastspeech2_csmsc"
+)
+```
+
+#### 5. 音色选择规则
+
+`/api/v1/voice/synthesize` 会：
+
+- 优先用 Edge TTS
+- 如果 Edge 失败且 `LOCAL_TTS_ENABLED=true`，自动降级到 PaddleSpeech
+
+音色选择规则：
+
+- `voice` 传入 **PADDLESPEECH_VOICES_JSON 的 key**（如 `fastspeech2_csmsc`）会使用对应配置
+- 否则使用 `PADDLESPEECH_DEFAULT_VOICE`
+
+你可以把角色表的 `voice` 字段改成 PaddleSpeech key（例如 `fastspeech2_csmsc`），即可实现多角色多音色离线播报。
+
+#### 6. 测试
+
+```bash
+# 测试基础功能
+cd backend
+python test_paddlespeech_tts.py --text "你好，我是离线语音测试" --voice fastspeech2_csmsc --out test.wav
+
+# 测试 API 集成（需要后端服务运行）
+python test_api_integration.py
+```
+
+#### 7. 常见问题
+
+**Q: 首次运行很慢？**  
+A: 首次运行会下载模型（几百MB到几GB），需要等待。后续运行会快很多。
+
+**Q: 如何查看可用的音色？**  
+A: PaddleSpeech 支持的音色取决于已安装的模型。常用音色：
+- `fastspeech2_csmsc`（中文女声，默认）
+- `fastspeech2_aishell3`（中文多说话人）
+- `fastspeech2_ljspeech`（英文）
+
+**Q: 如何添加新音色？**  
+A: 在 `PADDLESPEECH_VOICES_JSON` 中添加新的 key-value 对，确保对应的模型已安装。
+
+**Q: 模型下载位置？**  
+A: PaddleSpeech 模型默认下载到：
+- Windows: `C:\Users\<用户名>\.paddlespeech\models\`
+- Linux/Mac: `~/.paddlespeech/models/`
+
+首次运行会自动下载，也可以手动下载后放到对应目录。
+
 ## 常见问题
 
 ### 1. 数据库连接失败
@@ -250,7 +410,7 @@ unzip vosk-model-cn-0.22.zip
 - 确保数据库服务已启动
 - PostgreSQL: 检查端口 5432 是否被占用
 - Neo4j: 检查 Docker 容器是否运行 `docker ps | grep neo4j`
-- Milvus: 检查端口 19530 是否可访问
+- Milvus: 检查端口 30002 是否可访问
 
 ### 2. Prisma 客户端未生成
 

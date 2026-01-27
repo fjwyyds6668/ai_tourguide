@@ -9,7 +9,8 @@ import {
   TeamOutlined,
   UserOutlined,
   UploadOutlined,
-  LogoutOutlined
+  LogoutOutlined,
+  SettingOutlined
 } from '@ant-design/icons';
 import api from '../api';
 
@@ -134,6 +135,11 @@ const Sidebar = ({ collapsed, onCollapse }) => {
       key: '/analytics',
       icon: <BarChartOutlined />,
       label: '数据分析',
+    },
+    {
+      key: '/settings',
+      icon: <SettingOutlined />,
+      label: '系统设置',
     },
   ];
 

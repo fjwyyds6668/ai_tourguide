@@ -10,6 +10,7 @@ import CharactersManagement from './pages/CharactersManagement';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Analytics from './pages/Analytics';
 import AttractionsManagement from './pages/AttractionsManagement';
+import Settings from './pages/Settings';
 import './App.css';
 
 const { Content } = Layout;
@@ -42,6 +43,7 @@ function App() {
                       <Route path="/knowledge" element={<KnowledgeBase />} />
                       <Route path="/analytics" element={<Analytics />} />
                       <Route path="/attractions" element={<AttractionsManagement />} />
+                      <Route path="/settings" element={<Settings />} />
                       <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>
                   </Content>

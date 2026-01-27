@@ -213,13 +213,13 @@ docker-compose up -d standalone  # Milvus
 DATABASE_URL=postgresql://postgres:123456@localhost:5432/ai_tourguide
 
 # Neo4j（图数据库）
-NEO4J_URI=bolt://localhost:17687
+NEO4J_URI=bolt://localhost:30001
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=12345678
 
 # Milvus（向量数据库）
 MILVUS_HOST=localhost
-MILVUS_PORT=19530
+MILVUS_PORT=30002
 ```
 
 #### 3. 确保 Prisma 客户端已生成
@@ -306,7 +306,7 @@ curl -X POST "http://localhost:18000/api/v1/admin/data/import_attractions" \
 ```python
 from pymilvus import connections, Collection
 
-connections.connect(alias="default", host="localhost", port=19530)
+connections.connect(alias="default", host="localhost", port=30002)
 collection = Collection("tour_knowledge")
 collection.load()
 print(f"向量数量: {collection.num_entities}")
@@ -314,7 +314,7 @@ print(f"向量数量: {collection.num_entities}")
 
 #### 检查 Neo4j
 
-访问 Neo4j Browser: http://localhost:17474
+访问 Neo4j Browser: http://localhost:30000
 
 执行查询：
 
@@ -337,7 +337,7 @@ MATCH (a:Attraction)-[r:NEARBY]->(b:Attraction) RETURN a, r, b LIMIT 10
 #### 1. 连接失败
 
 - 检查 Neo4j 和 Milvus 服务是否运行
-- 检查端口是否正确（Neo4j: 17687, Milvus: 19530）
+- 检查端口是否正确（Neo4j: 30001, Milvus: 30002）
 - 检查防火墙设置
 
 #### 2. Prisma 客户端未生成

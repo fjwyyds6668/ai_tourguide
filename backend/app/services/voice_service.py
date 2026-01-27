@@ -6,6 +6,7 @@ import tempfile
 import re
 from typing import Optional
 import logging
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class VoiceService:
             logger.warning(f"Failed to load Whisper: {e}")
         
         try:
-            from vosk import Model, SetLogLevel
+            from vosk import SetLogLevel
             SetLogLevel(-1)
             # 需要下载 Vosk 模型
             # model_path = "path/to/vosk-model"
@@ -41,8 +42,7 @@ class VoiceService:
         """使用 Whisper 进行语音识别"""
         if not self.whisper_model:
             raise ValueError("Whisper model not loaded")
-        
-        import whisper
+
         result = self.whisper_model.transcribe(audio_file_path, language="zh")
         return result["text"].strip()
     
@@ -193,6 +193,81 @@ class VoiceService:
         
         # 理论上不会到达这里
         raise Exception(f"Edge TTS 合成失败: {last_error}")
+
+    async def synthesize_local_paddlespeech(
+        self,
+        text: str,
+        output_path: Optional[str] = None,
+        voice: Optional[str] = None,
+    ) -> str:
+        """
+        离线本地 TTS（PaddleSpeech）。
+
+        通过命令行调用 PaddleSpeech CLI（paddlespeech tts），输出 wav。
+        voice: 使用 settings.paddlespeech_voices 的 key；找不到则回退到 settings.PADDLESPEECH_DEFAULT_VOICE
+        """
+        import asyncio
+        import sys
+
+        if not output_path:
+            output_path = tempfile.mktemp(suffix=".wav")
+
+        voices = settings.paddlespeech_voices
+        voice_key = voice if (voice and voice in voices) else settings.PADDLESPEECH_DEFAULT_VOICE
+        cfg = voices.get(voice_key, {})
+
+        # 常用参数：am(声学模型) / voc(声码器) / lang
+        am = cfg.get("am", voice_key)
+        voc = cfg.get("voc", "pwgan_csmsc")
+        lang = cfg.get("lang", "zh")
+        spk_id = cfg.get("spk_id", None)
+
+        # 默认用当前环境 python，避免误用 base python
+        py = settings.PADDLESPEECH_PYTHON or sys.executable
+
+        # 使用包装脚本调用 PaddleSpeech（避免 paddlespeech.cli.tts 没有 __main__.py 的问题）
+        wrapper_script = os.path.join(os.path.dirname(__file__), "paddlespeech_wrapper.py")
+        cmd = [
+            py,
+            wrapper_script,
+            "--input",
+            text,
+            "--am",
+            str(am),
+            "--voc",
+            str(voc),
+            "--lang",
+            str(lang),
+            "--output",
+            output_path,
+        ]
+        if spk_id is not None:
+            cmd += ["--spk_id", str(spk_id)]
+
+        # 关键：禁用用户级 site-packages（Windows 下会把 win32/timer.pyd 注入 sys.path，导致 PaddleSpeech 导入失败）
+        env = os.environ.copy()
+        env["PYTHONNOUSERSITE"] = "1"
+
+        logger.info(f"PaddleSpeech TTS 调用: {' '.join(cmd)}")
+        logger.info("注意: 首次运行会下载模型（可能较慢，请耐心等待）...")
+        
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            out_text = (stdout or b"").decode("utf-8", errors="ignore").strip()
+            err_text = (stderr or b"").decode("utf-8", errors="ignore").strip()
+            raise Exception(f"PaddleSpeech TTS 失败 (code={proc.returncode}): {err_text or out_text or 'unknown error'}")
+
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            raise Exception("PaddleSpeech 生成的音频文件为空")
+
+        return output_path
 
 # 全局语音服务实例
 voice_service = VoiceService()

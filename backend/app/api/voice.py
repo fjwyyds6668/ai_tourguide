@@ -11,6 +11,7 @@ import re
 import logging
 from app.services.voice_service import voice_service
 from app.core.prisma_client import get_prisma
+from app.core.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ class SynthesizeRequest(BaseModel):
 async def synthesize_speech(
     req: SynthesizeRequest
 ):
-    """语音合成（使用 Edge TTS，支持角色语音配置）"""
+    """语音合成（优先 Edge TTS，失败可降级到离线 Piper）"""
     try:
         text = _normalize_tts_text(req.text)
 
@@ -123,21 +124,43 @@ async def synthesize_speech(
             except Exception as e:
                 logger.warning(f"获取角色语音配置失败: {e}")
 
-        # 使用 Edge TTS 进行合成
-        try:
-            audio_path = await voice_service.synthesize_edge(text, voice=voice)
-        except Exception as e:
-            logger.error(f"Edge TTS 合成失败: {e}")
-            raise HTTPException(status_code=400, detail=f"TTS 合成失败：{str(e)}")
+        # 优先 Edge TTS；如启用离线 TTS，则在 Edge 失败（403/网络）时降级到 Piper
+        audio_path = None
+        last_error = None
+
+        if not settings.LOCAL_TTS_FORCE:
+            try:
+                audio_path = await voice_service.synthesize_edge(text, voice=voice)
+            except Exception as e:
+                last_error = e
+                logger.error(f"Edge TTS 合成失败: {e}")
+
+        if (audio_path is None) and settings.LOCAL_TTS_ENABLED:
+            try:
+                # 本地 TTS 使用 PaddleSpeech：
+                # - voice 传入 settings.PADDLESPEECH_VOICES_JSON 的 key，可实现多音色
+                audio_path = await voice_service.synthesize_local_paddlespeech(text, voice=voice)
+                last_error = None
+            except Exception as e:
+                last_error = e
+                logger.error(f"Local PaddleSpeech TTS 合成失败: {e}")
+
+        if audio_path is None:
+            raise HTTPException(status_code=400, detail=f"TTS 合成失败：{str(last_error) if last_error else 'unknown error'}")
         
         if not audio_path or not os.path.exists(audio_path):
             raise HTTPException(status_code=500, detail="音频文件生成失败")
-        
-        return FileResponse(
-            audio_path,
-            media_type="audio/mpeg",
-            filename="speech.mp3"
-        )
+
+        # 根据输出文件扩展名设置 media_type
+        ext = os.path.splitext(audio_path)[1].lower()
+        if ext == ".wav":
+            media_type = "audio/wav"
+            filename = "speech.wav"
+        else:
+            media_type = "audio/mpeg"
+            filename = "speech.mp3"
+
+        return FileResponse(audio_path, media_type=media_type, filename=filename)
     except HTTPException:
         raise
     except Exception as e:
@@ -145,6 +168,6 @@ async def synthesize_speech(
         # 提供更友好的错误信息
         error_detail = str(e)
         if "403" in error_detail or "Invalid response status" in error_detail:
-            error_detail = "TTS 服务暂时不可用，请稍后重试或检查网络连接"
+            error_detail = "Edge TTS 服务暂时不可用（403）。建议启用离线 Piper TTS 或检查网络/限制。"
         raise HTTPException(status_code=400, detail=f"TTS 合成失败：{error_detail}")
 

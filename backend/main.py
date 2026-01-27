@@ -1,10 +1,18 @@
 """
 景区 AI 数字人导游系统 - FastAPI 主入口
 """
+import os
+import warnings
+
+# 在导入其他模块之前配置警告过滤器（必须在最前面）
+# 这会抑制第三方库的已知警告（不影响功能）
+warnings.filterwarnings("ignore", category=UserWarning, module="jieba._compat")
+warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub.file_download")
+warnings.filterwarnings("ignore", message=".*resume_download is deprecated.*")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-import os
 
 # 在导入其他模块之前设置编码环境变量（从 .env 读取）
 # 这些变量需要在 Python 启动时设置，对 Prisma 生成器也有效

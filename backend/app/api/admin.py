@@ -14,6 +14,7 @@ from app.services.rag_service import rag_service
 from app.services.graph_builder import graph_builder
 from app.core.milvus_client import milvus_client
 from app.core.prisma_client import get_prisma, disconnect_prisma
+from app.core.config import settings
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -340,5 +341,112 @@ async def upload_admin_avatar(
             "is_admin": current_user.is_admin,
             "avatar_url": current_user.avatar_url,
         },
+    }
+
+class TTSConfigResponse(BaseModel):
+    """TTS配置响应"""
+    local_tts_enabled: bool
+    local_tts_force: bool
+    paddlespeech_default_voice: str
+
+class TTSConfigUpdateRequest(BaseModel):
+    """TTS配置更新请求"""
+    local_tts_enabled: Optional[bool] = None
+    local_tts_force: Optional[bool] = None
+    paddlespeech_default_voice: Optional[str] = None
+
+@router.get("/settings/tts", response_model=TTSConfigResponse)
+async def get_tts_config(
+    current_user: User = Depends(get_current_user),
+):
+    """获取TTS配置（仅管理员）"""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可查看配置")
+    
+    return TTSConfigResponse(
+        local_tts_enabled=settings.LOCAL_TTS_ENABLED,
+        local_tts_force=settings.LOCAL_TTS_FORCE,
+        paddlespeech_default_voice=settings.PADDLESPEECH_DEFAULT_VOICE,
+    )
+
+@router.put("/settings/tts")
+async def update_tts_config(
+    req: TTSConfigUpdateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """更新TTS配置（仅管理员，需要重启服务才能生效）"""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可修改配置")
+    
+    # 找到 .env 文件路径
+    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    env_file = os.path.join(backend_dir, ".env")
+    
+    # 如果 .env 不存在，创建它
+    if not os.path.exists(env_file):
+        with open(env_file, "w", encoding="utf-8") as f:
+            f.write("# TTS Configuration\n")
+    
+    # 读取现有 .env 内容
+    env_lines = []
+    if os.path.exists(env_file):
+        with open(env_file, "r", encoding="utf-8") as f:
+            env_lines = f.readlines()
+    
+    # 更新或添加配置项
+    updated_keys = set()
+    new_lines = []
+    
+    for line in env_lines:
+        stripped = line.strip()
+        # 跳过空行和注释（但保留它们）
+        if not stripped or stripped.startswith("#"):
+            new_lines.append(line)
+            continue
+        
+        # 检查是否是我们要更新的配置项
+        if stripped.startswith("LOCAL_TTS_ENABLED="):
+            if req.local_tts_enabled is not None:
+                new_lines.append(f"LOCAL_TTS_ENABLED={str(req.local_tts_enabled).lower()}\n")
+                updated_keys.add("LOCAL_TTS_ENABLED")
+            else:
+                new_lines.append(line)
+        elif stripped.startswith("LOCAL_TTS_FORCE="):
+            if req.local_tts_force is not None:
+                new_lines.append(f"LOCAL_TTS_FORCE={str(req.local_tts_force).lower()}\n")
+                updated_keys.add("LOCAL_TTS_FORCE")
+            else:
+                new_lines.append(line)
+        elif stripped.startswith("PADDLESPEECH_DEFAULT_VOICE="):
+            if req.paddlespeech_default_voice is not None:
+                new_lines.append(f"PADDLESPEECH_DEFAULT_VOICE={req.paddlespeech_default_voice}\n")
+                updated_keys.add("PADDLESPEECH_DEFAULT_VOICE")
+            else:
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
+    
+    # 添加未存在的配置项
+    if req.local_tts_enabled is not None and "LOCAL_TTS_ENABLED" not in updated_keys:
+        new_lines.append(f"LOCAL_TTS_ENABLED={str(req.local_tts_enabled).lower()}\n")
+    if req.local_tts_force is not None and "LOCAL_TTS_FORCE" not in updated_keys:
+        new_lines.append(f"LOCAL_TTS_FORCE={str(req.local_tts_force).lower()}\n")
+    if req.paddlespeech_default_voice is not None and "PADDLESPEECH_DEFAULT_VOICE" not in updated_keys:
+        new_lines.append(f"PADDLESPEECH_DEFAULT_VOICE={req.paddlespeech_default_voice}\n")
+    
+    # 写回 .env 文件
+    try:
+        with open(env_file, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"写入配置文件失败: {str(e)}")
+    
+    return {
+        "message": "配置已更新（需要重启后端服务才能生效）",
+        "updated": {
+            "local_tts_enabled": req.local_tts_enabled if req.local_tts_enabled is not None else settings.LOCAL_TTS_ENABLED,
+            "local_tts_force": req.local_tts_force if req.local_tts_force is not None else settings.LOCAL_TTS_FORCE,
+            "paddlespeech_default_voice": req.paddlespeech_default_voice if req.paddlespeech_default_voice is not None else settings.PADDLESPEECH_DEFAULT_VOICE,
+        }
     }
 
