@@ -11,7 +11,7 @@ const Settings = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState({
-    // 线上：Edge TTS（默认）
+    // 线上：科大讯飞 TTS（WebSocket API）
     // 备用：本地 CosyVoice2（由后端 LOCAL_TTS_* 控制降级/强制）
     local_tts_enabled: false,
     local_tts_force: false,
@@ -66,7 +66,7 @@ const Settings = () => {
       >
         <Alert
           message="配置说明"
-          description="修改配置后需要重启后端服务才能生效。默认使用在线 Edge TTS；当启用备用TTS后，Edge TTS 失败会自动降级到本地 CosyVoice2（也可选择强制始终使用 CosyVoice2）。"
+          description="修改配置后需要重启后端服务才能生效。默认使用在线科大讯飞 TTS；当启用备用TTS后，在线服务失败会自动降级到本地 CosyVoice2（也可选择强制始终使用 CosyVoice2）。"
           type="info"
           showIcon
           style={{ marginBottom: 24 }}
@@ -82,7 +82,7 @@ const Settings = () => {
             label="启用备用TTS（本地 CosyVoice2）"
             name="local_tts_enabled"
             valuePropName="checked"
-            tooltip="启用后，当 Edge TTS 失败（如 403 或网络问题）时，会自动降级到本地 CosyVoice2 进行语音合成"
+            tooltip="启用后，当在线 TTS（科大讯飞）失败（如鉴权失败、网络问题）时，会自动降级到本地 CosyVoice2 进行语音合成"
           >
             <Switch />
           </Form.Item>
@@ -91,7 +91,7 @@ const Settings = () => {
             label="强制使用备用TTS（CosyVoice2）"
             name="local_tts_force"
             valuePropName="checked"
-            tooltip="启用后，将始终使用 CosyVoice2，不再尝试 Edge TTS"
+            tooltip="启用后，将始终使用 CosyVoice2，不再尝试在线 TTS（科大讯飞）"
           >
             <Switch />
           </Form.Item>

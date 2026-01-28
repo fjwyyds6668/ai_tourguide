@@ -97,7 +97,7 @@ class SynthesizeRequest(BaseModel):
 async def synthesize_speech(
     req: SynthesizeRequest
 ):
-    """语音合成（优先 Edge TTS，失败可降级到离线本地 TTS：CosyVoice2）"""
+    """语音合成（优先科大讯飞 TTS，失败可降级到离线本地 TTS：CosyVoice2）"""
     try:
         text = _normalize_tts_text(req.text)
 
@@ -118,16 +118,16 @@ async def synthesize_speech(
             except Exception as e:
                 logger.warning(f"获取角色语音配置失败: {e}")
 
-        # 优先 Edge TTS；如启用离线 TTS，则在 Edge 失败（403/网络）时降级到本地 TTS
+        # 优先在线 TTS（科大讯飞）；如启用离线 TTS，则在在线失败时降级到本地 TTS
         audio_path = None
         last_error = None
 
         if not settings.LOCAL_TTS_FORCE:
             try:
-                audio_path = await voice_service.synthesize_edge(text, voice=voice)
+                audio_path = await voice_service.synthesize_xfyun(text, voice=voice)
             except Exception as e:
                 last_error = e
-                logger.error(f"Edge TTS 合成失败: {e}")
+                logger.error(f"科大讯飞 TTS 合成失败: {e}")
 
         if (audio_path is None) and settings.LOCAL_TTS_ENABLED:
             try:
@@ -161,7 +161,7 @@ async def synthesize_speech(
         logger.error(f"TTS synthesize failed: {e}")
         # 提供更友好的错误信息
         error_detail = str(e)
-        if "403" in error_detail or "Invalid response status" in error_detail:
-            error_detail = "Edge TTS 服务暂时不可用（403）。建议启用离线本地 TTS（CosyVoice2）或检查网络/限制。"
+        if "XFYUN_APPID" in error_detail or "XFYUN_API_KEY" in error_detail or "XFYUN_API_SECRET" in error_detail:
+            error_detail = "科大讯飞 TTS 未配置。请设置 XFYUN_APPID / XFYUN_API_KEY / XFYUN_API_SECRET，或启用离线本地 TTS（CosyVoice2）。"
         raise HTTPException(status_code=400, detail=f"TTS 合成失败：{error_detail}")
 

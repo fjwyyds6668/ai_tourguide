@@ -52,4 +52,5 @@ python-dotenv>=1.0.1
 httpx==0.25.2
 aiofiles==23.2.1
 email-validator>=2.0.0
+websocket-client>=1.6.0  # 科大讯飞 TTS WebSocket 客户端
 

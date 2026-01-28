@@ -46,6 +46,14 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_API_BASE: str = ""
     OPENAI_MODEL: str = "Pro/deepseek-ai/DeepSeek-R1"
+
+    # ===== 在线 TTS（科大讯飞 WebSocket TTS）=====
+    # 科大讯飞 TTS 配置（从 https://www.xfyun.cn/ 获取）
+    XFYUN_APPID: str = ""
+    XFYUN_API_KEY: str = ""
+    XFYUN_API_SECRET: str = ""
+    # 科大讯飞 TTS 默认音色（vcn 参数，如 x4_yezi、aisjiuxu、aisxping 等）
+    XFYUN_VOICE: str = "x4_yezi"
     
     # JWT 配置
     SECRET_KEY: str = "your-secret-key-change-in-production"
@@ -59,9 +67,9 @@ class Settings(BaseSettings):
     GRAPHRAG_COLLECTION_NAME: str = "tour_knowledge"  # GraphRAG 集合名称
 
     # ===== 离线 TTS（备用方案：本地 TTS）=====
-    # 开关：启用后，Edge TTS 失败（403/网络）会自动降级到本地 TTS
+    # 开关：启用后，在线 TTS 失败会自动降级到本地 TTS
     LOCAL_TTS_ENABLED: bool = False
-    # 若为 True，则强制始终使用本地 TTS（不走 Edge）
+    # 若为 True，则强制始终使用本地 TTS（不走在线）
     LOCAL_TTS_FORCE: bool = False
     # 本地 TTS 引擎选择：目前仅支持 cosyvoice2
     LOCAL_TTS_ENGINE: str = "cosyvoice2"  # 默认使用 CosyVoice2

@@ -12,7 +12,7 @@
   - Milvus (向量数据库)
 - **AI 能力**:
   - 语音识别: Whisper / Vosk
-  - 语音合成: Azure TTS / Edge TTS
+  - 语音合成: openai-edge-tts（本地在线网关）/ 本地 CosyVoice2（备用/强制）
   - GraphRAG 检索
 
 ### 前端
@@ -198,7 +198,7 @@ npm start
 2. 音频上传到后端进行语音识别（Whisper/Vosk）
 3. 识别文本通过 GraphRAG 检索相关知识
 4. 生成回复文本
-5. 使用 TTS 合成语音（Azure/Edge TTS）
+5. 使用 TTS 合成语音（openai-edge-tts / 本地 CosyVoice2）
 6. 返回音频给前端播放
 
 ### GraphRAG 检索
@@ -233,19 +233,39 @@ wget https://alphacephei.com/vosk/models/vosk-model-cn-0.22.zip
 unzip vosk-model-cn-0.22.zip
 ```
 
-### Azure TTS（语音合成）
+### 科大讯飞 TTS（在线 TTS）
 
-1. 在 Azure 门户创建语音服务
-2. 获取 API 密钥和区域
-3. 配置到 `.env`
+本项目使用科大讯飞 WebSocket TTS API 作为在线语音合成服务。
 
-### Edge TTS（语音合成）
+#### 1. 获取 API 凭证
 
-无需配置，可直接使用。支持重试机制和连接错误处理。
+1. 访问 [科大讯飞开放平台](https://www.xfyun.cn/)
+2. 注册账号并创建应用
+3. 获取以下信息：
+   - **APPID**：应用 ID
+   - **APIKey**：API 密钥
+   - **APISecret**：API 密钥对应的密钥
+
+#### 2. 配置 `.env`
+
+在 `backend/.env` 中添加以下配置：
+
+```env
+# 科大讯飞 TTS 配置
+XFYUN_APPID=your_app_id
+XFYUN_API_KEY=your_api_key
+XFYUN_API_SECRET=your_api_secret
+# 可选：默认音色（如 x4_yezi、aisjiuxu、aisxping 等）
+XFYUN_VOICE=x4_yezi
+```
+
+#### 3. 音色选择
+
+科大讯飞支持多种音色，可在配置中通过 `XFYUN_VOICE` 设置默认音色，或在 API 请求中通过 `voice` 参数指定。
 
 ### 离线本地 TTS（CosyVoice2，备用/强制）
 
-当你遇到 Edge TTS 403/网络限制时，可以启用 **CosyVoice2** 作为本地备用合成（也可强制始终使用本地 TTS）。
+当你遇到科大讯飞 TTS 网络问题/鉴权失败时，可以启用 **CosyVoice2** 作为本地备用合成（也可强制始终使用本地 TTS）。
 
 #### 1. 准备 CosyVoice 代码
 
@@ -260,10 +280,10 @@ git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git
 在 `backend/.env` 中添加以下配置：
 
 ```env
-# 启用本地 TTS（Edge TTS 失败时自动降级到 CosyVoice2）
+# 启用本地 TTS（科大讯飞 TTS 失败时自动降级到 CosyVoice2）
 LOCAL_TTS_ENABLED=true
 
-# 可选：强制始终使用本地 TTS（不走 Edge TTS）
+# 可选：强制始终使用本地 TTS（不走科大讯飞 TTS）
 # LOCAL_TTS_FORCE=false
 
 # 本地 TTS 引擎（目前仅支持 cosyvoice2）
@@ -328,12 +348,13 @@ prisma generate
 - **Whisper**: 确保有足够的磁盘空间（模型约 1.5GB）
 - **Vosk**: 确保模型文件路径正确
 
-### 6. Edge TTS 连接失败
+### 6. openai-edge-tts 连接失败/鉴权失败
 
-Edge TTS 已实现自动重试机制（最多 5 次），如果持续失败：
-- 检查网络连接
-- 检查防火墙设置
-- 稍后重试
+如果 openai-edge-tts 持续失败：
+- 检查 openai-edge-tts 容器/服务是否启动
+- 检查 `OPENAI_EDGE_TTS_BASE_URL` / `OPENAI_EDGE_TTS_API_KEY` 是否正确
+- 检查网络连接与防火墙
+- 或启用本地 TTS（CosyVoice2）作为备用
 
 ## 开发建议
 
