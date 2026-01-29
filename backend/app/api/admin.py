@@ -299,42 +299,18 @@ async def list_scenic_spots(
 
     scenic_ids = [int(s.id) for s in rows]
 
-    # 用一次 raw SQL 聚合，避免 N+1（Prisma client 支持 query_raw）
+    # 简单可靠：逐个景区 count，避免与底层表名/大小写相关的 query_raw 兼容问题
     counts_map: dict[int, dict] = {}
-    try:
-        sql = """
-        SELECT
-          s.id AS id,
-          COUNT(DISTINCT a.id) AS attractions_count,
-          COUNT(DISTINCT k."textId") AS knowledge_count
-        FROM "ScenicSpot" s
-        LEFT JOIN "Attraction" a ON a."scenicSpotId" = s.id
-        LEFT JOIN "Knowledge" k ON k."scenicSpotId" = s.id
-        WHERE s.id = ANY($1::int[])
-        GROUP BY s.id
-        """
-        count_rows = await prisma.query_raw(sql, scenic_ids)
-        for r in count_rows or []:
-            try:
-                sid = int(r.get("id"))
-                counts_map[sid] = {
-                    "attractions_count": int(r.get("attractions_count") or 0),
-                    "knowledge_count": int(r.get("knowledge_count") or 0),
-                }
-            except Exception:
-                continue
-    except Exception as e:
-        logger.warning(f"query_raw counts failed, fallback to per-spot count: {e}")
-        for sid in scenic_ids:
-            try:
-                a_cnt = await prisma.attraction.count(where={"scenicSpotId": sid})
-            except Exception:
-                a_cnt = 0
-            try:
-                k_cnt = await prisma.knowledge.count(where={"scenicSpotId": sid})
-            except Exception:
-                k_cnt = 0
-            counts_map[sid] = {"attractions_count": a_cnt, "knowledge_count": k_cnt}
+    for sid in scenic_ids:
+        try:
+            a_cnt = await prisma.attraction.count(where={"scenicSpotId": sid})
+        except Exception:
+            a_cnt = 0
+        try:
+            k_cnt = await prisma.knowledge.count(where={"scenicSpotId": sid})
+        except Exception:
+            k_cnt = 0
+        counts_map[sid] = {"attractions_count": a_cnt, "knowledge_count": k_cnt}
 
     res: List[ScenicSpotResponse] = []
     for s in rows:

@@ -5,16 +5,32 @@
         <h2>景点列表</h2>
       </template>
       
-      <el-input
-        v-model="searchText"
-        placeholder="搜索景点..."
-        style="margin-bottom: 20px"
-        clearable
-      >
-        <template #prefix>
-          <el-icon><Search /></el-icon>
-        </template>
-      </el-input>
+      <div style="display: flex; gap: 16px; margin-bottom: 20px">
+        <el-select
+          v-model="selectedScenicId"
+          placeholder="请选择景区（可选）"
+          clearable
+          style="width: 260px"
+          @change="onScenicChange"
+        >
+          <el-option
+            v-for="s in scenicSpots"
+            :key="s.id"
+            :label="s.name"
+            :value="s.id"
+          />
+        </el-select>
+
+        <el-input
+          v-model="searchText"
+          placeholder="搜索景点..."
+          clearable
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+      </div>
       
       <el-row :gutter="20" v-loading="loading">
         <el-col
@@ -26,7 +42,7 @@
           <el-card shadow="hover" @click="viewDetails(attraction)">
             <img
               v-if="attraction.image_url"
-              :src="attraction.image_url"
+              :src="imageSrc(attraction.image_url)"
               class="attraction-image"
               alt="景点图片"
             />
@@ -44,7 +60,7 @@
     <el-dialog v-model="detailVisible" title="景点详情" width="600px">
       <div v-if="selectedAttraction">
         <h3>{{ selectedAttraction.name }}</h3>
-        <p><strong>位置：</strong>{{ selectedAttraction.location }}</p>
+        <p v-if="selectedAttraction.location"><strong>位置：</strong>{{ selectedAttraction.location }}</p>
         <p><strong>描述：</strong>{{ selectedAttraction.description }}</p>
         <div v-if="selectedAttraction.audio_url">
           <audio :src="selectedAttraction.audio_url" controls></audio>
@@ -61,25 +77,57 @@ import { Search, Picture } from '@element-plus/icons-vue'
 import api from '../api'
 
 const attractions = ref([])
+const scenicSpots = ref([])
+const selectedScenicId = ref(null)
 const loading = ref(false)
 const searchText = ref('')
 const detailVisible = ref(false)
 const selectedAttraction = ref(null)
 
-const filteredAttractions = computed(() => {
-  if (!searchText.value) {
-    return attractions.value
+const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
+
+const imageSrc = (url) => {
+  if (!url) return ''
+  // 后端返回形如 /uploads/images/xxx.jpg 的相对路径，需要拼上后端地址
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url
   }
-  return attractions.value.filter(attraction =>
-    attraction.name.toLowerCase().includes(searchText.value.toLowerCase()) ||
-    (attraction.description && attraction.description.toLowerCase().includes(searchText.value.toLowerCase()))
-  )
+  return `${backendOrigin}${url}`
+}
+
+const filteredAttractions = computed(() => {
+  // 未选择景区时不展示任何景点，提示用户先选景区
+  if (!selectedScenicId.value) {
+    return []
+  }
+  let list = attractions.value
+  if (searchText.value) {
+    const kw = searchText.value.toLowerCase()
+    list = list.filter(attraction =>
+      attraction.name.toLowerCase().includes(kw) ||
+      (attraction.description && attraction.description.toLowerCase().includes(kw))
+    )
+  }
+  return list
 })
+
+const fetchScenicSpots = async () => {
+  try {
+    const res = await api.get('/attractions/scenic-spots')
+    scenicSpots.value = res.data || []
+  } catch (error) {
+    console.error(error)
+  }
+}
 
 const fetchAttractions = async () => {
   loading.value = true
   try {
-    const res = await api.get('/attractions')
+    const params = {}
+    if (selectedScenicId.value) {
+      params.scenic_spot_id = selectedScenicId.value
+    }
+    const res = await api.get('/attractions', { params })
     attractions.value = res.data
   } catch (error) {
     ElMessage.error('加载景点失败')
@@ -89,13 +137,19 @@ const fetchAttractions = async () => {
   }
 }
 
+const onScenicChange = () => {
+  // 切换景区时重新加载该景区下的景点
+  fetchAttractions()
+}
+
 const viewDetails = (attraction) => {
   selectedAttraction.value = attraction
   detailVisible.value = true
 }
 
-onMounted(() => {
-  fetchAttractions()
+onMounted(async () => {
+  await fetchScenicSpots()
+  // 不主动加载景点，等用户选择景区后再加载
 })
 </script>
 

@@ -6,7 +6,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 import logging
 from app.core.prisma_client import get_prisma
-from app.api.admin import _sync_attraction_to_graphrag
+from app.api.admin import _sync_attraction_to_graphrag, _get_prisma_model
 
 logger = logging.getLogger(__name__)
 
@@ -53,16 +53,19 @@ async def get_attractions(
     skip: int = 0,
     limit: int = 100,
     category: Optional[str] = None,
+    scenic_spot_id: Optional[int] = None,
 ):
-    """获取景点列表"""
+    """获取景点列表（游客端/管理端通用）"""
     prisma = await get_prisma()
-    where = {}
+    where: dict = {}
     if category:
         where["category"] = category
+    if scenic_spot_id is not None:
+        where["scenicSpotId"] = scenic_spot_id
     rows = await prisma.attraction.find_many(
         where=where or None,
         skip=skip,
-        take=limit,
+        take=min(max(int(limit), 1), 500),
         order={"id": "asc"},
     )
     # Prisma 返回字段是 camelCase，需要映射到 response 字段
@@ -271,4 +274,20 @@ async def get_recommendations(user_id: int, limit: int = 5):
             for r in rows
         ]
     }
+
+
+class ScenicSpotPublic(BaseModel):
+    id: int
+    name: str
+
+
+@router.get("/scenic-spots", response_model=List[ScenicSpotPublic])
+async def list_scenic_spots_public():
+    """
+    游客端使用的景区列表（只返回 id + name，用于按景区筛选景点）
+    """
+    prisma = await get_prisma()
+    scenic_model = _get_prisma_model(prisma, "scenicspot", "scenicSpot")
+    rows = await scenic_model.find_many(order={"id": "asc"}, take=1000)
+    return [ScenicSpotPublic(id=s.id, name=s.name) for s in rows]
 

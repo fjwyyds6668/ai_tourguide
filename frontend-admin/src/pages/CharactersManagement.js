@@ -223,7 +223,7 @@ const CharactersManagement = () => {
         ),
       },
     ],
-    [handleDelete, handleToggleActive, openEdit]
+    [handleDelete, handleToggleActive, openEdit, voiceOptions]
   );
 
   const handleSubmit = async () => {

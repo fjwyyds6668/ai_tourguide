@@ -200,6 +200,27 @@ const KnowledgeBase = () => {
     }
   };
 
+  const handleAttractionImageUpload = async (options) => {
+    const { file, onSuccess, onError } = options;
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post('/admin/uploads/image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const url = res.data?.image_url;
+      if (url) {
+        attractionForm.setFieldsValue({ image_url: url });
+      }
+      message.success('景点图片上传成功');
+      onSuccess?.(res.data);
+    } catch (err) {
+      console.error('景点图片上传失败:', err);
+      message.error(err.response?.data?.detail || '景点图片上传失败');
+      onError?.(err);
+    }
+  };
+
   return (
     <div>
       <Card
@@ -538,11 +559,17 @@ const KnowledgeBase = () => {
           <Form.Item name="description" label="描述" rules={[{ required: true, message: '请输入景点描述' }]}>
             <Input.TextArea rows={4} />
           </Form.Item>
-          <Form.Item name="location" label="位置">
-            <Input />
-          </Form.Item>
-          <Form.Item name="category" label="类别">
-            <Input />
+          <Form.Item name="image_url" label="景点图片（可选）">
+            <Space.Compact style={{ width: '100%' }}>
+              <Input placeholder="上传后自动填入 URL（可选）" readOnly />
+              <Upload
+                accept="image/*"
+                showUploadList={false}
+                customRequest={handleAttractionImageUpload}
+              >
+                <Button icon={<UploadOutlined />}>上传</Button>
+              </Upload>
+            </Space.Compact>
           </Form.Item>
         </Form>
       </Modal>
