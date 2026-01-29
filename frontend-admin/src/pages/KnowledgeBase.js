@@ -265,19 +265,6 @@ const KnowledgeBase = () => {
             >
               新增景区
             </Button>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                if (!selectedScenicId) {
-                  message.error('请先在左侧选择一个景区');
-                  return;
-                }
-                setKnowledgeVisible(true);
-              }}
-            >
-              添加景区知识
-            </Button>
             {selectedScenicId && (
               <Button
                 type="primary"
@@ -396,12 +383,30 @@ const KnowledgeBase = () => {
                   key: 'knowledge',
                   label: '景区总知识',
                   children: (
-                    <Table
-                      columns={knowledgeColumns}
-                      dataSource={knowledgeData}
-                      loading={loading}
-                      rowKey="text_id"
-                    />
+                    <div>
+                      <div style={{ marginBottom: 16 }}>
+                        <Button
+                          type="primary"
+                          icon={<PlusOutlined />}
+                          onClick={() => {
+                            if (!selectedScenicId) {
+                              message.error('请先选择一个景区');
+                              return;
+                            }
+                            knowledgeForm.resetFields();
+                            setKnowledgeVisible(true);
+                          }}
+                        >
+                          添加知识
+                        </Button>
+                      </div>
+                      <Table
+                        columns={knowledgeColumns}
+                        dataSource={knowledgeData}
+                        loading={loading}
+                        rowKey="text_id"
+                      />
+                    </div>
                   ),
                 },
                 {
@@ -469,18 +474,44 @@ const KnowledgeBase = () => {
             try {
               setLoading(true);
               if (scenicEditing?.id) {
-                await api.put(`/admin/scenic-spots/${scenicEditing.id}`, values);
+                // 编辑模式：只更新景区基本信息
+                const { knowledge_text, ...scenicValues } = values;
+                await api.put(`/admin/scenic-spots/${scenicEditing.id}`, scenicValues);
                 message.success('更新成功');
                 setScenicVisible(false);
                 setScenicEditing(null);
                 setCoverImageUploaded(false);
                 await loadScenicSpots(scenicEditing.id);
               } else {
-                const res = await api.post('/admin/scenic-spots', values);
-                message.success('创建成功');
+                // 新增模式：创建景区并可选添加知识
+                const { knowledge_text, ...scenicValues } = values;
+                const res = await api.post('/admin/scenic-spots', scenicValues);
+                const newId = res.data?.id;
+                
+                // 如果填写了知识内容，同时上传知识
+                if (knowledge_text && knowledge_text.trim() && newId) {
+                  try {
+                    await api.post(
+                      `/admin/scenic-spots/${newId}/knowledge/upload`,
+                      [
+                        {
+                          text: knowledge_text.trim(),
+                          text_id: `kb_${Date.now()}`,
+                          metadata: {},
+                        },
+                      ],
+                      { timeout: 120000 }
+                    );
+                    message.success('景区和知识创建成功');
+                  } catch (knowledgeError) {
+                    message.warning('景区创建成功，但知识上传失败：' + (knowledgeError.response?.data?.detail || knowledgeError.message));
+                  }
+                } else {
+                  message.success('创建成功');
+                }
+                
                 setScenicVisible(false);
                 setCoverImageUploaded(false);
-                const newId = res.data?.id;
                 await loadScenicSpots(newId || null);
               }
             } catch (e) {
@@ -516,6 +547,15 @@ const KnowledgeBase = () => {
               </Upload>
             </Space.Compact>
           </Form.Item>
+          {/* 新增模式下显示知识内容输入框 */}
+          {!scenicEditing && (
+            <Form.Item name="knowledge_text" label="景区知识（可选）">
+              <Input.TextArea 
+                rows={5} 
+                placeholder="输入景区相关的知识内容，如景区介绍、历史背景、特色等..."
+              />
+            </Form.Item>
+          )}
         </Form>
       </Modal>
 
