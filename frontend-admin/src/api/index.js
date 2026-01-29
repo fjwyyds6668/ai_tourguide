@@ -2,7 +2,8 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: '/api/v1',
-  timeout: 30000,
+  // 默认超时时间 120 秒，避免长耗时任务（知识导入、图谱构建等）前端过早报错
+  timeout: 120000,
   headers: {
     'Content-Type': 'application/json',
   },

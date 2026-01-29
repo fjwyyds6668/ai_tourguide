@@ -227,6 +227,61 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
         logger.error(f"同步景点到 GraphRAG 失败: {e}", exc_info=True)
         # 不抛出异常，避免影响主流程
 
+def _serialize_metadata(metadata: dict) -> str:
+    """将 metadata dict 序列化为 JSON 字符串"""
+    return json.dumps(metadata or {}, ensure_ascii=False)
+
+
+def _deserialize_metadata(metadata_str: str | None) -> dict:
+    """将 metadata JSON 字符串反序列化为 dict"""
+    if not metadata_str:
+        return {}
+    try:
+        return json.loads(metadata_str)
+    except Exception:
+        return {}
+
+
+async def _delete_knowledge_from_milvus(text_id: str, collection_name: str = "tour_knowledge") -> None:
+    """从 Milvus 删除指定 text_id 的向量"""
+    try:
+        from pymilvus import utility
+        if utility.has_collection(collection_name):
+            collection = milvus_client.get_collection(collection_name)
+            expr = f'text_id == "{text_id}"'
+            collection.delete(expr)
+            collection.flush()
+            logger.info(f"已从 Milvus 删除知识库: {text_id}")
+    except Exception as e:
+        logger.warning(f"从 Milvus 删除失败: {e}")
+
+
+async def _delete_knowledge_from_neo4j(text_id: str) -> None:
+    """从 Neo4j 删除指定 text_id 的 Text 节点及其关联的景区簇（如果该景区不再被其他 Text 描述）"""
+    try:
+        # 1) 删除 Text 节点本身
+        query_text = """
+        MATCH (t:Text {id: $text_id})
+        DETACH DELETE t
+        """
+        graph_builder.client.execute_query(query_text, {"text_id": text_id})
+
+        # 2) 删除由该 Text 衍生出的景区簇（仅当该景区不再被其他 Text 描述时）
+        query_cluster = """
+        MATCH (s:ScenicSpot)<-[:DESCRIBES]-(:Text {id: $text_id})
+        WITH s
+        OPTIONAL MATCH (s)<-[:DESCRIBES]-(other:Text)
+        WITH s, collect(other.id) AS others
+        WHERE size(others) = 0 OR (size(others) = 1 AND others[0] IS NULL)
+        OPTIONAL MATCH (s)-[r]-(n)
+        DETACH DELETE s, n
+        """
+        graph_builder.client.execute_query(query_cluster, {"text_id": text_id})
+        logger.info(f"已从 Neo4j 删除知识库及景区簇（如适用）: {text_id}")
+    except Exception as e:
+        logger.warning(f"从 Neo4j 删除失败: {e}")
+
+
 async def _upload_items_to_graphrag(items: List[KnowledgeBaseItem], collection_name: str, build_graph: bool) -> dict:
     """复用 /admin/knowledge/upload 的逻辑，供批量导入调用。"""
     # 步骤1: 创建集合（如果不存在）
@@ -252,16 +307,30 @@ async def _upload_items_to_graphrag(items: List[KnowledgeBaseItem], collection_n
     total_entities = 0
     if build_graph:
         for item in items:
-            extracted = rag_service.extract_entities(item.text)
-            total_entities += len(extracted)
-            await graph_builder.extract_and_store_entities(item.text, item.text_id, extracted)
-            # 尝试将景区介绍类文本解析为结构化信息，并构建以景区为中心的一簇图谱
+            # 优先尝试解析为景区结构化信息
+            parsed = None
             try:
                 parsed = await rag_service.parse_scenic_text(item.text)
-                if parsed:
-                    await graph_builder.build_scenic_cluster(parsed, text_id=item.text_id)
             except Exception as e:
-                logger.warning(f"build_scenic_cluster failed for text_id={item.text_id}: {e}")
+                logger.debug(f"parse_scenic_text failed for text_id={item.text_id}: {e}")
+            
+            if parsed:
+                # 景区类文本：只构建景区簇，不创建通用实体散点
+                await graph_builder.build_scenic_cluster(parsed, text_id=item.text_id)
+                logger.info(f"Built scenic cluster for text_id={item.text_id}, scenic_spot={parsed.get('scenic_spot')}")
+                # 统计：景区簇里的节点数（位置+子景点+特色+荣誉）
+                total_entities += (
+                    len(parsed.get("location", [])) +
+                    len(parsed.get("spots", [])) +
+                    len(parsed.get("features", [])) +
+                    len(parsed.get("awards", [])) +
+                    1  # 景区节点本身
+                )
+            else:
+                # 非景区类文本：走通用实体抽取路径
+                extracted = rag_service.extract_entities(item.text)
+                total_entities += len(extracted)
+                await graph_builder.extract_and_store_entities(item.text, item.text_id, extracted)
 
     return {
         "message": f"Uploaded {len(items)} items successfully",
@@ -289,7 +358,7 @@ async def upload_knowledge(
             if not item.text_id:
                 continue
             try:
-                meta_str = json.dumps(item.metadata or {}, ensure_ascii=False)
+                meta_str = _serialize_metadata(item.metadata)
                 await prisma.knowledge.upsert(
                     where={"textId": item.text_id},
                     data={
@@ -319,22 +388,14 @@ async def list_knowledge():
     """
     prisma = await get_prisma()
     rows = await prisma.knowledge.find_many(order={"id": "asc"}, take=1000)
-    items: List[KnowledgeBaseItem] = []
-    for row in rows:
-        meta: dict = {}
-        if row.metadata:
-            try:
-                meta = json.loads(row.metadata)
-            except Exception:
-                meta = {}
-        items.append(
-            KnowledgeBaseItem(
-                text_id=row.textId,
-                text=row.text,
-                metadata=meta,
-            )
+    return [
+        KnowledgeBaseItem(
+            text_id=row.textId,
+            text=row.text,
+            metadata=_deserialize_metadata(row.metadata),
         )
-    return items
+        for row in rows
+    ]
 
 @router.put("/knowledge/{text_id}")
 async def update_knowledge(
@@ -351,26 +412,9 @@ async def update_knowledge(
         # 确保 text_id 一致
         item.text_id = text_id
         
-        # 先删除旧数据
-        try:
-            from pymilvus import utility
-            if utility.has_collection(collection_name):
-                collection = milvus_client.get_collection(collection_name)
-                expr = f'text_id == "{text_id}"'
-                collection.delete(expr)
-                collection.flush()
-        except Exception as e:
-            logger.warning(f"删除旧知识库数据失败: {e}")
-        
-        # 删除 Neo4j 中的旧节点
-        try:
-            query = """
-            MATCH (t:Text {id: $text_id})
-            DETACH DELETE t
-            """
-            graph_builder.client.execute_query(query, {"text_id": text_id})
-        except Exception as e:
-            logger.warning(f"删除 Neo4j 旧节点失败: {e}")
+        # 先删除旧数据（复用公共函数）
+        await _delete_knowledge_from_milvus(text_id, collection_name)
+        await _delete_knowledge_from_neo4j(text_id)
         
         # 重新上传（使用现有的上传逻辑）
         result = await _upload_items_to_graphrag([item], collection_name, build_graph)
@@ -378,12 +422,11 @@ async def update_knowledge(
         # 更新 PostgreSQL 中的记录
         prisma = await get_prisma()
         try:
-            meta_str = json.dumps(item.metadata or {}, ensure_ascii=False)
             await prisma.knowledge.update(
                 where={"textId": text_id},
                 data={
                     "text": item.text,
-                    "metadata": meta_str,
+                    "metadata": _serialize_metadata(item.metadata),
                 },
             )
         except Exception as e:
@@ -403,28 +446,9 @@ async def delete_knowledge(
         raise HTTPException(status_code=400, detail="GraphRAG 自动更新已禁用")
     
     try:
-        # 从 Milvus 删除
-        try:
-            from pymilvus import utility
-            if utility.has_collection(collection_name):
-                collection = milvus_client.get_collection(collection_name)
-                expr = f'text_id == "{text_id}"'
-                collection.delete(expr)
-                collection.flush()
-                logger.info(f"已从 Milvus 删除知识库: {text_id}")
-        except Exception as e:
-            logger.warning(f"从 Milvus 删除失败: {e}")
-        
-        # 从 Neo4j 删除
-        try:
-            query = """
-            MATCH (t:Text {id: $text_id})
-            DETACH DELETE t
-            """
-            graph_builder.client.execute_query(query, {"text_id": text_id})
-            logger.info(f"已从 Neo4j 删除知识库: {text_id}")
-        except Exception as e:
-            logger.warning(f"从 Neo4j 删除失败: {e}")
+        # 从 Milvus 和 Neo4j 删除（复用公共函数）
+        await _delete_knowledge_from_milvus(text_id, collection_name)
+        await _delete_knowledge_from_neo4j(text_id)
         
         # 从 PostgreSQL 删除
         try:
@@ -436,6 +460,97 @@ async def delete_knowledge(
         return {"message": f"Knowledge item {text_id} deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/knowledge/{text_id}/rebuild-cluster")
+async def rebuild_knowledge_cluster(
+    text_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    重建某个知识条目的图簇（先删除旧簇，再根据当前文本重新构建）
+    用于修复"节点没有聚成一簇"的问题
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可操作")
+    
+    try:
+        # 1. 从 PostgreSQL 获取知识内容
+        prisma = await get_prisma()
+        knowledge = await prisma.knowledge.find_unique(where={"textId": text_id})
+        if not knowledge:
+            raise HTTPException(status_code=404, detail=f"知识 {text_id} 不存在")
+        
+        # 2. 先删除旧簇（复用公共函数）
+        await _delete_knowledge_from_neo4j(text_id)
+        
+        # 3. 重新构建簇
+        item = KnowledgeBaseItem(
+            text_id=text_id,
+            text=knowledge.text,
+            metadata=_deserialize_metadata(knowledge.metadata)
+        )
+        
+        # 重新上传（会触发 parse_scenic_text + build_scenic_cluster）
+        result = await _upload_items_to_graphrag([item], "tour_knowledge", build_graph=True)
+        
+        return {
+            "message": f"已重建知识 {text_id} 的图簇",
+            "result": result
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"重建簇失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"重建簇失败: {str(e)}")
+
+
+@router.post("/knowledge/clear-graph")
+async def clear_graph_database(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    清空整个 Neo4j 图数据库（危险操作，仅管理员）
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可操作")
+    
+    try:
+        query = "MATCH (n) DETACH DELETE n"
+        graph_builder.client.execute_query(query)
+        return {"message": "已清空图数据库"}
+    except Exception as e:
+        logger.error(f"清空图数据库失败: {e}")
+        raise HTTPException(status_code=500, detail=f"清空失败: {str(e)}")
+
+
+@router.post("/knowledge/clear-vector")
+async def clear_vector_database(
+    collection_name: str = "tour_knowledge",
+    current_user: User = Depends(get_current_user),
+):
+    """
+    清空 Milvus 向量数据库的指定 collection（危险操作，仅管理员）
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可操作")
+    
+    try:
+        from pymilvus import utility
+        
+        if not milvus_client.connected:
+            milvus_client.connect()
+        
+        if utility.has_collection(collection_name):
+            # 删除整个 collection（最彻底）
+            utility.drop_collection(collection_name)
+            logger.info(f"已删除 Milvus collection: {collection_name}")
+            return {"message": f"已清空向量数据库（collection: {collection_name}）"}
+        else:
+            return {"message": f"Collection {collection_name} 不存在，无需清空"}
+    except Exception as e:
+        logger.error(f"清空向量数据库失败: {e}")
+        raise HTTPException(status_code=500, detail=f"清空失败: {str(e)}")
 
 @router.post("/knowledge/import_attractions")
 async def import_attractions_to_graphrag(req: ImportAttractionsRequest):

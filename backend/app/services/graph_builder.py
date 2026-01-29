@@ -130,6 +130,7 @@ class GraphBuilder:
     async def build_scenic_cluster(self, parsed: Dict[str, Any], text_id: str | None = None) -> None:
         """
         根据结构化的景区信息，在 Neo4j 中构建以景区为中心的一簇节点和关系。
+        确保所有节点都连接到 ScenicSpot 中心节点，形成一簇。
         
         预期 parsed 结构：
         {
@@ -151,7 +152,24 @@ class GraphBuilder:
         spots = parsed.get("spots") or []
         awards = parsed.get("awards") or []
 
-        # 景区节点
+        # 先清理该景区相关的所有旧数据（包括孤立节点），确保重建时形成一簇
+        # 1) 删除该景区的所有关系
+        q_clean_all = """
+        MATCH (s:ScenicSpot {name: $name})-[r]->()
+        DELETE r
+        """
+        self.client.execute_query(q_clean_all, {"name": scenic_name})
+        
+        # 2) 删除只连接到该景区的孤立节点（避免散点残留）
+        # 注意：保留可能被其他景区共享的位置节点（省/市/县）
+        q_clean_isolated = """
+        MATCH (s:ScenicSpot {name: $name})-[r1:拥有|特色|荣誉]->(n)
+        WHERE NOT (n)-[:位于|隶属]->() AND COUNT { (n)--() } <= 1
+        DETACH DELETE n
+        """
+        self.client.execute_query(q_clean_isolated, {"name": scenic_name})
+
+        # 景区节点（MERGE 确保唯一）
         q_scenic = """
         MERGE (s:ScenicSpot {name: $name})
         ON CREATE SET s.area = $area
@@ -168,31 +186,56 @@ class GraphBuilder:
             """
             self.client.execute_query(q_txt, {"text_id": text_id, "name": scenic_name})
 
-        # 位置层级：省 / 市 / 县
+        # 清理景区的位置关系（避免重复）
+        q_clean_loc = """
+        MATCH (s:ScenicSpot {name: $name})-[r:位于]->()
+        DELETE r
+        """
+        self.client.execute_query(q_clean_loc, {"name": scenic_name})
+
+        # 位置层级：省 / 市 / 县（一次性构建完整层级链，确保连成一簇）
         if locations:
             params = {"s_name": scenic_name}
-            cypher_parts = []
-            if len(locations) >= 1:
-                params["prov"] = locations[0]
-                cypher_parts.append("MERGE (prov:Province {name:$prov})")
-            if len(locations) >= 2:
-                params["city"] = locations[1]
-                cypher_parts.append("MERGE (city:City {name:$city})")
+            # 构建完整的层级关系链，确保所有位置节点都连在一起
             if len(locations) >= 3:
-                params["county"] = locations[2]
-                cypher_parts.append("MERGE (county:County {name:$county})")
-            if len(locations) >= 2:
-                cypher_parts.append("MERGE (city)-[:隶属]->(prov)")
-            if len(locations) >= 3:
-                cypher_parts.append("MERGE (county)-[:隶属]->(city)")
-                cypher_parts.append("MERGE (s:ScenicSpot {name:$s_name})-[:位于]->(county)")
+                # 省 -> 市 -> 县 -> 景区
+                q_loc = """
+                MERGE (prov:Province {name: $prov})
+                MERGE (city:City {name: $city})
+                MERGE (county:County {name: $county})
+                MERGE (s:ScenicSpot {name: $s_name})
+                MERGE (city)-[:隶属]->(prov)
+                MERGE (county)-[:隶属]->(city)
+                MERGE (s)-[:位于]->(county)
+                """
+                params.update({
+                    "prov": locations[0],
+                    "city": locations[1],
+                    "county": locations[2]
+                })
+                self.client.execute_query(q_loc, params)
             elif len(locations) == 2:
-                cypher_parts.append("MERGE (s:ScenicSpot {name:$s_name})-[:位于]->(city)")
+                # 省 -> 市 -> 景区
+                q_loc = """
+                MERGE (prov:Province {name: $prov})
+                MERGE (city:City {name: $city})
+                MERGE (s:ScenicSpot {name: $s_name})
+                MERGE (city)-[:隶属]->(prov)
+                MERGE (s)-[:位于]->(city)
+                """
+                params.update({
+                    "prov": locations[0],
+                    "city": locations[1]
+                })
+                self.client.execute_query(q_loc, params)
             elif len(locations) == 1:
-                cypher_parts.append("MERGE (s:ScenicSpot {name:$s_name})-[:位于]->(prov)")
-
-            q_loc = "\n".join(cypher_parts)
-            if q_loc:
+                # 省 -> 景区
+                q_loc = """
+                MERGE (prov:Province {name: $prov})
+                MERGE (s:ScenicSpot {name: $s_name})
+                MERGE (s)-[:位于]->(prov)
+                """
+                params.update({"prov": locations[0]})
                 self.client.execute_query(q_loc, params)
 
         # 子景点

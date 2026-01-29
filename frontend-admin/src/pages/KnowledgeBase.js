@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Table, Modal, Form, Input, message, Popconfirm } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { Card, Button, Table, Modal, Form, Input, message, Popconfirm, Space } from 'antd';
+import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import api from '../api';
 
 const KnowledgeBase = () => {
@@ -70,11 +70,18 @@ const KnowledgeBase = () => {
   const handleSubmit = async (values) => {
     try {
       setLoading(true);
-      await api.post('/admin/knowledge/upload', [{
-        text: values.text,
-        text_id: values.text_id || `kb_${Date.now()}`,
-        metadata: {}
-      }]);
+      // 单次上传可能触发向量生成 + LLM 解析 + 图谱构建，耗时较长，这里显式设置更长的超时时间
+      await api.post(
+        '/admin/knowledge/upload',
+        [
+          {
+            text: values.text,
+            text_id: values.text_id || `kb_${Date.now()}`,
+            metadata: {},
+          },
+        ],
+        { timeout: 120000 }
+      );
       message.success('上传成功');
       setVisible(false);
       form.resetFields();
@@ -86,18 +93,66 @@ const KnowledgeBase = () => {
     }
   };
 
+  const handleClearGraph = async () => {
+    try {
+      setLoading(true);
+      await api.post('/admin/knowledge/clear-graph');
+      message.success('已清空图数据库');
+    } catch (error) {
+      console.error('清空图数据库失败:', error);
+      message.error(error.response?.data?.detail || '清空失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearVector = async () => {
+    try {
+      setLoading(true);
+      await api.post('/admin/knowledge/clear-vector');
+      message.success('已清空向量数据库');
+    } catch (error) {
+      console.error('清空向量数据库失败:', error);
+      message.error(error.response?.data?.detail || '清空失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div>
       <Card
         title="知识库管理"
         extra={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setVisible(true)}
-          >
-            添加知识
-          </Button>
+          <Space>
+            <Popconfirm
+              title="确定要清空图数据库吗？此操作不可恢复！"
+              okText="确定"
+              cancelText="取消"
+              onConfirm={handleClearGraph}
+            >
+              <Button danger icon={<DeleteOutlined />} disabled={loading}>
+                清空图数据库
+              </Button>
+            </Popconfirm>
+            <Popconfirm
+              title="确定要清空向量数据库吗？此操作不可恢复！"
+              okText="确定"
+              cancelText="取消"
+              onConfirm={handleClearVector}
+            >
+              <Button danger icon={<DeleteOutlined />} disabled={loading}>
+                清空向量数据库
+              </Button>
+            </Popconfirm>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setVisible(true)}
+            >
+              添加知识
+            </Button>
+          </Space>
         }
       >
         <Table
