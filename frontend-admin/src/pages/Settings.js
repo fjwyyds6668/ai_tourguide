@@ -10,9 +10,11 @@ const Settings = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [voiceOptions, setVoiceOptions] = useState([]);
   const [config, setConfig] = useState({
     // 线上：科大讯飞 TTS（WebSocket API）
     // 备用：本地 CosyVoice2（由后端 LOCAL_TTS_* 控制降级/强制）
+    xfyun_voice: 'x4_yezi',
     local_tts_enabled: false,
     local_tts_force: false,
     local_tts_engine: 'cosyvoice2',
@@ -20,6 +22,16 @@ const Settings = () => {
     cosyvoice2_device: 'cpu',
     cosyvoice2_language: 'zh',
   });
+
+  const fetchVoiceOptions = useCallback(async () => {
+    try {
+      const res = await api.get('/voice/voices');
+      setVoiceOptions(res.data || []);
+    } catch (error) {
+      console.error('Failed to fetch voice options:', error);
+      // 不阻塞设置页
+    }
+  }, []);
 
   const fetchConfig = useCallback(async () => {
     setLoading(true);
@@ -37,7 +49,8 @@ const Settings = () => {
 
   useEffect(() => {
     fetchConfig();
-  }, [fetchConfig]);
+    fetchVoiceOptions();
+  }, [fetchConfig, fetchVoiceOptions]);
 
   const handleSave = async (values) => {
     setSaving(true);
@@ -78,6 +91,21 @@ const Settings = () => {
           initialValues={config}
           onFinish={handleSave}
         >
+          <Form.Item
+            label="默认讯飞音色（XFYUN_VOICE）"
+            name="xfyun_voice"
+            tooltip="在线 TTS（科大讯飞）默认使用的音色（vcn）。也可以在“角色管理”里为单个角色单独设置 voice 覆盖默认值。"
+          >
+            <Select
+              placeholder="选择默认讯飞音色"
+              showSearch
+              filterOption={(input, option) =>
+                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              options={voiceOptions}
+            />
+          </Form.Item>
+
           <Form.Item
             label="启用备用TTS（本地 CosyVoice2）"
             name="local_tts_enabled"
@@ -156,6 +184,10 @@ const Settings = () => {
 
         <div style={{ marginTop: 24, padding: 16, background: '#f5f5f5', borderRadius: 4 }}>
           <Text strong>当前配置状态：</Text>
+          <div style={{ marginTop: 8 }}>
+            <Text>默认讯飞音色：</Text>
+            <Text code>{config.xfyun_voice || 'x4_yezi'}</Text>
+          </div>
           <div style={{ marginTop: 8 }}>
             <Text>备用TTS（CosyVoice2）：</Text>
             <Text type={config.local_tts_enabled ? 'success' : 'secondary'}>

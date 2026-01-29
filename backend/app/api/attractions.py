@@ -48,6 +48,7 @@ class AttractionUpdate(BaseModel):
     image_url: Optional[str] = None
     audio_url: Optional[str] = None
 
+@router.get("", response_model=List[AttractionResponse])
 @router.get("/", response_model=List[AttractionResponse])
 async def get_attractions(
     skip: int = 0,
@@ -70,6 +71,7 @@ async def get_attraction(attraction_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Attraction not found")
     return attraction
 
+@router.post("", response_model=AttractionResponse)
 @router.post("/", response_model=AttractionResponse)
 async def create_attraction(attraction: AttractionCreate, db: Session = Depends(get_db)):
     """创建景点（自动同步到 GraphRAG）"""

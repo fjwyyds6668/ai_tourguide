@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Table, Modal, Form, Input, message } from 'antd';
+import { Card, Button, Table, Modal, Form, Input, message, Popconfirm } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import api from '../api';
 
@@ -17,16 +17,11 @@ const KnowledgeBase = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      // 这里需要根据实际API调整
-      // 如果API已实现，取消下面的注释
-      // const response = await api.get('/admin/knowledge/list');
-      // setData(response.data || []);
-      
-      // 临时使用空数组，避免 ESLint 警告
-      setData([]);
+      const response = await api.get('/admin/knowledge');
+      setData(response.data || []);
     } catch (error) {
       console.error('加载数据失败:', error);
-      setData([]); // 出错时也设置空数组
+      setData([]);
     } finally {
       setLoading(false);
     }
@@ -48,7 +43,26 @@ const KnowledgeBase = () => {
       title: '操作',
       key: 'action',
       render: (_, record) => (
-        <Button danger size="small">删除</Button>
+        <Popconfirm
+          title="确定要删除这条知识吗？"
+          okText="删除"
+          cancelText="取消"
+          onConfirm={async () => {
+            try {
+              setLoading(true);
+              await api.delete(`/admin/knowledge/${encodeURIComponent(record.text_id)}`);
+              message.success('删除成功');
+              loadData();
+            } catch (error) {
+              console.error('删除失败:', error);
+              message.error(error.response?.data?.detail || '删除失败');
+            } finally {
+              setLoading(false);
+            }
+          }}
+        >
+          <Button danger size="small">删 除</Button>
+        </Popconfirm>
       ),
     },
   ];

@@ -3,18 +3,6 @@ import { Button, Card, Form, Input, Modal, Space, Switch, Table, Tag, message, S
 import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
 import api from '../api';
 
-// 可用的中文语音列表
-const VOICE_OPTIONS = [
-  { value: 'zh-CN-XiaoxiaoNeural', label: '晓晓 (女声) - zh-CN-XiaoxiaoNeural' },
-  { value: 'zh-CN-XiaoyiNeural', label: '晓伊 (女声) - zh-CN-XiaoyiNeural' },
-  { value: 'zh-CN-YunjianNeural', label: '云健 (男声) - zh-CN-YunjianNeural' },
-  { value: 'zh-CN-YunxiNeural', label: '云希 (男声) - zh-CN-YunxiNeural' },
-  { value: 'zh-CN-YunxiaNeural', label: '云夏 (男声) - zh-CN-YunxiaNeural' },
-  { value: 'zh-CN-YunyangNeural', label: '云扬 (男声) - zh-CN-YunyangNeural' },
-  { value: 'zh-CN-liaoning-XiaobeiNeural', label: '晓北 (女声，东北话) - zh-CN-liaoning-XiaobeiNeural' },
-  { value: 'zh-CN-shaanxi-XiaoniNeural', label: '晓妮 (女声，陕西话) - zh-CN-shaanxi-XiaoniNeural' },
-];
-
 // 可用的 Live2D 角色列表
 const LIVE2D_CHARACTER_OPTIONS = [
   { value: 'Mao', label: 'Mao - 艺术家风格，有丰富的动作和表情（默认）' },
@@ -42,6 +30,17 @@ const CharactersManagement = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form] = Form.useForm();
+  const [voiceOptions, setVoiceOptions] = useState([]);
+
+  const fetchVoiceOptions = useCallback(async () => {
+    try {
+      const res = await api.get('/voice/voices');
+      setVoiceOptions(res.data || []);
+    } catch (e) {
+      console.error(e);
+      // 不阻塞页面，保持为空（用户仍可手动输入，但建议通过下拉选择）
+    }
+  }, []);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -58,7 +57,8 @@ const CharactersManagement = () => {
 
   useEffect(() => {
     fetchList();
-  }, [fetchList]);
+    fetchVoiceOptions();
+  }, [fetchList, fetchVoiceOptions]);
 
   const openCreate = useCallback(() => {
     setEditing(null);
@@ -166,9 +166,9 @@ const CharactersManagement = () => {
         ellipsis: true,
         render: (v) => {
           if (!v) return <span style={{ color: '#999' }}>默认</span>;
-          const voiceOption = VOICE_OPTIONS.find(opt => opt.value === v);
+          const voiceOption = voiceOptions.find(opt => opt.value === v);
           return voiceOption ? (
-            <Tag color="purple" title={v}>{voiceOption.label.split(' - ')[0]}</Tag>
+            <Tag color="purple" title={v}>{voiceOption.label}</Tag>
           ) : (
             <span title={v}>{v}</span>
           );
@@ -297,16 +297,16 @@ const CharactersManagement = () => {
           <Form.Item 
             label="语音选择（voice）" 
             name="voice"
-            tooltip="选择该角色使用的TTS语音，留空则使用默认语音（zh-CN-XiaoxiaoNeural）"
+            tooltip="选择该角色使用的科大讯飞音色（vcn）。留空则使用后端默认音色（XFYUN_VOICE）"
           >
             <Select
-              placeholder="选择语音（可选，默认使用晓晓）"
+              placeholder="选择讯飞音色（可选）"
               allowClear
               showSearch
               filterOption={(input, option) =>
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
-              options={VOICE_OPTIONS}
+              options={voiceOptions}
             />
           </Form.Item>
 

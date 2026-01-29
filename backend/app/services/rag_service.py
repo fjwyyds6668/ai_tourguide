@@ -4,6 +4,7 @@ GraphRAG: 结合图数据库和向量检索的增强生成技术
 """
 import logging
 import re
+import json
 from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
 from app.core.milvus_client import milvus_client
@@ -38,6 +39,62 @@ class RAGService:
         self._init_embedding_model()
         self._init_ner()
         self._init_llm_client()
+
+    async def parse_scenic_text(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        将景区介绍类文本结构化为 JSON，供图数据库构建“一簇”使用。
+        如果判断不是景区类文本，则返回 None。
+        """
+        # 简单启发式：包含这些关键词时才尝试解析，避免对所有知识都调用 LLM
+        scenic_keywords = ["景区", "风景区", "旅游度假区", "景点", "度假区"]
+        if not any(k in text for k in scenic_keywords):
+            return None
+
+        if not self.llm_client:
+            return None
+
+        system_prompt = """
+你是景区知识结构化助手。请把一段中文景区介绍提取成 JSON，严格按字段返回，不要多余说明。
+
+返回字段：
+- scenic_spot: 景区名称（字符串）
+- location: 行政层级数组，例如 ["四川省", "宜宾市", "长宁县"]（若缺少下级可省略）
+- area: 面积（原文中的描述字符串，若没有则为 null）
+- features: 特色数组，例如 ["天然竹林","森林覆盖率93%","气候温和","雨量充沛"]
+- spots: 子景点数组，例如 ["竹海博物馆","花溪十三桥","海中海","古刹"]
+- awards: 荣誉数组，例如 ["国家首批4A级旅游区","全国康养旅游基地","国家级旅游度假区"]
+
+只输出 JSON 对象，不要解释。
+"""
+        try:
+            resp = self.llm_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text},
+                ],
+                temperature=0.1,
+                max_tokens=512,
+            )
+            raw = resp.choices[0].message.content
+            data = json.loads(raw)
+
+            # 基本字段校验
+            if not isinstance(data, dict):
+                return None
+            scenic_name = data.get("scenic_spot")
+            if not scenic_name or not isinstance(scenic_name, str):
+                return None
+
+            # 规范化字段类型
+            data["location"] = data.get("location") or []
+            data["features"] = data.get("features") or []
+            data["spots"] = data.get("spots") or []
+            data["awards"] = data.get("awards") or []
+            return data
+        except Exception as e:
+            logger.warning(f"parse_scenic_text failed: {e}")
+            return None
     
     def _init_embedding_model(self):
         """初始化嵌入模型"""
@@ -402,7 +459,8 @@ class RAGService:
 1. 基于提供的上下文信息回答
 2. 语言简洁明了，适合口语化表达
 3. 如果信息不足，诚实说明
-4. 可以适当添加一些有趣的细节，但不要编造信息"""
+4. 不要编造信息
+5. 不要透露任何内部标识符/编号/ID（例如 kb_***、text_id、session_id 等）；自我介绍时也不要输出任何“编号”"""
         
         # 如果有角色提示词，合并到系统提示词中
         if character_prompt:
@@ -435,6 +493,11 @@ class RAGService:
             )
             
             answer = response.choices[0].message.content
+            # 安全清理：移除知识库内部 text_id / 编号，避免暴露 kb_*** 这类内部标识
+            if answer:
+                answer = re.sub(r"编号为\s*kb_\d+", "", answer)
+                answer = re.sub(r"\bkb_\d+\b", "", answer)
+                answer = re.sub(r"\s{2,}", " ", answer).strip()
             logger.info(f"Generated answer for query: {query[:50]}...")
             return answer
             

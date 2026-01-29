@@ -4,7 +4,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import tempfile
 import os
 import re
@@ -15,6 +15,15 @@ from app.core.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+XFYUN_VOICE_OPTIONS = [
+    {"value": "x4_xiaoyan", "label": "讯飞小燕（普通话）", "engine": "xfyun"},
+    {"value": "x4_yezi", "label": "讯飞小露（普通话）", "engine": "xfyun"},
+    {"value": "aisjiuxu", "label": "讯飞许久（普通话）", "engine": "xfyun"},
+    {"value": "aisjinger", "label": "讯飞小婧（普通话）", "engine": "xfyun"},
+    {"value": "aisbabyxu", "label": "讯飞许小宝（普通话）", "engine": "xfyun"},
+]
+XFYUN_VOICE_VALUES = {v["value"] for v in XFYUN_VOICE_OPTIONS}
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
 _EMOJI_RE = re.compile(
@@ -93,6 +102,18 @@ class SynthesizeRequest(BaseModel):
     voice: Optional[str] = None  # 语音名称，如果提供则使用，否则从角色配置获取
     character_id: Optional[int] = None  # 角色ID，用于获取角色的语音配置
 
+
+class VoiceOption(BaseModel):
+    value: str
+    label: str
+    engine: str = "xfyun"
+
+
+@router.get("/voices", response_model=List[VoiceOption])
+async def list_voices():
+    """获取可用语音列表（当前仅返回科大讯飞 vcn 列表）"""
+    return [VoiceOption(**v) for v in XFYUN_VOICE_OPTIONS]
+
 @router.post("/synthesize")
 async def synthesize_speech(
     req: SynthesizeRequest
@@ -106,6 +127,7 @@ async def synthesize_speech(
 
         # 确定使用的语音
         voice = req.voice
+        voice_from_request = bool(req.voice)
         
         # 如果提供了角色ID但没有提供语音，尝试从角色配置获取
         if not voice and req.character_id:
@@ -114,9 +136,22 @@ async def synthesize_speech(
                 character = await prisma.character.find_unique(where={"id": req.character_id})
                 if character and character.voice:
                     voice = character.voice
+                    voice_from_request = False
                     logger.info(f"使用角色 {req.character_id} 配置的语音: {voice}")
             except Exception as e:
                 logger.warning(f"获取角色语音配置失败: {e}")
+
+        # 校验 voice：
+        # - 如果是“请求里显式传入”的 voice（用户主动选择），则严格校验，不合法直接报错
+        # - 如果是“从角色配置拿到”的 voice（可能是历史遗留的 zh-CN-xxxNeural 等），则自动忽略并回退到默认音色
+        if voice and voice not in XFYUN_VOICE_VALUES:
+            if voice_from_request:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"不支持的语音音色：{voice}（请从 /api/v1/voice/voices 获取可用列表）",
+                )
+            logger.warning(f"角色配置的语音不受支持，已忽略并回退到默认音色：{voice}")
+            voice = None
 
         # 优先在线 TTS（科大讯飞）；如启用离线 TTS，则在在线失败时降级到本地 TTS
         audio_path = None

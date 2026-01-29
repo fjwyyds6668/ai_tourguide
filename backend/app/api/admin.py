@@ -4,6 +4,7 @@
 import os
 import uuid
 import logging
+import json
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -254,6 +255,13 @@ async def _upload_items_to_graphrag(items: List[KnowledgeBaseItem], collection_n
             extracted = rag_service.extract_entities(item.text)
             total_entities += len(extracted)
             await graph_builder.extract_and_store_entities(item.text, item.text_id, extracted)
+            # 尝试将景区介绍类文本解析为结构化信息，并构建以景区为中心的一簇图谱
+            try:
+                parsed = await rag_service.parse_scenic_text(item.text)
+                if parsed:
+                    await graph_builder.build_scenic_cluster(parsed, text_id=item.text_id)
+            except Exception as e:
+                logger.warning(f"build_scenic_cluster failed for text_id={item.text_id}: {e}")
 
     return {
         "message": f"Uploaded {len(items)} items successfully",
@@ -269,16 +277,64 @@ async def upload_knowledge(
     build_graph: bool = True
 ):
     """
-    上传知识库内容到向量数据库和图数据库（自动同步到 GraphRAG）
-    
-    GraphRAG 知识构建：
-    1. 存储向量嵌入到 Milvus（用于语义搜索）
-    2. 提取实体并构建图结构到 Neo4j（用于关系查询）
+    上传知识库内容到向量数据库和图数据库（自动同步到 GraphRAG），并持久化到 PostgreSQL
     """
     try:
-        return await _upload_items_to_graphrag(items, collection_name, build_graph)
+        # 先同步到 GraphRAG（Milvus + Neo4j）
+        result = await _upload_items_to_graphrag(items, collection_name, build_graph)
+
+        # 再持久化到 PostgreSQL（Prisma）
+        prisma = await get_prisma()
+        for item in items:
+            if not item.text_id:
+                continue
+            try:
+                meta_str = json.dumps(item.metadata or {}, ensure_ascii=False)
+                await prisma.knowledge.upsert(
+                    where={"textId": item.text_id},
+                    data={
+                        "create": {
+                            "textId": item.text_id,
+                            "text": item.text,
+                            "metadata": meta_str,
+                        },
+                        "update": {
+                            "text": item.text,
+                            "metadata": meta_str,
+                        },
+                    },
+                )
+            except Exception as e:
+                logger.error(f"持久化知识 {item.text_id} 失败: {e}")
+
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/knowledge", response_model=List[KnowledgeBaseItem])
+async def list_knowledge():
+    """
+    获取知识库列表（管理端使用，来自 PostgreSQL 的 knowledge 表）
+    """
+    prisma = await get_prisma()
+    rows = await prisma.knowledge.find_many(order={"id": "asc"}, take=1000)
+    items: List[KnowledgeBaseItem] = []
+    for row in rows:
+        meta: dict = {}
+        if row.metadata:
+            try:
+                meta = json.loads(row.metadata)
+            except Exception:
+                meta = {}
+        items.append(
+            KnowledgeBaseItem(
+                text_id=row.textId,
+                text=row.text,
+                metadata=meta,
+            )
+        )
+    return items
 
 @router.put("/knowledge/{text_id}")
 async def update_knowledge(
@@ -317,7 +373,23 @@ async def update_knowledge(
             logger.warning(f"删除 Neo4j 旧节点失败: {e}")
         
         # 重新上传（使用现有的上传逻辑）
-        return await _upload_items_to_graphrag([item], collection_name, build_graph)
+        result = await _upload_items_to_graphrag([item], collection_name, build_graph)
+
+        # 更新 PostgreSQL 中的记录
+        prisma = await get_prisma()
+        try:
+            meta_str = json.dumps(item.metadata or {}, ensure_ascii=False)
+            await prisma.knowledge.update(
+                where={"textId": text_id},
+                data={
+                    "text": item.text,
+                    "metadata": meta_str,
+                },
+            )
+        except Exception as e:
+            logger.error(f"更新知识 {text_id}（PostgreSQL）失败: {e}")
+
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -353,6 +425,13 @@ async def delete_knowledge(
             logger.info(f"已从 Neo4j 删除知识库: {text_id}")
         except Exception as e:
             logger.warning(f"从 Neo4j 删除失败: {e}")
+        
+        # 从 PostgreSQL 删除
+        try:
+            prisma = await get_prisma()
+            await prisma.knowledge.delete(where={"textId": text_id})
+        except Exception as e:
+            logger.error(f"从 PostgreSQL 删除知识 {text_id} 失败: {e}")
         
         return {"message": f"Knowledge item {text_id} deleted successfully"}
     except Exception as e:
@@ -542,6 +621,7 @@ async def upload_admin_avatar(
 
 class TTSConfigResponse(BaseModel):
     """TTS配置响应"""
+    xfyun_voice: str
     local_tts_enabled: bool
     local_tts_force: bool
     local_tts_engine: str
@@ -551,6 +631,7 @@ class TTSConfigResponse(BaseModel):
 
 class TTSConfigUpdateRequest(BaseModel):
     """TTS配置更新请求"""
+    xfyun_voice: Optional[str] = None
     local_tts_enabled: Optional[bool] = None
     local_tts_force: Optional[bool] = None
     local_tts_engine: Optional[str] = None
@@ -573,6 +654,7 @@ async def get_tts_config(
     
     env_file = _get_env_file_path()
     
+    xfyun_voice = settings.XFYUN_VOICE
     local_tts_enabled = settings.LOCAL_TTS_ENABLED
     local_tts_force = settings.LOCAL_TTS_FORCE
     local_tts_engine = settings.LOCAL_TTS_ENGINE
@@ -587,6 +669,10 @@ async def get_tts_config(
                 if line.startswith("LOCAL_TTS_ENABLED="):
                     value = line.split("=", 1)[1].strip()
                     local_tts_enabled = value.lower() in ("true", "1", "yes")
+                elif line.startswith("XFYUN_VOICE="):
+                    value = line.split("=", 1)[1].strip()
+                    if value:
+                        xfyun_voice = value
                 elif line.startswith("LOCAL_TTS_FORCE="):
                     value = line.split("=", 1)[1].strip()
                     local_tts_force = value.lower() in ("true", "1", "yes")
@@ -608,6 +694,7 @@ async def get_tts_config(
                         cosyvoice2_language = value
     
     return TTSConfigResponse(
+        xfyun_voice=xfyun_voice,
         local_tts_enabled=local_tts_enabled,
         local_tts_force=local_tts_force,
         local_tts_engine=local_tts_engine,
@@ -647,7 +734,13 @@ async def update_tts_config(
             continue
         
         # 检查是否是我们要更新的配置项
-        if stripped.startswith("LOCAL_TTS_ENABLED="):
+        if stripped.startswith("XFYUN_VOICE="):
+            if req.xfyun_voice is not None:
+                new_lines.append(f"XFYUN_VOICE={req.xfyun_voice}\n")
+                updated_keys.add("XFYUN_VOICE")
+            else:
+                new_lines.append(line)
+        elif stripped.startswith("LOCAL_TTS_ENABLED="):
             if req.local_tts_enabled is not None:
                 new_lines.append(f"LOCAL_TTS_ENABLED={str(req.local_tts_enabled).lower()}\n")
                 updated_keys.add("LOCAL_TTS_ENABLED")
@@ -687,6 +780,8 @@ async def update_tts_config(
             new_lines.append(line)
     
     # 添加未存在的配置项
+    if req.xfyun_voice is not None and "XFYUN_VOICE" not in updated_keys:
+        new_lines.append(f"XFYUN_VOICE={req.xfyun_voice}\n")
     if req.local_tts_enabled is not None and "LOCAL_TTS_ENABLED" not in updated_keys:
         new_lines.append(f"LOCAL_TTS_ENABLED={str(req.local_tts_enabled).lower()}\n")
     if req.local_tts_force is not None and "LOCAL_TTS_FORCE" not in updated_keys:
@@ -710,6 +805,7 @@ async def update_tts_config(
     return {
         "message": "配置已更新（需要重启后端服务才能生效）",
         "updated": {
+            "xfyun_voice": req.xfyun_voice if req.xfyun_voice is not None else settings.XFYUN_VOICE,
             "local_tts_enabled": req.local_tts_enabled if req.local_tts_enabled is not None else settings.LOCAL_TTS_ENABLED,
             "local_tts_force": req.local_tts_force if req.local_tts_force is not None else settings.LOCAL_TTS_FORCE,
             "local_tts_engine": req.local_tts_engine if req.local_tts_engine is not None else settings.LOCAL_TTS_ENGINE,
