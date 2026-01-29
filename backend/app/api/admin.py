@@ -19,6 +19,7 @@ from app.core.milvus_client import milvus_client
 from app.core.prisma_client import get_prisma, disconnect_prisma
 from app.core.config import settings
 from pydantic import BaseModel
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -838,7 +839,7 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                 OPTIONAL MATCH (a)-[r:HAS_FEATURE|HAS_HONOR|HAS_IMAGE|HAS_AUDIO]->(n)
                 DETACH DELETE n
                 WITH a
-                OPTIONAL MATCH (a)-[r2:HAS_CATEGORY|位于]->(x)
+                OPTIONAL MATCH (a)-[r2:HAS_CATEGORY|位于|属于]->(x)
                 DELETE r2
                 WITH a
                 DETACH DELETE a
@@ -1649,6 +1650,55 @@ async def import_attractions_to_graphrag(req: ImportAttractionsRequest):
         except Exception:
             pass
 
+
+@router.get("/analytics/rag-logs")
+async def get_rag_logs(
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
+    """
+    管理员查看最近的 RAG 检索上下文日志：
+    - 每次问答时从向量库和图数据库检索出的内容（enhanced_context）
+    - 命中的向量结果 / 图结果（前若干条）
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可查看 RAG 日志")
+
+    logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    log_path = os.path.join(logs_dir, "rag_context.log")
+    if not os.path.exists(log_path):
+        return []
+
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except Exception as e:
+        logger.error(f"读取 RAG 日志失败: {e}")
+        raise HTTPException(status_code=500, detail="读取 RAG 日志失败")
+
+    entries: List[Dict[str, Any]] = []
+    # 取最后 limit 条（从文件尾部往前）
+    for line in reversed(lines[-limit:]):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            entries.append(
+                {
+                    "timestamp": data.get("timestamp", ""),
+                    "query": data.get("query", ""),
+                    "final_answer_preview": data.get("final_answer_preview", ""),
+                    "use_rag": bool(data.get("use_rag", False)),
+                    "rag_debug": data.get("rag_debug") or {},
+                }
+            )
+        except Exception:
+            continue
+
+    # 由于是从文件尾部向前遍历，最后需要再反转一次，让最新的在最上面
+    return list(reversed(entries))
+
 @router.get("/analytics/interactions")
 async def get_interaction_analytics(
     skip: int = 0,
@@ -1687,7 +1737,17 @@ async def get_popular_attractions(db: Session = Depends(get_db)):
         func.count(Interaction.id).desc()
     ).limit(10).all()
     
-    return {"popular_attractions": popular}
+    # 将 SQLAlchemy 返回的 Row/元组转换为普通字典，方便 FastAPI 编码为 JSON
+    popular_list = [
+        {
+            "id": row[0],
+            "name": row[1],
+            "visit_count": int(row[2] or 0),
+        }
+        for row in popular
+    ]
+    
+    return {"popular_attractions": popular_list}
 
 @router.get("/stats", response_model=DashboardStatsResponse)
 async def get_dashboard_stats(db: Session = Depends(get_db)):
@@ -1792,6 +1852,8 @@ class TTSConfigUpdateRequest(BaseModel):
     cosyvoice2_model_path: Optional[str] = None
     cosyvoice2_device: Optional[str] = None
     cosyvoice2_language: Optional[str] = None
+
+
 
 def _get_env_file_path():
     """获取 .env 文件路径"""

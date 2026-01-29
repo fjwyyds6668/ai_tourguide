@@ -166,6 +166,7 @@ const AttractionsManagement = () => {
         onOk={() => form.submit()}
         confirmLoading={loading}
         width={600}
+        maskClosable={false}
       >
         <Form
           form={form}

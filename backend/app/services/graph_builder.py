@@ -66,6 +66,9 @@ class GraphBuilder:
         if not name:
             return
 
+        # 获取景区ID（景点所属的景区）
+        scenic_spot_id = attraction_data.get("scenic_spot_id")
+
         # 1) upsert 中心节点
         q_center = """
         MERGE (a:Attraction {id: $id})
@@ -76,7 +79,8 @@ class GraphBuilder:
             a.longitude = $longitude,
             a.category = $category,
             a.image_url = $image_url,
-            a.audio_url = $audio_url
+            a.audio_url = $audio_url,
+            a.scenic_spot_id = $scenic_spot_id
         """
         self.client.execute_query(q_center, {
             "id": int(att_id),
@@ -88,11 +92,12 @@ class GraphBuilder:
             "category": attraction_data.get("category"),
             "image_url": attraction_data.get("image_url"),
             "audio_url": attraction_data.get("audio_url"),
+            "scenic_spot_id": int(scenic_spot_id) if scenic_spot_id else None,
         })
 
-        # 2) 清理该景点旧簇关系（保留位置节点/类别节点本体）
+        # 2) 清理该景点旧簇关系（保留位置节点/类别节点/景区节点本体）
         q_clean_rels = """
-        MATCH (a:Attraction {id: $id})-[r:HAS_CATEGORY|HAS_FEATURE|HAS_HONOR|HAS_IMAGE|HAS_AUDIO|位于]->(n)
+        MATCH (a:Attraction {id: $id})-[r:HAS_CATEGORY|HAS_FEATURE|HAS_HONOR|HAS_IMAGE|HAS_AUDIO|位于|属于]->(n)
         DELETE r
         """
         self.client.execute_query(q_clean_rels, {"id": int(att_id)})
@@ -141,35 +146,49 @@ class GraphBuilder:
         if locations:
             params = {"id": int(att_id)}
             if len(locations) >= 3:
-                q_loc = """
+                # 先创建位置节点和层级关系
+                q_loc_nodes = """
                 MERGE (prov:Province {name: $prov})
                 MERGE (city:City {name: $city})
                 MERGE (county:County {name: $county})
                 MERGE (city)-[:隶属]->(prov)
                 MERGE (county)-[:隶属]->(city)
-                MATCH (a:Attraction {id: $id})
-                MERGE (a)-[:位于]->(county)
                 """
                 params.update({"prov": locations[0], "city": locations[1], "county": locations[2]})
-                self.client.execute_query(q_loc, params)
+                self.client.execute_query(q_loc_nodes, params)
+                # 再建立景点与位置的关系
+                q_loc_rel = """
+                MATCH (a:Attraction {id: $id})
+                MATCH (county:County {name: $county})
+                MERGE (a)-[:位于]->(county)
+                """
+                self.client.execute_query(q_loc_rel, params)
             elif len(locations) == 2:
-                q_loc = """
+                q_loc_nodes = """
                 MERGE (prov:Province {name: $prov})
                 MERGE (city:City {name: $city})
                 MERGE (city)-[:隶属]->(prov)
-                MATCH (a:Attraction {id: $id})
-                MERGE (a)-[:位于]->(city)
                 """
                 params.update({"prov": locations[0], "city": locations[1]})
-                self.client.execute_query(q_loc, params)
-            elif len(locations) == 1:
-                q_loc = """
-                MERGE (prov:Province {name: $prov})
+                self.client.execute_query(q_loc_nodes, params)
+                q_loc_rel = """
                 MATCH (a:Attraction {id: $id})
-                MERGE (a)-[:位于]->(prov)
+                MATCH (city:City {name: $city})
+                MERGE (a)-[:位于]->(city)
+                """
+                self.client.execute_query(q_loc_rel, params)
+            elif len(locations) == 1:
+                q_loc_nodes = """
+                MERGE (prov:Province {name: $prov})
                 """
                 params.update({"prov": locations[0]})
-                self.client.execute_query(q_loc, params)
+                self.client.execute_query(q_loc_nodes, params)
+                q_loc_rel = """
+                MATCH (a:Attraction {id: $id})
+                MATCH (prov:Province {name: $prov})
+                MERGE (a)-[:位于]->(prov)
+                """
+                self.client.execute_query(q_loc_rel, params)
 
         # 6) Category（可选，允许共享）
         category = (parsed.get("category") if parsed else None) or attraction_data.get("category")
@@ -220,6 +239,27 @@ class GraphBuilder:
                 MERGE (a)-[:HAS_HONOR]->(h)
                 """
                 self.client.execute_query(q_h, {"id": int(att_id), "honors": hns})
+
+        # 9) 关联到所属景区（ScenicSpot）- 区分景点和景区的关键关系
+        if scenic_spot_id:
+            # 先清理旧的景区关系
+            q_clean_scenic = """
+            MATCH (a:Attraction {id: $id})-[r:属于]->(:ScenicSpot)
+            DELETE r
+            """
+            self.client.execute_query(q_clean_scenic, {"id": int(att_id)})
+            
+            # 建立景点与景区的关系
+            q_scenic_rel = """
+            MATCH (a:Attraction {id: $id})
+            MATCH (s:ScenicSpot {scenic_spot_id: $scenic_spot_id})
+            MERGE (a)-[:属于]->(s)
+            """
+            self.client.execute_query(q_scenic_rel, {
+                "id": int(att_id),
+                "scenic_spot_id": int(scenic_spot_id)
+            })
+            logger.info(f"景点 '{name}' (id={att_id}) 已关联到景区 (scenic_spot_id={scenic_spot_id})")
     
     async def create_relationship(self, from_entity: str, to_entity: str, 
                                  relation_type: str, properties: Dict = None) -> bool:

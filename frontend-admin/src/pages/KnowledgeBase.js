@@ -23,6 +23,10 @@ const KnowledgeBase = () => {
   const [attractionVisible, setAttractionVisible] = useState(false);
   const [attractionForm] = Form.useForm();
 
+  // 图片上传状态追踪
+  const [coverImageUploaded, setCoverImageUploaded] = useState(false);
+  const [attractionImageUploaded, setAttractionImageUploaded] = useState(false);
+
   const loadScenicSpots = useCallback(async (preferId = null) => {
     try {
       setLoading(true);
@@ -95,6 +99,7 @@ const KnowledgeBase = () => {
       const url = res.data?.image_url;
       if (url) {
         scenicForm.setFieldsValue({ cover_image_url: url });
+        setCoverImageUploaded(true);
       }
       message.success('封面图片上传成功');
       onSuccess?.(res.data);
@@ -211,6 +216,7 @@ const KnowledgeBase = () => {
       const url = res.data?.image_url;
       if (url) {
         attractionForm.setFieldsValue({ image_url: url });
+        setAttractionImageUploaded(true);
       }
       message.success('景点图片上传成功');
       onSuccess?.(res.data);
@@ -253,6 +259,7 @@ const KnowledgeBase = () => {
               onClick={() => {
                 setScenicEditing(null);
                 scenicForm.resetFields();
+                setCoverImageUploaded(false);
                 setScenicVisible(true);
               }}
             >
@@ -275,7 +282,11 @@ const KnowledgeBase = () => {
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
-                onClick={() => setAttractionVisible(true)}
+                onClick={() => {
+                  attractionForm.resetFields();
+                  setAttractionImageUploaded(false);
+                  setAttractionVisible(true);
+                }}
               >
                 添加景点
               </Button>
@@ -293,6 +304,7 @@ const KnowledgeBase = () => {
                   description: selectedScenic.description,
                   cover_image_url: selectedScenic.cover_image_url,
                 });
+                setCoverImageUploaded(!!selectedScenic.cover_image_url);
                 setScenicVisible(true);
               }}
               disabled={!selectedScenicId}
@@ -442,9 +454,13 @@ const KnowledgeBase = () => {
       <Modal
         title={scenicEditing ? '编辑景区' : '新增景区'}
         open={scenicVisible}
-        onCancel={() => setScenicVisible(false)}
+        onCancel={() => {
+          setScenicVisible(false);
+          setCoverImageUploaded(false);
+        }}
         onOk={() => scenicForm.submit()}
         confirmLoading={loading}
+        maskClosable={false}
       >
         <Form
           form={scenicForm}
@@ -457,11 +473,13 @@ const KnowledgeBase = () => {
                 message.success('更新成功');
                 setScenicVisible(false);
                 setScenicEditing(null);
+                setCoverImageUploaded(false);
                 await loadScenicSpots(scenicEditing.id);
               } else {
                 const res = await api.post('/admin/scenic-spots', values);
                 message.success('创建成功');
                 setScenicVisible(false);
+                setCoverImageUploaded(false);
                 const newId = res.data?.id;
                 await loadScenicSpots(newId || null);
               }
@@ -483,7 +501,12 @@ const KnowledgeBase = () => {
           </Form.Item>
           <Form.Item name="cover_image_url" label="封面图片">
             <Space.Compact style={{ width: '100%' }}>
-              <Input placeholder="上传后自动填入 URL" readOnly />
+              <Input
+                placeholder="上传后自动填入 URL"
+                readOnly
+                value={coverImageUploaded ? '已上传成功' : undefined}
+                style={coverImageUploaded ? { color: '#52c41a' } : undefined}
+              />
               <Upload
                 accept="image/*"
                 showUploadList={false}
@@ -502,6 +525,7 @@ const KnowledgeBase = () => {
         onCancel={() => setKnowledgeVisible(false)}
         onOk={() => knowledgeForm.submit()}
         confirmLoading={loading}
+        maskClosable={false}
       >
         <Form
           form={knowledgeForm}
@@ -527,9 +551,13 @@ const KnowledgeBase = () => {
       <Modal
         title="添加景点"
         open={attractionVisible}
-        onCancel={() => setAttractionVisible(false)}
+        onCancel={() => {
+          setAttractionVisible(false);
+          setAttractionImageUploaded(false);
+        }}
         onOk={() => attractionForm.submit()}
         confirmLoading={loading}
+        maskClosable={false}
       >
         <Form
           form={attractionForm}
@@ -544,6 +572,7 @@ const KnowledgeBase = () => {
               await api.post(`/admin/scenic-spots/${selectedScenicId}/attractions`, values);
               message.success('创建成功');
               setAttractionVisible(false);
+              setAttractionImageUploaded(false);
               attractionForm.resetFields();
               loadScenicAttractions(selectedScenicId);
             } catch (e) {
@@ -561,7 +590,12 @@ const KnowledgeBase = () => {
           </Form.Item>
           <Form.Item name="image_url" label="景点图片（可选）">
             <Space.Compact style={{ width: '100%' }}>
-              <Input placeholder="上传后自动填入 URL（可选）" readOnly />
+              <Input
+                placeholder="上传后自动填入 URL（可选）"
+                readOnly
+                value={attractionImageUploaded ? '已上传成功' : undefined}
+                style={attractionImageUploaded ? { color: '#52c41a' } : undefined}
+              />
               <Upload
                 accept="image/*"
                 showUploadList={false}

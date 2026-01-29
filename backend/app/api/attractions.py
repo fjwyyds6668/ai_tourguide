@@ -47,6 +47,10 @@ class AttractionUpdate(BaseModel):
     image_url: Optional[str] = None
     audio_url: Optional[str] = None
 
+class ScenicSpotPublic(BaseModel):
+    id: int
+    name: str
+
 @router.get("", response_model=List[AttractionResponse])
 @router.get("/", response_model=List[AttractionResponse])
 async def get_attractions(
@@ -84,6 +88,42 @@ async def get_attractions(
         )
         for r in rows
     ]
+
+@router.get("/scenic-spots", response_model=List[ScenicSpotPublic])
+async def list_scenic_spots_public():
+    """
+    游客端使用的景区列表（只返回 id + name，用于按景区筛选景点）
+    """
+    prisma = await get_prisma()
+    scenic_model = _get_prisma_model(prisma, "scenicspot", "scenicSpot")
+    rows = await scenic_model.find_many(order={"id": "asc"}, take=1000)
+    return [ScenicSpotPublic(id=s.id, name=s.name) for s in rows]
+
+
+@router.get("/recommendations/{user_id}")
+async def get_recommendations(user_id: int, limit: int = 5):
+    """获取个性化推荐（基于用户交互历史）"""
+    # TODO: 实现基于图数据库的推荐算法
+    prisma = await get_prisma()
+    rows = await prisma.attraction.find_many(take=limit, order={"id": "asc"})
+    return {
+        "recommendations": [
+            AttractionResponse(
+                id=r.id,
+                name=r.name,
+                description=r.description,
+                location=r.location,
+                latitude=r.latitude,
+                longitude=r.longitude,
+                category=r.category,
+                image_url=r.imageUrl,
+                audio_url=r.audioUrl,
+                scenic_spot_id=getattr(r, "scenicSpotId", None),
+            )
+            for r in rows
+        ]
+    }
+
 
 @router.get("/{attraction_id}", response_model=AttractionResponse)
 async def get_attraction(attraction_id: int):
@@ -250,44 +290,4 @@ async def delete_attraction(attraction_id: int):
         # 不抛出异常，避免影响主流程
     
     return {"message": "Attraction deleted successfully"}
-
-@router.get("/recommendations/{user_id}")
-async def get_recommendations(user_id: int, limit: int = 5):
-    """获取个性化推荐（基于用户交互历史）"""
-    # TODO: 实现基于图数据库的推荐算法
-    prisma = await get_prisma()
-    rows = await prisma.attraction.find_many(take=limit, order={"id": "asc"})
-    return {
-        "recommendations": [
-            AttractionResponse(
-                id=r.id,
-                name=r.name,
-                description=r.description,
-                location=r.location,
-                latitude=r.latitude,
-                longitude=r.longitude,
-                category=r.category,
-                image_url=r.imageUrl,
-                audio_url=r.audioUrl,
-                scenic_spot_id=getattr(r, "scenicSpotId", None),
-            )
-            for r in rows
-        ]
-    }
-
-
-class ScenicSpotPublic(BaseModel):
-    id: int
-    name: str
-
-
-@router.get("/scenic-spots", response_model=List[ScenicSpotPublic])
-async def list_scenic_spots_public():
-    """
-    游客端使用的景区列表（只返回 id + name，用于按景区筛选景点）
-    """
-    prisma = await get_prisma()
-    scenic_model = _get_prisma_model(prisma, "scenicspot", "scenicSpot")
-    rows = await scenic_model.find_many(order={"id": "asc"}, take=1000)
-    return [ScenicSpotPublic(id=s.id, name=s.name) for s in rows]
 

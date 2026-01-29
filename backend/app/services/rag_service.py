@@ -6,6 +6,8 @@ import logging
 import re
 import json
 import asyncio
+import os
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
 from app.core.milvus_client import milvus_client
@@ -574,10 +576,19 @@ class RAGService:
         if not self.llm_client:
             return "抱歉，AI服务未配置，无法生成回答。"
         
+        rag_debug: Optional[Dict[str, Any]] = None
         # 如果使用RAG，先进行检索
         if use_rag:
             rag_results = await self.hybrid_search(query, top_k=5)
             context = rag_results.get("enhanced_context", "")
+            rag_debug = {
+                "query": rag_results.get("query") or query,
+                "vector_results": rag_results.get("vector_results", [])[:5],
+                "graph_results": rag_results.get("graph_results", [])[:5],
+                "subgraph": rag_results.get("subgraph"),
+                "enhanced_context": context or "",
+                "entities": rag_results.get("entities", []),
+            }
         
         # 构建系统提示词
         base_system_prompt = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
@@ -624,6 +635,24 @@ class RAGService:
                 answer = re.sub(r"编号为\s*kb_\d+", "", answer)
                 answer = re.sub(r"\bkb_\d+\b", "", answer)
                 answer = re.sub(r"\s{2,}", " ", answer).strip()
+            # 将 RAG 检索结果 + 最终回答记录到日志文件，便于管理员在分析界面查看
+            try:
+                log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+                os.makedirs(log_root, exist_ok=True)
+                log_path = os.path.join(log_root, "rag_context.log")
+                entry = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "query": query,
+                    "character_prompt": character_prompt,
+                    "use_rag": use_rag,
+                    "rag_debug": rag_debug,
+                    "final_answer_preview": answer[:400] if answer else "",
+                }
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception as e:
+                logger.warning(f"Failed to write RAG context log: {e}")
+
             logger.info(f"Generated answer for query: {query[:50]}...")
             return answer
             
