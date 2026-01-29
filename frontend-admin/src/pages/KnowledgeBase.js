@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Card, Button, Table, Modal, Form, Input, message, Popconfirm, Space, Tabs, List } from 'antd';
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Card, Button, Table, Modal, Form, Input, message, Popconfirm, Space, Tabs, List, Upload } from 'antd';
+import { PlusOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons';
 import api from '../api';
 
 const KnowledgeBase = () => {
@@ -81,6 +81,27 @@ const KnowledgeBase = () => {
       setAttractionsData([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCoverUpload = async (options) => {
+    const { file, onSuccess, onError } = options;
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post('/admin/uploads/image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const url = res.data?.image_url;
+      if (url) {
+        scenicForm.setFieldsValue({ cover_image_url: url });
+      }
+      message.success('封面图片上传成功');
+      onSuccess?.(res.data);
+    } catch (err) {
+      console.error('封面上传失败:', err);
+      message.error(err.response?.data?.detail || '封面上传失败');
+      onError?.(err);
     }
   };
 
@@ -209,6 +230,17 @@ const KnowledgeBase = () => {
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => {
+                setScenicEditing(null);
+                scenicForm.resetFields();
+                setScenicVisible(true);
+              }}
+            >
+              新增景区
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
                 if (!selectedScenicId) {
                   message.error('请先在左侧选择一个景区');
                   return;
@@ -227,17 +259,6 @@ const KnowledgeBase = () => {
                 添加景点
               </Button>
             )}
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                setScenicEditing(null);
-                scenicForm.resetFields();
-                setScenicVisible(true);
-              }}
-            >
-              新增景区
-            </Button>
             <Button
               onClick={() => {
                 if (!selectedScenic) {
@@ -439,8 +460,17 @@ const KnowledgeBase = () => {
           <Form.Item name="description" label="简介">
             <Input.TextArea rows={3} />
           </Form.Item>
-          <Form.Item name="cover_image_url" label="封面图片URL">
-            <Input placeholder="可选：/uploads/images/xxx.jpg 或 http(s)://..." />
+          <Form.Item name="cover_image_url" label="封面图片">
+            <Space.Compact style={{ width: '100%' }}>
+              <Input placeholder="上传后自动填入 URL" readOnly />
+              <Upload
+                accept="image/*"
+                showUploadList={false}
+                customRequest={handleCoverUpload}
+              >
+                <Button icon={<UploadOutlined />}>上传</Button>
+              </Upload>
+            </Space.Compact>
           </Form.Item>
         </Form>
       </Modal>

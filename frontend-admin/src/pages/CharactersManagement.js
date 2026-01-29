@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Card, Form, Input, Modal, Space, Switch, Table, Tag, message, Select } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Button, Card, Form, Input, Modal, Space, Switch, Table, Tag, message, Select, Upload } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import api from '../api';
 
 // 可用的 Live2D 角色列表
@@ -116,6 +116,30 @@ const CharactersManagement = () => {
       message.error(e.response?.data?.detail || '更新失败');
     }
   }, [fetchList]);
+
+  const handleAvatarUpload = useCallback(
+    async (options) => {
+      const { file, onSuccess, onError } = options;
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await api.post('/admin/uploads/image', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        const url = res.data?.image_url;
+        if (url) {
+          form.setFieldsValue({ avatar_url: url });
+        }
+        message.success('头像图片上传成功');
+        onSuccess?.(res.data);
+      } catch (e) {
+        console.error(e);
+        message.error(e.response?.data?.detail || '头像上传失败');
+        onError?.(e);
+      }
+    },
+    [form]
+  );
 
   const columns = useMemo(
     () => [
@@ -283,7 +307,16 @@ const CharactersManagement = () => {
           </Form.Item>
 
           <Form.Item label="头像/模型ID（avatar_url）" name="avatar_url">
-            <Input placeholder="可用于游客端选择模型，例如：Mao / Tsumiki / 或资源URL" />
+            <Space.Compact style={{ width: '100%' }}>
+              <Input placeholder="可填模型ID（如 Mao）或通过右侧上传图片" />
+              <Upload
+                accept="image/*"
+                showUploadList={false}
+                customRequest={handleAvatarUpload}
+              >
+                <Button icon={<UploadOutlined />}>上传</Button>
+              </Upload>
+            </Space.Compact>
           </Form.Item>
 
           <Form.Item label="简介（description）" name="description">
