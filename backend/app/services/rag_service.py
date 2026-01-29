@@ -5,6 +5,7 @@ GraphRAG: 结合图数据库和向量检索的增强生成技术
 import logging
 import re
 import json
+import asyncio
 from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
 from app.core.milvus_client import milvus_client
@@ -36,6 +37,8 @@ class RAGService:
     def __init__(self):
         self.embedding_model = None
         self.llm_client = None
+        # Milvus 集合加载状态缓存：避免每次搜索都 load_state/load
+        self._milvus_loaded_collections: set[str] = set()
         self._init_embedding_model()
         self._init_ner()
         self._init_llm_client()
@@ -94,6 +97,58 @@ class RAGService:
             return data
         except Exception as e:
             logger.warning(f"parse_scenic_text failed: {e}")
+            return None
+
+    async def parse_attraction_text(self, name: str, text: str) -> Optional[Dict[str, Any]]:
+        """
+        将“单个景点”介绍结构化为 JSON，供图数据库构建“以景点为中心的一簇”使用。
+        返回字段：
+        - name: 景点名称
+        - location: 行政层级数组，例如 ["四川省", "宜宾市", "长宁县"]（可为空）
+        - features: 特色/要点数组
+        - honors: 荣誉/称号数组
+        - category: 类别（可为空）
+        """
+        if not name or not isinstance(name, str):
+            return None
+        if not self.llm_client:
+            return None
+
+        system_prompt = """
+你是景点知识结构化助手。请把一段中文“单个景点”的介绍提取成 JSON，严格按字段返回，不要多余说明。
+
+返回字段：
+- name: 景点名称（字符串）
+- location: 行政层级数组，例如 ["四川省", "宜宾市", "长宁县"]（若无法判断则返回 []）
+- category: 类别（字符串或 null）
+- features: 特色/要点数组（若没有则 []）
+- honors: 荣誉/称号数组（若没有则 []）
+
+只输出 JSON 对象，不要解释。
+"""
+        try:
+            resp = self.llm_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"景点名称：{name}\n\n{text}"},
+                ],
+                temperature=0.1,
+                max_tokens=512,
+            )
+            raw = resp.choices[0].message.content
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                return None
+            if data.get("name") and not isinstance(data.get("name"), str):
+                return None
+            data["name"] = (data.get("name") or name).strip()
+            data["location"] = data.get("location") or []
+            data["features"] = data.get("features") or []
+            data["honors"] = data.get("honors") or []
+            return data
+        except Exception as e:
+            logger.warning(f"parse_attraction_text failed: {e}")
             return None
     
     def _init_embedding_model(self):
@@ -194,6 +249,15 @@ class RAGService:
         
         embedding = self.embedding_model.encode(text, convert_to_numpy=True)
         return embedding.tolist()
+
+    def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """批量生成嵌入向量（比逐条 encode 更快）"""
+        if not self.embedding_model:
+            raise ValueError("Embedding model not loaded")
+        if not texts:
+            return []
+        embs = self.embedding_model.encode(texts, convert_to_numpy=True)
+        return embs.tolist()
     
     async def vector_search(self, query: str, collection_name: str = "tour_knowledge", top_k: int = 5) -> List[Dict[str, Any]]:
         """向量相似度搜索"""
@@ -204,33 +268,83 @@ class RAGService:
         try:
             collection = milvus_client.create_collection_if_not_exists(
                 collection_name,
-                dimension=384  # 与 embedding 模型维度保持一致
+                dimension=384,  # 与 embedding 模型维度保持一致
+                load=False  # 先不加载，后面统一处理
             )
         except Exception as e:
             # Milvus 未安装/未启动/不可用时，向量检索降级为空（GraphRAG 仍可继续走图检索/LLM）
             logger.warning(f"Milvus not available for vector search, fallback to empty results: {e}")
             return []
         
+        # 检查集合是否存在
+        try:
+            from pymilvus import utility
+            if not utility.has_collection(collection_name):
+                logger.warning(f"Collection '{collection_name}' does not exist")
+                return []
+        except Exception as e:
+            logger.warning(f"Failed to check collection existence: {e}")
+            return []
+        
+        # 尽量避免每次请求都 load_state/load：用内存缓存 + 失败兜底
+        if collection_name not in self._milvus_loaded_collections:
+            try:
+                from pymilvus import utility
+                load_state = utility.load_state(collection_name)
+
+                is_loaded = False
+                if isinstance(load_state, dict):
+                    state_value = (
+                        load_state.get("state", "").upper()
+                        if isinstance(load_state.get("state"), str)
+                        else str(load_state.get("state", "")).upper()
+                    )
+                    is_loaded = state_value in ("LOADED", "LOADED_FOR_SEARCH")
+                elif isinstance(load_state, str):
+                    is_loaded = load_state.upper() in ("LOADED", "LOADED_FOR_SEARCH")
+                else:
+                    is_loaded = "LOADED" in str(load_state).upper()
+
+                if not is_loaded:
+                    logger.info(f"Collection '{collection_name}' is not loaded (state: {load_state}), loading now...")
+                    collection.load()
+                self._milvus_loaded_collections.add(collection_name)
+            except Exception as e:
+                logger.warning(f"Failed to ensure collection '{collection_name}' loaded, will rely on retry: {e}")
+        
         # 生成查询向量
         query_vector = [self.generate_embedding(query)]
         
-        # 加载集合（如果为空集合也允许 load；若 Milvus 未就绪则返回空结果）
-        try:
-            collection.load()
-        except Exception as e:
-            # 典型场景：collection/schema 尚未准备好
-            logger.warning(f"Milvus collection load failed for '{collection_name}': {e}")
-            return []
-        
         # 搜索
-        search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
-        results = collection.search(
-            data=query_vector,
-            anns_field="embedding",
-            param=search_params,
-            limit=top_k,
-            output_fields=["text_id"]
-        )
+        try:
+            search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
+            results = collection.search(
+                data=query_vector,
+                anns_field="embedding",
+                param=search_params,
+                limit=top_k,
+                output_fields=["text_id"]
+            )
+        except Exception as e:
+            # 如果搜索失败，可能是集合未加载，尝试重新加载后重试一次
+            if "not loaded" in str(e).lower() or "collection not loaded" in str(e).lower():
+                logger.warning(f"Search failed due to collection not loaded, retrying after reload: {e}")
+                try:
+                    collection.load()
+                    self._milvus_loaded_collections.add(collection_name)
+                    results = collection.search(
+                        data=query_vector,
+                        anns_field="embedding",
+                        param=search_params,
+                        limit=top_k,
+                        output_fields=["text_id"]
+                    )
+                except Exception as retry_error:
+                    logger.error(f"Retry search failed: {retry_error}")
+                    return []
+            else:
+                logger.error(f"Search failed: {e}")
+                return []
         
         # 格式化结果
         search_results = []
@@ -251,13 +365,20 @@ class RAGService:
         
         GraphRAG 核心：通过图结构查询实体之间的关系和上下文
         """
-        if relation_type:
-            query = """
-            MATCH (a)-[r:%s]->(b)
+        # 关系类型无法参数化，只能做白名单/格式校验后再拼接，避免注入
+        rel = None
+        if relation_type and isinstance(relation_type, str):
+            rel_candidate = relation_type.strip().upper()
+            if re.match(r"^[A-Z_][A-Z0-9_]*$", rel_candidate):
+                rel = rel_candidate
+
+        if rel:
+            query = f"""
+            MATCH (a)-[r:{rel}]->(b)
             WHERE a.name CONTAINS $name OR b.name CONTAINS $name
             RETURN a, r, b, labels(a) as a_labels, labels(b) as b_labels, type(r) as rel_type
             LIMIT $limit
-            """ % relation_type
+            """
         else:
             query = """
             MATCH (a)-[r]->(b)
@@ -282,11 +403,17 @@ class RAGService:
         if not entities:
             return {"nodes": [], "relationships": []}
         
-        # 构建查询：查找实体之间的路径
-        entity_list = "', '".join(entities)
+        # 深度不能参数化到可变长度里（Neo4j 限制），但可以严格校验后插入整数；实体列表用参数化
+        safe_depth = 2
+        try:
+            safe_depth = int(depth)
+        except Exception:
+            safe_depth = 2
+        safe_depth = max(1, min(safe_depth, 3))
+
         query = f"""
-        MATCH path = (a)-[*1..{depth}]-(b)
-        WHERE a.name IN ['{entity_list}'] OR b.name IN ['{entity_list}']
+        MATCH path = (a)-[*1..{safe_depth}]-(b)
+        WHERE a.name IN $entities OR b.name IN $entities
         WITH path, nodes(path) as nodes_list, relationships(path) as rels_list
         UNWIND nodes_list as node
         UNWIND rels_list as rel
@@ -299,8 +426,7 @@ class RAGService:
             properties(rel) as rel_properties
         LIMIT 50
         """
-        
-        results = neo4j_client.execute_query(query)
+        results = neo4j_client.execute_query(query, {"entities": entities})
         
         # 格式化结果
         nodes = {}

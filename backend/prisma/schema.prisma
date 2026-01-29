@@ -38,11 +38,15 @@ model Attraction {
   audioUrl    String?   @map("audio_url") @db.VarChar(500)
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  scenicSpotId Int?      @map("scenic_spot_id")
+  scenicSpot   ScenicSpot? @relation(fields: [scenicSpotId], references: [id], onDelete: SetNull)
   
   interactions Interaction[]
 
   @@map("attractions")
   @@index([name])
+  @@index([scenicSpotId])
 }
 
 model Character {
@@ -93,9 +97,28 @@ model Knowledge {
   metadata  String?  @db.Text
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  scenicSpotId Int?      @map("scenic_spot_id")
+  scenicSpot   ScenicSpot? @relation(fields: [scenicSpotId], references: [id], onDelete: SetNull)
+
   @@map("knowledge")
   @@unique([textId])
   @@index([textId])
+  @@index([scenicSpotId])
 }
 
+model ScenicSpot {
+  id            Int       @id @default(autoincrement())
+  name          String    @unique @db.VarChar(200)
+  location      String?   @db.VarChar(200)
+  description   String?   @db.Text
+  coverImageUrl String?   @map("cover_image_url") @db.VarChar(500)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime? @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  attractions   Attraction[]
+  knowledge     Knowledge[]
+
+  @@map("scenic_spots")
+  @@index([name])
+}
 

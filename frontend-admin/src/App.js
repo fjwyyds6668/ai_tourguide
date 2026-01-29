@@ -9,7 +9,6 @@ import Dashboard from './pages/Dashboard';
 import CharactersManagement from './pages/CharactersManagement';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Analytics from './pages/Analytics';
-import AttractionsManagement from './pages/AttractionsManagement';
 import Settings from './pages/Settings';
 import './App.css';
 
@@ -42,7 +41,8 @@ function App() {
                       <Route path="/characters" element={<CharactersManagement />} />
                       <Route path="/knowledge" element={<KnowledgeBase />} />
                       <Route path="/analytics" element={<Analytics />} />
-                      <Route path="/attractions" element={<AttractionsManagement />} />
+                      {/* 景点管理已合并进“景区管理”( /knowledge )，保留旧路由可选：这里先重定向 */}
+                      <Route path="/attractions" element={<Navigate to="/knowledge" replace />} />
                       <Route path="/settings" element={<Settings />} />
                       <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>

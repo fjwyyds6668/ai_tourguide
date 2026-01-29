@@ -2,12 +2,10 @@
 景点相关 API
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
 import logging
-from app.core.database import get_db
-from app.models.attraction import Attraction
+from app.core.prisma_client import get_prisma
 from app.api.admin import _sync_attraction_to_graphrag
 
 logger = logging.getLogger(__name__)
@@ -24,6 +22,7 @@ class AttractionResponse(BaseModel):
     category: Optional[str]
     image_url: Optional[str]
     audio_url: Optional[str]
+    scenic_spot_id: Optional[int] = None
     
     class Config:
         from_attributes = True
@@ -54,108 +53,191 @@ async def get_attractions(
     skip: int = 0,
     limit: int = 100,
     category: Optional[str] = None,
-    db: Session = Depends(get_db)
 ):
     """获取景点列表"""
-    query = db.query(Attraction)
+    prisma = await get_prisma()
+    where = {}
     if category:
-        query = query.filter(Attraction.category == category)
-    attractions = query.offset(skip).limit(limit).all()
-    return attractions
+        where["category"] = category
+    rows = await prisma.attraction.find_many(
+        where=where or None,
+        skip=skip,
+        take=limit,
+        order={"id": "asc"},
+    )
+    # Prisma 返回字段是 camelCase，需要映射到 response 字段
+    return [
+        AttractionResponse(
+            id=r.id,
+            name=r.name,
+            description=r.description,
+            location=r.location,
+            latitude=r.latitude,
+            longitude=r.longitude,
+            category=r.category,
+            image_url=r.imageUrl,
+            audio_url=r.audioUrl,
+            scenic_spot_id=getattr(r, "scenicSpotId", None),
+        )
+        for r in rows
+    ]
 
 @router.get("/{attraction_id}", response_model=AttractionResponse)
-async def get_attraction(attraction_id: int, db: Session = Depends(get_db)):
+async def get_attraction(attraction_id: int):
     """获取单个景点详情"""
-    attraction = db.query(Attraction).filter(Attraction.id == attraction_id).first()
-    if not attraction:
+    prisma = await get_prisma()
+    r = await prisma.attraction.find_unique(where={"id": attraction_id})
+    if not r:
         raise HTTPException(status_code=404, detail="Attraction not found")
-    return attraction
+    return AttractionResponse(
+        id=r.id,
+        name=r.name,
+        description=r.description,
+        location=r.location,
+        latitude=r.latitude,
+        longitude=r.longitude,
+        category=r.category,
+        image_url=r.imageUrl,
+        audio_url=r.audioUrl,
+        scenic_spot_id=getattr(r, "scenicSpotId", None),
+    )
 
 @router.post("", response_model=AttractionResponse)
 @router.post("/", response_model=AttractionResponse)
-async def create_attraction(attraction: AttractionCreate, db: Session = Depends(get_db)):
+async def create_attraction(attraction: AttractionCreate):
     """创建景点（自动同步到 GraphRAG）"""
-    db_attraction = Attraction(**attraction.dict())
-    db.add(db_attraction)
-    db.commit()
-    db.refresh(db_attraction)
+    prisma = await get_prisma()
+    created = await prisma.attraction.create(
+        data={
+            "name": attraction.name,
+            "description": attraction.description,
+            "location": attraction.location,
+            "latitude": attraction.latitude,
+            "longitude": attraction.longitude,
+            "category": attraction.category,
+            "imageUrl": attraction.image_url,
+            "audioUrl": attraction.audio_url,
+            # scenicSpotId 由后续“景区管理”接口来设置，这里保留为空
+        }
+    )
     
     # 自动同步到 GraphRAG
     try:
         attraction_dict = {
-            "id": db_attraction.id,
-            "name": db_attraction.name,
-            "description": db_attraction.description,
-            "location": db_attraction.location,
-            "latitude": db_attraction.latitude,
-            "longitude": db_attraction.longitude,
-            "category": db_attraction.category,
+            "id": created.id,
+            "name": created.name,
+            "description": created.description,
+            "location": created.location,
+            "latitude": created.latitude,
+            "longitude": created.longitude,
+            "category": created.category,
+            "image_url": created.imageUrl,
+            "audio_url": created.audioUrl,
+            "scenic_spot_id": getattr(created, "scenicSpotId", None),
         }
         await _sync_attraction_to_graphrag(attraction_dict, operation="upsert")
     except Exception as e:
         logger.error(f"自动同步景点到 GraphRAG 失败: {e}", exc_info=True)
         # 不抛出异常，避免影响主流程
     
-    return db_attraction
+    return AttractionResponse(
+        id=created.id,
+        name=created.name,
+        description=created.description,
+        location=created.location,
+        latitude=created.latitude,
+        longitude=created.longitude,
+        category=created.category,
+        image_url=created.imageUrl,
+        audio_url=created.audioUrl,
+        scenic_spot_id=getattr(created, "scenicSpotId", None),
+    )
 
 @router.put("/{attraction_id}", response_model=AttractionResponse)
 async def update_attraction(
     attraction_id: int,
     attraction: AttractionUpdate,
-    db: Session = Depends(get_db)
 ):
     """更新景点（自动同步到 GraphRAG）"""
-    db_attraction = db.query(Attraction).filter(Attraction.id == attraction_id).first()
-    if not db_attraction:
+    prisma = await get_prisma()
+    existing = await prisma.attraction.find_unique(where={"id": attraction_id})
+    if not existing:
         raise HTTPException(status_code=404, detail="Attraction not found")
-    
-    # 更新字段
-    update_data = attraction.dict(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_attraction, key, value)
-    
-    db.commit()
-    db.refresh(db_attraction)
+
+    data = {}
+    if attraction.name is not None:
+        data["name"] = attraction.name
+    if attraction.description is not None:
+        data["description"] = attraction.description
+    if attraction.location is not None:
+        data["location"] = attraction.location
+    if attraction.latitude is not None:
+        data["latitude"] = attraction.latitude
+    if attraction.longitude is not None:
+        data["longitude"] = attraction.longitude
+    if attraction.category is not None:
+        data["category"] = attraction.category
+    if attraction.image_url is not None:
+        data["imageUrl"] = attraction.image_url
+    if attraction.audio_url is not None:
+        data["audioUrl"] = attraction.audio_url
+
+    updated = await prisma.attraction.update(where={"id": attraction_id}, data=data)
     
     # 自动同步到 GraphRAG
     try:
         attraction_dict = {
-            "id": db_attraction.id,
-            "name": db_attraction.name,
-            "description": db_attraction.description,
-            "location": db_attraction.location,
-            "latitude": db_attraction.latitude,
-            "longitude": db_attraction.longitude,
-            "category": db_attraction.category,
+            "id": updated.id,
+            "name": updated.name,
+            "description": updated.description,
+            "location": updated.location,
+            "latitude": updated.latitude,
+            "longitude": updated.longitude,
+            "category": updated.category,
+            "image_url": updated.imageUrl,
+            "audio_url": updated.audioUrl,
+            "scenic_spot_id": getattr(updated, "scenicSpotId", None),
         }
         await _sync_attraction_to_graphrag(attraction_dict, operation="upsert")
     except Exception as e:
         logger.error(f"自动同步景点到 GraphRAG 失败: {e}", exc_info=True)
         # 不抛出异常，避免影响主流程
     
-    return db_attraction
+    return AttractionResponse(
+        id=updated.id,
+        name=updated.name,
+        description=updated.description,
+        location=updated.location,
+        latitude=updated.latitude,
+        longitude=updated.longitude,
+        category=updated.category,
+        image_url=updated.imageUrl,
+        audio_url=updated.audioUrl,
+        scenic_spot_id=getattr(updated, "scenicSpotId", None),
+    )
 
 @router.delete("/{attraction_id}")
-async def delete_attraction(attraction_id: int, db: Session = Depends(get_db)):
+async def delete_attraction(attraction_id: int):
     """删除景点（自动从 GraphRAG 删除）"""
-    db_attraction = db.query(Attraction).filter(Attraction.id == attraction_id).first()
-    if not db_attraction:
+    prisma = await get_prisma()
+    existing = await prisma.attraction.find_unique(where={"id": attraction_id})
+    if not existing:
         raise HTTPException(status_code=404, detail="Attraction not found")
-    
-    # 先获取景点信息用于删除 GraphRAG
+
     attraction_dict = {
-        "id": db_attraction.id,
-        "name": db_attraction.name,
-        "description": db_attraction.description,
-        "location": db_attraction.location,
-        "latitude": db_attraction.latitude,
-        "longitude": db_attraction.longitude,
-        "category": db_attraction.category,
+        "id": existing.id,
+        "name": existing.name,
+        "description": existing.description,
+        "location": existing.location,
+        "latitude": existing.latitude,
+        "longitude": existing.longitude,
+        "category": existing.category,
+        "image_url": existing.imageUrl,
+        "audio_url": existing.audioUrl,
+        "scenic_spot_id": getattr(existing, "scenicSpotId", None),
     }
-    
-    # 从数据库删除
-    db.delete(db_attraction)
-    db.commit()
+
+    await prisma.attraction.delete(where={"id": attraction_id})
     
     # 自动从 GraphRAG 删除
     try:
@@ -167,9 +249,26 @@ async def delete_attraction(attraction_id: int, db: Session = Depends(get_db)):
     return {"message": "Attraction deleted successfully"}
 
 @router.get("/recommendations/{user_id}")
-async def get_recommendations(user_id: int, limit: int = 5, db: Session = Depends(get_db)):
+async def get_recommendations(user_id: int, limit: int = 5):
     """获取个性化推荐（基于用户交互历史）"""
     # TODO: 实现基于图数据库的推荐算法
-    attractions = db.query(Attraction).limit(limit).all()
-    return {"recommendations": attractions}
+    prisma = await get_prisma()
+    rows = await prisma.attraction.find_many(take=limit, order={"id": "asc"})
+    return {
+        "recommendations": [
+            AttractionResponse(
+                id=r.id,
+                name=r.name,
+                description=r.description,
+                location=r.location,
+                latitude=r.latitude,
+                longitude=r.longitude,
+                category=r.category,
+                image_url=r.imageUrl,
+                audio_url=r.audioUrl,
+                scenic_spot_id=getattr(r, "scenicSpotId", None),
+            )
+            for r in rows
+        ]
+    }
 

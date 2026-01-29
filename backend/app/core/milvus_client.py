@@ -47,23 +47,46 @@ class MilvusClient:
             connections.disconnect("default")
             self.connected = False
     
-    def get_collection(self, collection_name: str):
-        """获取集合"""
+    def get_collection(self, collection_name: str, load: bool = False):
+        """获取集合
+        
+        Args:
+            collection_name: 集合名称
+            load: 是否自动加载集合到内存（用于搜索操作）
+        """
         if not self.connected:
             self.connect()
         if not _MILVUS_AVAILABLE or not self.connected:
             raise RuntimeError("Milvus is not available/connected")
-        return Collection(collection_name)
+        collection = Collection(collection_name)
+        if load:
+            try:
+                collection.load()
+            except Exception as e:
+                logger.warning(f"Failed to load collection '{collection_name}': {e}")
+        return collection
     
-    def create_collection_if_not_exists(self, collection_name: str, dimension: int = 384):
-        """创建集合（如果不存在）"""
+    def create_collection_if_not_exists(self, collection_name: str, dimension: int = 384, load: bool = False):
+        """创建集合（如果不存在）
+        
+        Args:
+            collection_name: 集合名称
+            dimension: 向量维度
+            load: 是否自动加载集合到内存（用于搜索操作）
+        """
         if not self.connected:
             self.connect()
         if not _MILVUS_AVAILABLE or not self.connected:
             raise RuntimeError("Milvus is not available/connected")
         
         if utility.has_collection(collection_name):
-            return Collection(collection_name)
+            collection = Collection(collection_name)
+            if load:
+                try:
+                    collection.load()
+                except Exception as e:
+                    logger.warning(f"Failed to load existing collection '{collection_name}': {e}")
+            return collection
         
         # 定义集合结构
         from pymilvus import FieldSchema, CollectionSchema, DataType
@@ -83,6 +106,12 @@ class MilvusClient:
             "params": {"nlist": 1024}
         }
         collection.create_index("embedding", index_params)
+        
+        if load:
+            try:
+                collection.load()
+            except Exception as e:
+                logger.warning(f"Failed to load newly created collection '{collection_name}': {e}")
         
         return collection
 

@@ -43,7 +43,7 @@ const AttractionsManagement = () => {
       setImageFileList([]);
       fetchAttractions();
     } catch (error) {
-      message.error('操作失败：' + error.message);
+      message.error(error.response?.data?.detail || ('操作失败：' + error.message));
     } finally {
       setLoading(false);
     }
@@ -212,8 +212,12 @@ const AttractionsManagement = () => {
           </Form.Item>
           <Form.Item
             name="image_url"
-            label="图片"
+            style={{ display: 'none' }}
           >
+            <Input type="hidden" />
+          </Form.Item>
+
+          <Form.Item label="图片">
             <Upload
               accept="image/*"
               listType="picture-card"
@@ -229,6 +233,7 @@ const AttractionsManagement = () => {
                   });
                   const url = res.data?.image_url;
                   if (url) {
+                    // 关键：表单里保存字符串 URL，而不是 Upload 的 fileList 对象
                     form.setFieldsValue({ image_url: url });
                     setImageFileList([
                       {

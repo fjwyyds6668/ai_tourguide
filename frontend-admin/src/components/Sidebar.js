@@ -5,7 +5,6 @@ import {
   DashboardOutlined,
   DatabaseOutlined,
   BarChartOutlined,
-  EnvironmentOutlined,
   TeamOutlined,
   UserOutlined,
   UploadOutlined,
@@ -124,13 +123,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
     {
       key: '/knowledge',
       icon: <DatabaseOutlined />,
-      label: '知识库管理',
+      label: '景区管理',
     },
-    {
-      key: '/attractions',
-      icon: <EnvironmentOutlined />,
-      label: '景点管理',
-    },
+    // 景点管理将合并进“景区管理”页面（按景区分组）
     {
       key: '/analytics',
       icon: <BarChartOutlined />,
