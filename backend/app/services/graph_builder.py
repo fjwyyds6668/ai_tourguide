@@ -111,7 +111,45 @@ class GraphBuilder:
         """
         self.client.execute_query(q_clean_orphans, {"id": int(att_id)})
 
-        # 4) Text 关联（可选）
+        # 4) 关联到所属景区（ScenicSpot）- 明确“这是哪个景区下面的景点”
+        has_scenic_spot = False
+        if scenic_spot_id:
+            q_scenic_rel = """
+            MATCH (a:Attraction {id: $id})
+            MATCH (s:ScenicSpot {scenic_spot_id: $scenic_spot_id})
+            MERGE (a)-[:属于]->(s)
+            """
+            self.client.execute_query(q_scenic_rel, {
+                "id": int(att_id),
+                "scenic_spot_id": int(scenic_spot_id)
+            })
+            has_scenic_spot = True
+            logger.info(f"景点 '{name}' (Attraction, id={att_id}) 已关联到景区 (scenic_spot_id={scenic_spot_id})")
+
+            # 如果该景区下已经有同名的 Spot（来自景区总文本解析），
+            # 则用当前 Attraction 替换掉那个 Spot，避免“花溪十三桥”出现两种节点。
+            q_merge_spot = """
+            MATCH (s:ScenicSpot {scenic_spot_id: $scenic_spot_id})
+            OPTIONAL MATCH (s)-[r:HAS_SPOT]->(sp:Spot {name: $name})
+            WITH s, r, sp
+            MATCH (a:Attraction {id: $id})
+            // 确保景区仍然通过 HAS_SPOT 指向“正式的景点”节点
+            MERGE (s)-[:HAS_SPOT]->(a)
+            // 如果之前存在同名 Spot，则删除旧的 Spot 节点及其关系
+            FOREACH (_ IN CASE WHEN sp IS NULL THEN [] ELSE [1] END |
+              DETACH DELETE sp
+            )
+            """
+            try:
+                self.client.execute_query(q_merge_spot, {
+                    "id": int(att_id),
+                    "scenic_spot_id": int(scenic_spot_id),
+                    "name": name,
+                })
+            except Exception as e:
+                logger.warning(f"合并景区子景点 Spot -> Attraction 失败: {e}")
+
+        # 5) Text 关联（可选）
         if text_id and text:
             q_text = """
             MERGE (t:Text {id: $text_id})
@@ -122,7 +160,8 @@ class GraphBuilder:
             """
             self.client.execute_query(q_text, {"text_id": text_id, "text": text, "id": int(att_id)})
 
-        # 5) 位置链（尽量从 parsed.location 取；否则从 attraction_data.location 做粗分）
+        # 6) 位置链（景点自身的位置；景区和景点可以共享同一套省市县节点）
+        # 这里始终为景点计算位置信息，避免图查询时需要“绕景区一跳”才能拿到位置。
         locations = []
         if parsed and isinstance(parsed.get("location"), list):
             locations = [str(x).strip() for x in parsed.get("location") if str(x).strip()]
@@ -143,6 +182,7 @@ class GraphBuilder:
         """
         self.client.execute_query(q_clean_loc, {"id": int(att_id)})
 
+        # 始终为景点建立到位置节点的关系（位置节点本身可与景区共享，不会导致图混乱）
         if locations:
             params = {"id": int(att_id)}
             if len(locations) >= 3:
@@ -239,27 +279,6 @@ class GraphBuilder:
                 MERGE (a)-[:HAS_HONOR]->(h)
                 """
                 self.client.execute_query(q_h, {"id": int(att_id), "honors": hns})
-
-        # 9) 关联到所属景区（ScenicSpot）- 区分景点和景区的关键关系
-        if scenic_spot_id:
-            # 先清理旧的景区关系
-            q_clean_scenic = """
-            MATCH (a:Attraction {id: $id})-[r:属于]->(:ScenicSpot)
-            DELETE r
-            """
-            self.client.execute_query(q_clean_scenic, {"id": int(att_id)})
-            
-            # 建立景点与景区的关系
-            q_scenic_rel = """
-            MATCH (a:Attraction {id: $id})
-            MATCH (s:ScenicSpot {scenic_spot_id: $scenic_spot_id})
-            MERGE (a)-[:属于]->(s)
-            """
-            self.client.execute_query(q_scenic_rel, {
-                "id": int(att_id),
-                "scenic_spot_id": int(scenic_spot_id)
-            })
-            logger.info(f"景点 '{name}' (id={att_id}) 已关联到景区 (scenic_spot_id={scenic_spot_id})")
     
     async def create_relationship(self, from_entity: str, to_entity: str, 
                                  relation_type: str, properties: Dict = None) -> bool:
