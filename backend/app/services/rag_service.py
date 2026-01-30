@@ -431,13 +431,17 @@ class RAGService:
         return True
     
     def _is_listing_query(self, query: str) -> bool:
-        """判断是否为“列举景点”类问题，例如有哪些景点、景点分布等。"""
+        """判断是否为“景点列表/数量”类问题，例如有哪些景点、景点分布、多少个景点等。"""
         if not query or not isinstance(query, str):
             return False
         q = query.strip()
         if not q:
             return False
-        pattern = r"有哪些景点|景点都有(什么|哪些)|景点情况|景点分布|有什么景点|景点.*有哪些"
+        # 同时覆盖“有哪些景点”和“有多少个景点/几个景点”这两类意图
+        pattern = (
+            r"有哪些景点|景点都有(什么|哪些)|景点情况|景点分布|有什么景点|景点.*有哪些"
+            r"|有多少个景点|多少个景点|景点有多少个|景区有多少个景点|几个景点"
+        )
         return bool(re.search(pattern, q))
 
     def _get_scenic_spot_by_attraction_id(self, attraction_id: int) -> Optional[Dict[str, Any]]:
@@ -463,7 +467,7 @@ class RAGService:
         return None
 
     def _get_scenic_attractions_sentence_by_name(self, scenic_name: str) -> str:
-        """根据景区名称查询其下相关景点，并格式化为一句话描述。"""
+        """根据景区名称查询其下相关景点，并格式化为一句话描述（带数量信息）。"""
         scenic_name = (scenic_name or "").strip()
         if not scenic_name:
             return ""
@@ -494,8 +498,9 @@ class RAGService:
             attraction_names.append(nm)
         if not attraction_names:
             return ""
+        count = len(attraction_names)
         joined = "、".join(attraction_names)
-        return f"根据图数据库，景区「{scenic_name}」下的相关景点包括：{joined}。"
+        return f"根据图数据库，景区「{scenic_name}」下的相关景点共有 {count} 个，包括：{joined}。"
 
     async def hybrid_search(self, query: str, top_k: int = 5) -> Dict[str, Any]:
         """向量检索 + 实体识别 + 图检索 + 结果融合（并行优化）。"""

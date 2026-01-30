@@ -1569,7 +1569,7 @@ async def get_popular_attractions(db: Session = Depends(get_db)):
         Interaction, Attraction.id == Interaction.attraction_id, isouter=True
     ).group_by(Attraction.id, Attraction.name).order_by(
         func.count(Interaction.id).desc()
-    ).limit(10).all()
+    ).limit(5).all()
     
     popular_list = [
         {
