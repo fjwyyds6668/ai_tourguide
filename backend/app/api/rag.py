@@ -1,6 +1,7 @@
 """GraphRAG 检索 API"""
 import logging
-from fastapi import APIRouter, HTTPException, Depends
+import asyncio
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
@@ -63,7 +64,7 @@ async def graph_search(entity_name: str, relation_type: str = None, limit: int =
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/generate", response_model=GenerateResponse)
-async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db)):
+async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None):
     """生成回答（RAG + 多轮对话）。"""
     try:
         session_id = request.session_id
@@ -73,16 +74,27 @@ async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db
             session = session_service.get_session(session_id)
             if not session:
                 session_id = session_service.create_session(request.character_id)
-        character_prompt = None
-        if request.character_id:
-            try:
-                prisma = await get_prisma()
-                character = await prisma.character.find_unique(where={"id": request.character_id})
-                if character and character.prompt:
-                    character_prompt = character.prompt
-            except Exception as e:
-                logger.error(f"Failed to load character prompt: {e}")
-        conversation_history = session_service.get_conversation_history(session_id)
+        # 并行加载角色提示词和对话历史
+        async def load_character_prompt():
+            if request.character_id:
+                try:
+                    prisma = await get_prisma()
+                    character = await prisma.character.find_unique(where={"id": request.character_id})
+                    if character and character.prompt:
+                        return character.prompt
+                except Exception as e:
+                    logger.error(f"Failed to load character prompt: {e}")
+            return None
+        
+        def load_conversation_history():
+            return session_service.get_conversation_history(session_id)
+        
+        # 并行加载角色提示词和对话历史
+        character_prompt, conversation_history = await asyncio.gather(
+            load_character_prompt(),
+            asyncio.to_thread(load_conversation_history)
+        )
+        
         result = await rag_service.generate_answer(
             query=request.query,
             context=None,
@@ -93,22 +105,37 @@ async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db
         answer = result["answer"]
         context = result.get("context", "")
         primary_attraction_id = result.get("primary_attraction_id")
+        
+        # 立即更新会话历史（同步操作，很快）
         session_service.add_message(session_id, "user", request.query)
         session_service.add_message(session_id, "assistant", answer)
-        try:
-            interaction = Interaction(
-                session_id=session_id,
-                character_id=request.character_id,
-                query_text=request.query,
-                response_text=answer,
-                interaction_type="voice_query",
-                attraction_id=primary_attraction_id,
-            )
-            db.add(interaction)
-            db.commit()
-        except Exception as e:
-            logger.error(f"Failed to save interaction: {e}")
-            db.rollback()
+        
+        # 数据库保存使用后台任务，不阻塞响应
+        def save_interaction():
+            try:
+                from app.core.database import SessionLocal
+                db_local = SessionLocal()
+                try:
+                    interaction = Interaction(
+                        session_id=session_id,
+                        character_id=request.character_id,
+                        query_text=request.query,
+                        response_text=answer,
+                        interaction_type="voice_query",
+                        attraction_id=primary_attraction_id,
+                    )
+                    db_local.add(interaction)
+                    db_local.commit()
+                finally:
+                    db_local.close()
+            except Exception as e:
+                logger.error(f"Failed to save interaction: {e}")
+        
+        if background_tasks:
+            background_tasks.add_task(save_interaction)
+        else:
+            # 如果没有 background_tasks，使用 asyncio 后台执行
+            asyncio.create_task(asyncio.to_thread(save_interaction))
         
         return GenerateResponse(
             answer=answer,

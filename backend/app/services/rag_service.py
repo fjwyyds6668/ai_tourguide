@@ -411,19 +411,33 @@ class RAGService:
         return True
 
     async def hybrid_search(self, query: str, top_k: int = 5) -> Dict[str, Any]:
-        """向量检索 + 实体识别 + 图检索 + 结果融合。"""
+        """向量检索 + 实体识别 + 图检索 + 结果融合（并行优化）。"""
         vector_results = await self.vector_search(query, top_k=top_k)
         vector_results_relevant = [r for r in (vector_results or []) if (r.get("score") or 0) >= RELEVANCE_SCORE_THRESHOLD]
         if not vector_results_relevant and vector_results:
             vector_results_relevant = vector_results[:1]
         vector_results = vector_results_relevant
 
-        entities = self.extract_entities(query)
+        # 批量提取实体，减少重复处理
+        texts_to_extract = [query]
         if vector_results:
-            for result in vector_results[:3]:
-                text_id = result.get("text_id", "")
-                if text_id:
-                    entities.extend(self.extract_entities(text_id))
+            text_ids = [r.get("text_id", "") for r in vector_results[:3] if r.get("text_id")]
+            texts_to_extract.extend(text_ids)
+        
+        # 并行提取实体（如果文本较多）
+        if len(texts_to_extract) > 1:
+            loop = asyncio.get_event_loop()
+            entities_list = await asyncio.gather(*[
+                loop.run_in_executor(None, self.extract_entities, text)
+                for text in texts_to_extract
+            ])
+            entities = []
+            for ent_list in entities_list:
+                entities.extend(ent_list)
+        else:
+            entities = self.extract_entities(query)
+        
+        # 使用字典去重，保留最高置信度
         unique_entities = {}
         for entity in entities:
             text = entity["text"]
@@ -431,20 +445,45 @@ class RAGService:
                 unique_entities[text] = entity
         
         entity_names = [e["text"] for e in unique_entities.values()]
-        graph_results = []
-        subgraph_data = None
-        if entity_names:
-            for entity_name in entity_names[:5]:
-                results = await self.graph_search(entity_name, limit=5)
-                graph_results.extend(results)
-            if len(entity_names) > 1:
-                subgraph_data = await self.graph_subgraph_search(entity_names[:3], depth=2)
+        
         text_ids_to_fetch = [
             (r.get("text_id") or "").strip()
             for r in (vector_results or [])
             if (r.get("text_id") or "").strip() and not (r.get("text_id") or "").strip().startswith("attraction_")
         ]
-        text_contents = self._get_text_contents_from_neo4j(text_ids_to_fetch) if text_ids_to_fetch else {}
+        
+        tasks = []
+        if entity_names:
+            tasks.extend([self.graph_search(name, limit=5) for name in entity_names[:5]])
+            if len(entity_names) > 1:
+                tasks.append(self.graph_subgraph_search(entity_names[:3], depth=2))
+        
+        graph_results = []
+        subgraph_data = None
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            task_idx = 0
+            for name in entity_names[:5]:
+                if task_idx < len(results):
+                    r = results[task_idx]
+                    if not isinstance(r, Exception):
+                        graph_results.extend(r)
+                    task_idx += 1
+            if len(entity_names) > 1 and task_idx < len(results):
+                r = results[task_idx]
+                if not isinstance(r, Exception):
+                    subgraph_data = r
+        
+        # 并行执行文本内容获取（使用线程池避免阻塞）
+        text_contents = {}
+        if text_ids_to_fetch:
+            loop = asyncio.get_event_loop()
+            text_contents = await loop.run_in_executor(
+                None, 
+                self._get_text_contents_from_neo4j, 
+                text_ids_to_fetch
+            )
+        
         for r in vector_results or []:
             tid = (r.get("text_id") or "").strip()
             if tid and tid in text_contents:
@@ -462,32 +501,81 @@ class RAGService:
                         primary_attraction_id = aid
                 except ValueError:
                     pass
-        query_about_scenic = bool(re.search(r"什么景区|哪个景区|是啥景区|这是什么景区|是哪个景区|啥景区|哪个景点.*景区", (query or "").strip()))
-        if primary_attraction_id is not None and query_about_scenic:
-            try:
-                parent_q = """
-                MATCH (a:Attraction {id: $aid})
-                OPTIONAL MATCH (a)-[:属于]->(s1:ScenicSpot)
-                OPTIONAL MATCH (s2:ScenicSpot)-[:HAS_SPOT]->(a)
-                WITH a, coalesce(s1, s2) AS s WHERE s IS NOT NULL
-                RETURN s.scenic_spot_id AS sid, s.name AS s_name
-                LIMIT 1
-                """
-                parent_rows = neo4j_client.execute_query(parent_q, {"aid": int(primary_attraction_id)})
-                if parent_rows:
-                    row0 = parent_rows[0]
-                    sid = row0.get("sid")
-                    s_name = row0.get("s_name")
-                    scenic_ctx = ""
-                    if sid is not None:
-                        scenic_ctx = await self._get_scenic_spot_cluster_context(int(sid))
-                    if not scenic_ctx and s_name:
-                        scenic_ctx = await self._get_scenic_spot_cluster_context_by_name(str(s_name).strip())
-                    if scenic_ctx:
+        query_about_scenic = bool(re.search(r"什么景区|哪个景区|是啥景区|这是什么景区|是哪个景区|啥景区|哪个景点.*景区|介绍.*景区|景区.*介绍|这个景区", (query or "").strip()))
+        scenic_ctx_found = False
+        if query_about_scenic:
+            scenic_tasks = []
+            if primary_attraction_id is not None:
+                async def get_scenic_from_attraction():
+                    try:
+                        parent_q = """
+                        MATCH (a:Attraction {id: $aid})
+                        OPTIONAL MATCH (a)-[:属于]->(s1:ScenicSpot)
+                        OPTIONAL MATCH (s2:ScenicSpot)-[:HAS_SPOT]->(a)
+                        WITH a, coalesce(s1, s2) AS s WHERE s IS NOT NULL
+                        RETURN s.scenic_spot_id AS sid, s.name AS s_name
+                        LIMIT 1
+                        """
+                        parent_rows = neo4j_client.execute_query(parent_q, {"aid": int(primary_attraction_id)})
+                        if parent_rows:
+                            row0 = parent_rows[0]
+                            sid = row0.get("sid")
+                            s_name = row0.get("s_name")
+                            if sid is not None:
+                                return await self._get_scenic_spot_cluster_context(int(sid))
+                            if s_name:
+                                return await self._get_scenic_spot_cluster_context_by_name(str(s_name).strip())
+                    except Exception as e:
+                        logger.warning(f"查询景点所属景区失败: {e}")
+                    return ""
+                scenic_tasks.append(get_scenic_from_attraction())
+            
+            if entity_names:
+                async def get_scenic_from_entity(name):
+                    try:
+                        scenic_check_q = """
+                        MATCH (s:ScenicSpot {name: $name})
+                        RETURN s.scenic_spot_id AS sid, s.name AS s_name
+                        LIMIT 1
+                        """
+                        scenic_rows = neo4j_client.execute_query(scenic_check_q, {"name": name})
+                        if scenic_rows:
+                            row0 = scenic_rows[0]
+                            sid = row0.get("sid")
+                            s_name = row0.get("s_name")
+                            if sid is not None:
+                                return await self._get_scenic_spot_cluster_context(int(sid))
+                            if s_name:
+                                return await self._get_scenic_spot_cluster_context_by_name(str(s_name).strip())
+                    except Exception as e:
+                        logger.warning(f"从实体名称查找景区失败: {e}")
+                    return ""
+                for entity_name in entity_names[:3]:
+                    scenic_tasks.append(get_scenic_from_entity(entity_name))
+            
+            if subgraph_data:
+                async def get_scenic_from_subgraph():
+                    for node in subgraph_data.get("nodes", []):
+                        labels = set(node.get("labels") or [])
+                        props = node.get("properties") or {}
+                        if "ScenicSpot" in labels and isinstance(props.get("name"), str):
+                            scenic_name = props["name"]
+                            try:
+                                return await self._get_scenic_spot_cluster_context_by_name(scenic_name)
+                            except Exception as e:
+                                logger.warning(f"从子图查找景区失败: {e}")
+                                continue
+                    return ""
+                scenic_tasks.append(get_scenic_from_subgraph())
+            
+            if scenic_tasks:
+                scenic_results = await asyncio.gather(*scenic_tasks, return_exceptions=True)
+                for scenic_ctx in scenic_results:
+                    if scenic_ctx and not isinstance(scenic_ctx, Exception) and scenic_ctx.strip():
                         enhanced_results = scenic_ctx + "\n\n" + (enhanced_results or "")
-            except Exception as e:
-                logger.warning(f"查询景点所属景区失败: {e}")
-        if primary_attraction_id is not None:
+                        scenic_ctx_found = True
+                        break
+        if primary_attraction_id is not None and not (query_about_scenic and scenic_ctx_found):
             cluster_ctx = await self._get_attraction_cluster_context([primary_attraction_id])
             if cluster_ctx:
                 enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
@@ -608,24 +696,27 @@ class RAGService:
         return ""
 
     async def _get_attraction_cluster_context(self, attraction_ids: List[int]) -> str:
-        """从 Neo4j 拉取景点一簇（属性+出边），格式化为文本供 LLM。"""
+        """从 Neo4j 拉取景点一簇（属性+出边），格式化为文本供 LLM（并行优化）。"""
         if not attraction_ids:
             return ""
-        parts = []
-        seen = set()
-        for aid in attraction_ids[:5]:
-            if aid in seen:
-                continue
-            seen.add(aid)
+        
+        # 并行查询多个景点
+        async def fetch_attraction_cluster(aid: int):
             try:
                 query = """
                 MATCH (a:Attraction {id: $id})
                 OPTIONAL MATCH (a)-[r]->(n)
                 RETURN a, type(r) as rel_type, n
                 """
-                rows = neo4j_client.execute_query(query, {"id": int(aid)})
+                loop = asyncio.get_event_loop()
+                rows = await loop.run_in_executor(
+                    None,
+                    neo4j_client.execute_query,
+                    query,
+                    {"id": int(aid)}
+                )
                 if not rows:
-                    continue
+                    return None
                 att_name = ""
                 att_desc = ""
                 att_location = ""
@@ -650,7 +741,7 @@ class RAGService:
                         if n_name:
                             relations.append(f"{rel_type} -> {n_name}")
                 if not att_name and not relations:
-                    continue
+                    return None
                 cluster_lines = [f"景点【{att_name or ('ID:' + str(aid))}】"]
                 if att_desc:
                     cluster_lines.append(f"描述：{att_desc}")
@@ -660,10 +751,16 @@ class RAGService:
                     cluster_lines.append(f"类别：{att_category}")
                 if relations:
                     cluster_lines.append("关系与属性：" + "；".join(relations))
-                parts.append("\n".join(cluster_lines))
+                return "\n".join(cluster_lines)
             except Exception as e:
                 logger.warning(f"拉取景点簇失败 attraction_id={aid}: {e}")
-                continue
+                return None
+        
+        # 并行获取所有景点簇
+        unique_ids = list(set(attraction_ids[:5]))
+        results = await asyncio.gather(*[fetch_attraction_cluster(aid) for aid in unique_ids], return_exceptions=True)
+        parts = [r for r in results if r and not isinstance(r, Exception)]
+        
         if not parts:
             return ""
         return "【景点一簇信息】\n" + "\n\n".join(parts)
@@ -832,13 +929,14 @@ class RAGService:
             rag_results = await self.hybrid_search(query, top_k=5)
             primary_attraction_id = rag_results.get("primary_attraction_id")
             out_context = rag_results.get("enhanced_context", "") or ""
-            scenic_ctx = await self._build_scenic_attractions_context(
-                query=query,
-                rag_results=rag_results,
-                conversation_history=conversation_history,
-            )
-            if scenic_ctx:
-                out_context = f"{out_context}\n\n{scenic_ctx}" if out_context else scenic_ctx
+            if re.search(r"有哪些景点|景点都有(什么|哪些)|景点情况|景点分布", query):
+                scenic_ctx = await self._build_scenic_attractions_context(
+                    query=query,
+                    rag_results=rag_results,
+                    conversation_history=conversation_history,
+                )
+                if scenic_ctx:
+                    out_context = f"{out_context}\n\n{scenic_ctx}" if out_context else scenic_ctx
 
             rag_debug = {
                 "query": rag_results.get("query") or query,

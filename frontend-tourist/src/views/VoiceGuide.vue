@@ -158,6 +158,8 @@ const processing = ref(false)
 const selectedCharacterId = ref(null)
 const sessionId = ref(null)
 const characters = ref([])
+// 限制对话历史长度，避免内存占用过大和渲染性能问题
+const MAX_HISTORY_LENGTH = 50
 const conversationHistory = ref([])
 const textInput = ref('')
 const showHistory = ref(false)
@@ -182,16 +184,22 @@ onMounted(async () => {
   }
 })
 
-// 加载角色列表
-const loadCharacters = async () => {
+// 加载角色列表（带重试机制）
+const loadCharacters = async (retries = 2) => {
   try {
     const res = await api.get('/characters/characters', {
-      params: { active_only: true }
+      params: { active_only: true },
+      timeout: 10000 // 角色列表查询设置较短超时
     })
-    characters.value = res.data
+    characters.value = res.data || []
   } catch (error) {
+    if (retries > 0) {
+      console.warn(`加载角色失败，${retries} 次重试机会...`, error)
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      return loadCharacters(retries - 1)
+    }
     console.error('加载角色失败:', error)
-    ElMessage.error('加载角色失败')
+    ElMessage.error('加载角色失败，请刷新页面重试')
   }
 }
 
@@ -266,6 +274,12 @@ const processAudio = async (audioBlob) => {
     // 添加到对话历史
     addMessage('user', queryText)
     
+    // 立即滚动到底部，显示用户消息
+    scrollToBottom()
+    
+    // 并行执行：准备音频上下文（不阻塞 RAG 请求）
+    initAudioAnalyzer().catch(() => {}) // 静默处理错误
+    
     // 2. RAG 生成回答（支持多轮对话）
     const generateRes = await api.post('/rag/generate', {
       query: queryText,
@@ -299,11 +313,25 @@ const handleSendText = async () => {
     return
   }
 
+  if (processing.value) {
+    ElMessage.warning('正在处理中，请稍候...')
+    return
+  }
+
   processing.value = true
   textInput.value = ''
   try {
     // 添加到对话历史
     addMessage('user', queryText)
+    
+    // 立即滚动到底部，显示用户消息
+    scrollToBottom()
+
+    // 并行执行：触发说话动作和准备音频上下文（不阻塞 RAG 请求）
+    Promise.all([
+      Promise.resolve(triggerSpeakingMotion()),
+      initAudioAnalyzer() // 提前初始化音频分析器
+    ]).catch(() => {}) // 静默处理错误，不影响主流程
 
     // 调用同一套 RAG + 硅基模型
     const generateRes = await api.post('/rag/generate', {
@@ -315,9 +343,6 @@ const handleSendText = async () => {
 
     const answer = generateRes.data.answer || ''
     sessionId.value = generateRes.data.session_id
-
-    // 触发说话动作和表情
-    triggerSpeakingMotion()
 
     // 以"流式打字"方式展示助手回复，同时进行 TTS 合成和播放
     addAssistantStreamMessage(answer, selectedCharacterId.value)
@@ -383,13 +408,17 @@ const stopSpeaking = () => {
   }
 }
 
-// 添加消息到对话历史
+// 添加消息到对话历史（限制长度以提升性能）
 const addMessage = (role, content) => {
   conversationHistory.value.push({
     role,
     content,
     timestamp: new Date().toISOString()
   })
+  // 如果历史记录过长，只保留最近的记录
+  if (conversationHistory.value.length > MAX_HISTORY_LENGTH) {
+    conversationHistory.value = conversationHistory.value.slice(-MAX_HISTORY_LENGTH)
+  }
 }
 
 // 音频分析器（用于嘴巴同步）
@@ -397,13 +426,22 @@ let audioContext = null
 let analyser = null
 let audioSource = null
 
-// 初始化音频分析器
-const initAudioAnalyzer = () => {
+// 初始化音频分析器（异步，避免阻塞主线程）
+const initAudioAnalyzer = async () => {
   if (!audioContext) {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)()
-    analyser = audioContext.createAnalyser()
-    analyser.fftSize = 256
-    analyser.smoothingTimeConstant = 0.8
+    try {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)()
+      analyser = audioContext.createAnalyser()
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0.8
+      // 如果 AudioContext 处于 suspended 状态，尝试恢复
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume()
+      }
+    } catch (e) {
+      console.warn('音频上下文初始化失败:', e)
+      throw e
+    }
   }
 }
 
@@ -572,13 +610,14 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
   // 重置 TTS 请求队列
   ttsRequestQueue = Promise.resolve()
 
-  const chars = Array.from(fullText)
+  // 优化：直接使用字符串索引，避免 Array.from 的开销
+  const textLength = fullText.length
   let i = 0
-  const interval = 15 // 毫秒（加快显示速度）
-  const TTS_CHUNK_SIZE = 30 // 每 30 个字符合成一次 TTS
+  const interval = 10 // 毫秒（优化显示速度）
+  const TTS_CHUNK_SIZE = 25 // 每 25 个字符合成一次 TTS（减少块大小，提升响应速度）
   let ttsSynthesizedLength = 0 // 已合成 TTS 的文本长度
 
-  // 在文本显示到一定长度时开始第一次 TTS
+  // 立即开始第一次 TTS，提升响应速度
   const startFirstTTS = () => {
     const initialText = fullText.substring(0, Math.min(TTS_CHUNK_SIZE, fullText.length))
     if (initialText.trim()) {
@@ -587,8 +626,8 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
     }
   }
 
-  // 延迟一小段时间后开始第一次 TTS，让文本先显示一些
-  setTimeout(startFirstTTS, 200)
+  // 立即开始第一次 TTS，减少延迟
+  startFirstTTS()
 
   const timer = setInterval(() => {
     if (i >= chars.length) {
@@ -611,8 +650,10 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
       clearInterval(timer)
       return
     }
-    msg.content += chars[i]
-    i += 1
+    // 优化：使用字符串切片，每次添加多个字符以减少更新频率
+    const chunkSize = Math.min(3, textLength - i) // 每次添加最多3个字符
+    msg.content += fullText.substring(i, i + chunkSize)
+    i += chunkSize
 
     // 当文本显示到下一个 TTS 块的位置时，触发下一段 TTS
     // 提前一点触发，让 TTS 合成和文本显示更同步
@@ -658,9 +699,9 @@ watch(showHistory, (val) => {
   }
 })
 
-// 滚动到底部
+// 滚动到底部（使用 requestAnimationFrame 优化性能）
 const scrollToBottom = () => {
-  nextTick(() => {
+  requestAnimationFrame(() => {
     const listRef = document.querySelector('.conversation-list')
     if (listRef) {
       listRef.scrollTop = listRef.scrollHeight
@@ -725,23 +766,39 @@ const triggerSpeakingMotion = () => {
 .voice-guide {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 12px;
+  height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .section-card {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   border-radius: 12px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .section-card :deep(.el-card__header) {
-  padding: 14px 20px;
+  padding: 10px 16px;
   font-weight: 600;
   border-bottom: 1px solid #f0f0f0;
+  flex-shrink: 0;
+}
+
+.section-card :deep(.el-card__body) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px;
 }
 
 .card-title {
-  font-size: 16px;
+  font-size: 15px;
   color: #303133;
 }
 
@@ -759,7 +816,8 @@ const triggerSpeakingMotion = () => {
 }
 
 .role-card {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 
 .role-group {
@@ -767,13 +825,30 @@ const triggerSpeakingMotion = () => {
 }
 
 .main-row {
-  margin-bottom: 20px;
+  margin-bottom: 0;
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.main-row :deep(.el-col) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.avatar-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .avatar-wrapper {
   width: 100%;
-  height: 420px;
-  margin-bottom: 16px;
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 12px;
   border-radius: 12px;
   overflow: hidden;
   background: #1a1a1a;
@@ -782,12 +857,13 @@ const triggerSpeakingMotion = () => {
 
 .text-input-area {
   margin-top: 0;
-  padding: 12px 0 0;
+  padding: 8px 0 0;
   border-top: 1px solid #f0f0f0;
+  flex-shrink: 0;
 }
 
 .input-hint {
-  margin: 0 0 8px 0;
+  margin: 0 0 6px 0;
   font-size: 12px;
   color: #909399;
 }
@@ -822,16 +898,22 @@ const triggerSpeakingMotion = () => {
   z-index: 10;
 }
 
+.chat-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 .conversation-list {
-  max-height: 560px;
-  min-height: 280px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 12px;
+  padding: 10px;
 }
 
 .message-item {
-  margin-bottom: 14px;
-  padding: 12px 14px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
   border-radius: 10px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
@@ -849,7 +931,7 @@ const triggerSpeakingMotion = () => {
 .message-header {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   font-size: 12px;
   color: #606266;
 }
@@ -857,22 +939,23 @@ const triggerSpeakingMotion = () => {
 .message-content {
   word-break: break-word;
   line-height: 1.5;
+  font-size: 14px;
 }
 
 .empty-message {
   text-align: center;
   color: #909399;
-  padding: 48px 24px;
+  padding: 32px 24px;
 }
 
 .empty-message .empty-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
+  font-size: 40px;
+  margin-bottom: 10px;
   color: #c0c4cc;
 }
 
 .empty-message p {
-  margin: 0 0 6px 0;
+  margin: 0 0 4px 0;
   font-size: 14px;
 }
 
@@ -883,10 +966,11 @@ const triggerSpeakingMotion = () => {
 
 @media (max-width: 768px) {
   .voice-guide {
-    padding: 12px;
+    padding: 8px;
+    height: calc(100vh - 16px);
   }
   .avatar-wrapper {
-    height: 320px;
+    min-height: 280px;
   }
 }
 </style>

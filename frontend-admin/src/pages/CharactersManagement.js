@@ -3,21 +3,21 @@ import { Button, Card, Form, Input, Modal, Space, Switch, Table, Tag, message, S
 import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import api from '../api';
 
-const LIVE2D_CHARACTER_OPTIONS = [
-  { value: 'Mao', label: 'Mao - 艺术家风格，有丰富的动作和表情（默认）' },
-  { value: 'Chitose', label: 'Chitose - 温柔风格，有指引动作' },
-  { value: 'Tsumiki', label: 'Tsumiki - 可爱风格' },
-  { value: 'Hibiki', label: 'Hibiki - 活泼风格' },
-  { value: 'Izumi', label: 'Izumi - 成熟风格' },
-  { value: 'Hiyori', label: 'Hiyori - 标准风格' },
-  { value: 'Haru', label: 'Haru - 友好风格' },
-  { value: 'Epsilon', label: 'Epsilon - 优雅风格' },
-  { value: 'Shizuku', label: 'Shizuku - 文静风格' },
-  { value: 'Kei', label: 'Kei - 专业风格（支持多语言）' },
+const DIGITAL_HUMAN_CHARACTER_OPTIONS = [
+  { value: 'Mao', label: '艺术家风格（默认）' },
+  { value: 'Chitose', label: '温柔风格' },
+  { value: 'Tsumiki', label: '可爱风格' },
+  { value: 'Hibiki', label: '活泼风格' },
+  { value: 'Izumi', label: '成熟风格' },
+  { value: 'Hiyori', label: '标准风格' },
+  { value: 'Haru', label: '友好风格' },
+  { value: 'Epsilon', label: '优雅风格' },
+  { value: 'Shizuku', label: '文静风格' },
+  { value: 'Kei', label: '专业风格（多语言）' },
 ];
 
-const LIVE2D_GROUP_OPTIONS = [
-  { value: 'free', label: 'free（免费组，默认）' },
+const DIGITAL_HUMAN_GROUP_OPTIONS = [
+  { value: 'free', label: '免费组（默认）' },
 ];
 
 const emptyToNull = (v) => (v === '' ? null : v);
@@ -153,19 +153,21 @@ const CharactersManagement = () => {
         ),
       },
       {
-        title: 'Live2D 配置',
+        title: '数字人配置',
         key: 'live2d',
         width: 200,
         render: (_, row) => {
           if (!row.live2d_character_name) {
             return <span style={{ color: '#999' }}>-</span>;
           }
+          const charLabel = DIGITAL_HUMAN_CHARACTER_OPTIONS.find(o => o.value === row.live2d_character_name)?.label ?? row.live2d_character_name;
+          const groupLabel = row.live2d_character_group === 'free' ? '免费组（默认）' : (row.live2d_character_group ?? '');
           return (
             <Space direction="vertical" size={0}>
-              <Tag color="cyan">{row.live2d_character_name}</Tag>
-              {row.live2d_character_group && (
+              <Tag color="cyan">{charLabel}</Tag>
+              {groupLabel && (
                 <Tag color="default" style={{ fontSize: '11px' }}>
-                  {row.live2d_character_group}
+                  {groupLabel}
                 </Tag>
               )}
             </Space>
@@ -290,6 +292,9 @@ const CharactersManagement = () => {
         cancelText="取消"
         destroyOnClose
         maskClosable={false}
+        width={640}
+        style={{ top: 24 }}
+        bodyStyle={{ maxHeight: 'calc(100vh - 140px)', overflowY: 'auto' }}
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -300,11 +305,11 @@ const CharactersManagement = () => {
             <Input placeholder="例如：亲切导游 / 专业学者 / 儿童版小伙伴" />
           </Form.Item>
 
-          <Form.Item label="讲解风格（style）" name="style">
+          <Form.Item label="讲解风格" name="style">
             <Input placeholder="例如：亲切导游" />
           </Form.Item>
 
-          <Form.Item label="头像/模型ID（avatar_url）" name="avatar_url">
+          <Form.Item label="头像/模型ID" name="avatar_url">
             <Space.Compact style={{ width: '100%' }}>
               <Input placeholder="可填模型ID（如 Mao）或通过右侧上传图片" />
               <Upload
@@ -317,18 +322,22 @@ const CharactersManagement = () => {
             </Space.Compact>
           </Form.Item>
 
-          <Form.Item label="简介（description）" name="description">
-            <Input.TextArea rows={2} placeholder="角色简介" />
+          <Form.Item label="简介" name="description">
+            <Input.TextArea rows={3} placeholder="角色简介" />
           </Form.Item>
 
-          <Form.Item label="角色提示词（prompt）" name="prompt">
-            <Input.TextArea rows={4} placeholder="用于控制角色说话风格、口吻、身份设定等" />
+          <Form.Item
+            label="角色提示词"
+            name="prompt"
+            rules={[{ required: true, message: '请输入角色提示词' }]}
+          >
+            <Input.TextArea rows={12} placeholder="用于控制角色说话风格、口吻、身份设定等" autoSize={{ minRows: 10, maxRows: 16 }} />
           </Form.Item>
 
           <Form.Item 
-            label="语音选择（voice）" 
+            label="语音选择" 
             name="voice"
-            tooltip="选择该角色使用的科大讯飞音色（vcn）。留空则使用后端默认音色（XFYUN_VOICE）"
+            tooltip="选择该角色使用的讯飞音色，留空则使用后端默认音色"
           >
             <Select
               placeholder="选择讯飞音色（可选）"
@@ -342,29 +351,29 @@ const CharactersManagement = () => {
           </Form.Item>
 
           <Form.Item 
-            label="Live2D 角色名称" 
+            label="数字人角色名称" 
             name="live2d_character_name"
-            tooltip="选择该角色使用的 Live2D 数字人模型，留空则不使用 Live2D"
+            tooltip="选择该角色使用的数字人模型，留空则不使用数字人"
           >
             <Select
-              placeholder="选择 Live2D 角色（可选）"
+              placeholder="选择数字人角色（可选）"
               allowClear
               showSearch
               filterOption={(input, option) =>
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
-              options={LIVE2D_CHARACTER_OPTIONS}
+              options={DIGITAL_HUMAN_CHARACTER_OPTIONS}
             />
           </Form.Item>
 
           <Form.Item 
-            label="Live2D 角色组" 
+            label="数字人角色组" 
             name="live2d_character_group"
-            tooltip="Live2D 角色所属的组，默认为 'free'"
+            tooltip="数字人角色所属的组，默认为免费组"
           >
             <Select
-              placeholder="选择角色组（默认：free）"
-              options={LIVE2D_GROUP_OPTIONS}
+              placeholder="选择角色组（默认：免费组）"
+              options={DIGITAL_HUMAN_GROUP_OPTIONS}
             />
           </Form.Item>
 

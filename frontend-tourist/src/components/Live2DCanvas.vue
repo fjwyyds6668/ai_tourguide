@@ -35,7 +35,7 @@ const loadCharacter = () => {
     Live2dManager.getInstance().changeCharacter(buildCharacterResource())
     Live2dManager.getInstance().setReady(true)
   } catch (e) {
-    console.error('Live2D load character failed:', e)
+    console.error('数字人角色加载失败:', e)
   }
 }
 
@@ -65,8 +65,8 @@ onUnmounted(() => {
 <style scoped>
 .live2d-wrap {
   width: 100%;
-  height: 70vh;
-  min-height: 520px;
+  height: 100%;
+  min-height: 300px;
   background: #0b0f18;
   border-radius: 12px;
   overflow: hidden;
