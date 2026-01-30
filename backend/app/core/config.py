@@ -28,7 +28,8 @@ class Settings(BaseSettings):
         return url
     NEO4J_URI: str = "bolt://localhost:30001"
     NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = "12345678"
+    # 出于安全考虑，默认密码留空，必须通过环境变量或 .env 显式配置
+    NEO4J_PASSWORD: str = ""
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: int = 30002
     OPENAI_API_KEY: str = ""
@@ -38,11 +39,22 @@ class Settings(BaseSettings):
     XFYUN_API_KEY: str = ""
     XFYUN_API_SECRET: str = ""
     XFYUN_VOICE: str = "x4_yezi"
-    SECRET_KEY: str = "your-secret-key-change-in-production"
+    # JWT 密钥：生产环境必须通过环境变量设置，默认值仅供本地开发调试使用
+    SECRET_KEY: str = "dev-change-me"
     ALGORITHM: str = "HS256"
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
     AUTO_UPDATE_GRAPH_RAG: bool = True
+    # GraphRAG / 检索相关配置
     GRAPHRAG_COLLECTION_NAME: str = "tour_knowledge"
+    GRAPHRAG_EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    GRAPHRAG_TOP_K: int = 5
+    GRAPHRAG_RELEVANCE_THRESHOLD: float = 0.2
+    GRAPHRAG_MILVUS_METRIC_TYPE: str = "L2"
+    GRAPHRAG_MILVUS_NPROBE: int = 10
+    # 缓存与可观测性
+    GRAPHRAG_EMBEDDING_CACHE_TTL_SECONDS: int = 1800
+    GRAPHRAG_VECTOR_SEARCH_CACHE_TTL_SECONDS: int = 300
+    GRAPHRAG_CACHE_STATS_LOG_EVERY_N_CALLS: int = 200
     LOCAL_TTS_ENABLED: bool = False
     LOCAL_TTS_FORCE: bool = False
     LOCAL_TTS_ENGINE: str = "cosyvoice2"
@@ -52,6 +64,10 @@ class Settings(BaseSettings):
     COSYVOICE2_SPEAKER: Optional[str] = None
     COSYVOICE_PROMPT_WAV: str = ""
     COSYVOICE_PROMPT_TEXT: str = ""
+
+    # 管理端 / 上传等配置
+    ADMIN_MAX_IMAGE_SIZE_MB: int = 10
+    ADMIN_ALLOWED_IMAGE_EXTS: List[str] = [".png", ".jpg", ".jpeg", ".webp", ".gif"]
     
     class Config:
         env_file = ".env"

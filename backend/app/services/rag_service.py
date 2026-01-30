@@ -4,24 +4,36 @@ import re
 import json
 import asyncio
 import os
+import time
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from sentence_transformers import SentenceTransformer
 from app.core.milvus_client import milvus_client
 from app.core.neo4j_client import neo4j_client
 from app.core.config import settings
+from app.services.rag_settings import (
+    RAG_RELEVANCE_SCORE_THRESHOLD,
+    RAG_COLLECTION_NAME,
+    RAG_EMBEDDING_MODEL_NAME,
+    RAG_DEFAULT_TOP_K,
+    EMBEDDING_CACHE_MAX_SIZE,
+    VECTOR_SEARCH_CACHE_MAX_SIZE,
+    EMBEDDING_CACHE_TTL_SECONDS,
+    VECTOR_SEARCH_CACHE_TTL_SECONDS,
+    CACHE_STATS_LOG_EVERY_N_CALLS,
+    MILVUS_METRIC_TYPE,
+    MILVUS_NPROBE,
+)
 
 logger = logging.getLogger(__name__)
 
-RELEVANCE_SCORE_THRESHOLD = 0.2  # 向量相似度下限，低于此值视为不相关
+def _monotonic() -> float:
+    return time.monotonic()
 
 def _strip_emoji(text: str) -> str:
     """去掉表情与末尾控制字符，避免 TTS 异常；缺句尾时补句号。"""
     if not text or not isinstance(text, str):
         return text or ""
-    # 说明：
-    # - 旧实现只覆盖到 U+1F9FF，像 🫶(U+1FAF6) 这种新 emoji 会漏掉
-    # - 同时清掉一些常见“装饰符号”（如全角波浪线 ～ / 波浪线 ~），避免影响展示与 TTS
     s = re.sub(
         r"[\u2600-\u26FF\u2700-\u27BF"
         r"\U0001F300-\U0001F9FF"
@@ -30,7 +42,6 @@ def _strip_emoji(text: str) -> str:
         "",
         text,
     )
-    # 装饰性波浪线：~ / ～(FF5E) / 〜(301C)
     s = re.sub(r"[~\uFF5E\u301C]", "", s)
     s = re.sub(r"\s{2,}", " ", s).strip()
     s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\r\n]+$", "", s)
@@ -54,9 +65,92 @@ class RAGService:
         self.embedding_model = None
         self.llm_client = None
         self._milvus_loaded_collections: set[str] = set()
+        self._embedding_cache: Dict[str, Tuple[List[float], float]] = {}
+        self._vector_search_cache: Dict[
+            Tuple[str, str, int], Tuple[List[Dict[str, Any]], float]
+        ] = {}
+        self._cache_stats: Dict[str, int] = {
+            "embedding_calls": 0,
+            "embedding_hits": 0,
+            "embedding_misses": 0,
+            "vector_calls": 0,
+            "vector_hits": 0,
+            "vector_misses": 0,
+        }
         self._init_embedding_model()
         self._init_ner()
         self._init_llm_client()
+
+    def _log_cache_stats_if_needed(self) -> None:
+        every = max(1, int(CACHE_STATS_LOG_EVERY_N_CALLS))
+        total = int(self._cache_stats.get("embedding_calls", 0)) + int(
+            self._cache_stats.get("vector_calls", 0)
+        )
+        if total <= 0 or total % every != 0:
+            return
+
+        def _rate(hit: int, call: int) -> float:
+            return (hit / call) if call > 0 else 0.0
+
+        e_calls = int(self._cache_stats.get("embedding_calls", 0))
+        v_calls = int(self._cache_stats.get("vector_calls", 0))
+        logger.info(
+            "cache_stats: embedding_hit_rate=%.1f%% (%d/%d), vector_hit_rate=%.1f%% (%d/%d), sizes: embedding=%d, vector=%d",
+            _rate(int(self._cache_stats.get("embedding_hits", 0)), e_calls) * 100,
+            int(self._cache_stats.get("embedding_hits", 0)),
+            e_calls,
+            _rate(int(self._cache_stats.get("vector_hits", 0)), v_calls) * 100,
+            int(self._cache_stats.get("vector_hits", 0)),
+            v_calls,
+            len(self._embedding_cache),
+            len(self._vector_search_cache),
+        )
+
+    def _cache_get_embedding(self, key: str) -> Optional[List[float]]:
+        item = self._embedding_cache.get(key)
+        if not item:
+            return None
+        payload, expires_at = item
+        if expires_at > 0 and _monotonic() >= expires_at:
+            self._embedding_cache.pop(key, None)
+            return None
+        return payload
+
+    def _cache_set_embedding(self, key: str, payload: List[float]) -> None:
+        ttl = max(0, int(EMBEDDING_CACHE_TTL_SECONDS))
+        expires_at = _monotonic() + ttl if ttl > 0 else 0.0
+        if len(self._embedding_cache) >= EMBEDDING_CACHE_MAX_SIZE:
+            try:
+                first_key = next(iter(self._embedding_cache))
+                self._embedding_cache.pop(first_key, None)
+            except StopIteration:
+                pass
+        self._embedding_cache[key] = (payload, expires_at)
+
+    def _cache_get_vector(
+        self, key: Tuple[str, str, int]
+    ) -> Optional[List[Dict[str, Any]]]:
+        item = self._vector_search_cache.get(key)
+        if not item:
+            return None
+        payload, expires_at = item
+        if expires_at > 0 and _monotonic() >= expires_at:
+            self._vector_search_cache.pop(key, None)
+            return None
+        return payload
+
+    def _cache_set_vector(
+        self, key: Tuple[str, str, int], payload: List[Dict[str, Any]]
+    ) -> None:
+        ttl = max(0, int(VECTOR_SEARCH_CACHE_TTL_SECONDS))
+        expires_at = _monotonic() + ttl if ttl > 0 else 0.0
+        if len(self._vector_search_cache) >= VECTOR_SEARCH_CACHE_MAX_SIZE:
+            try:
+                first_key = next(iter(self._vector_search_cache))
+                self._vector_search_cache.pop(first_key, None)
+            except StopIteration:
+                pass
+        self._vector_search_cache[key] = (payload, expires_at)
 
     async def parse_scenic_text(self, text: str) -> Optional[Dict[str, Any]]:
         """将景区介绍结构化为 JSON 供图库建簇；非景区类返回 None。"""
@@ -152,8 +246,8 @@ class RAGService:
     
     def _init_embedding_model(self):
         try:
-            self.embedding_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-            logger.info("Embedding model loaded")
+            self.embedding_model = SentenceTransformer(RAG_EMBEDDING_MODEL_NAME)
+            logger.info("Embedding model loaded: %s", RAG_EMBEDDING_MODEL_NAME)
         except Exception as e:
             logger.error(f"Failed to load embedding model: {e}")
             self.embedding_model = None
@@ -184,14 +278,12 @@ class RAGService:
     
     def extract_entities(self, text: str) -> List[Dict[str, Any]]:
         """从文本提取实体，返回 [{"text", "type", "confidence"}]。"""
-        # 过滤掉无意义的通用词
         stop_words = {"这里", "那里", "哪些", "什么", "这个", "那个", "景点", "景区", "地方", 
                       "attraction", "scenic", "spot", "这里有哪些", "有哪些景点", "景点都有"}
         entities = []
         if JIEBA_AVAILABLE:
             words = pseg.cut(text)
             for word, flag in words:
-                # 过滤：长度>=2，不是停用词，且是地名/人名/机构名/其他专名，或长度>=3的词汇
                 if word in stop_words:
                     continue
                 if (flag in ['ns', 'nr', 'nt', 'nz'] or len(word) >= 3) and len(word) >= 2:
@@ -230,9 +322,23 @@ class RAGService:
         """生成文本嵌入向量"""
         if not self.embedding_model:
             raise ValueError("Embedding model not loaded")
-        
-        embedding = self.embedding_model.encode(text, convert_to_numpy=True)
-        return embedding.tolist()
+
+        key = (text or "").strip()
+        if not key:
+            return []
+        self._cache_stats["embedding_calls"] = int(self._cache_stats.get("embedding_calls", 0)) + 1
+        cached = self._cache_get_embedding(key)
+        if cached is not None:
+            self._cache_stats["embedding_hits"] = int(self._cache_stats.get("embedding_hits", 0)) + 1
+            self._log_cache_stats_if_needed()
+            return cached
+        self._cache_stats["embedding_misses"] = int(self._cache_stats.get("embedding_misses", 0)) + 1
+
+        embedding = self.embedding_model.encode(key, convert_to_numpy=True)
+        emb_list = embedding.tolist()
+        self._cache_set_embedding(key, emb_list)
+        self._log_cache_stats_if_needed()
+        return emb_list
 
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """批量生成嵌入向量（比逐条 encode 更快）"""
@@ -240,11 +346,61 @@ class RAGService:
             raise ValueError("Embedding model not loaded")
         if not texts:
             return []
-        embs = self.embedding_model.encode(texts, convert_to_numpy=True)
-        return embs.tolist()
+
+        keys = [(t or "").strip() for t in texts]
+        results: List[List[float]] = []
+        to_encode: List[str] = []
+        missing_indices: List[int] = []
+        for idx, key in enumerate(keys):
+            if not key:
+                results.append([])
+                continue
+            self._cache_stats["embedding_calls"] = int(self._cache_stats.get("embedding_calls", 0)) + 1
+            cached = self._cache_get_embedding(key)
+            if cached is not None:
+                self._cache_stats["embedding_hits"] = int(self._cache_stats.get("embedding_hits", 0)) + 1
+                results.append(cached)
+            else:
+                self._cache_stats["embedding_misses"] = int(self._cache_stats.get("embedding_misses", 0)) + 1
+                missing_indices.append(idx)
+                to_encode.append(key)
+                results.append([])  # 占位，后面填充
+
+        if to_encode:
+            embs = self.embedding_model.encode(to_encode, convert_to_numpy=True).tolist()
+            for pos, emb in zip(missing_indices, embs):
+                key = keys[pos]
+                self._cache_set_embedding(key, emb)
+                results[pos] = emb
+
+        self._log_cache_stats_if_needed()
+        return results
     
-    async def vector_search(self, query: str, collection_name: str = "tour_knowledge", top_k: int = 5) -> List[Dict[str, Any]]:
+    async def vector_search(
+        self,
+        query: str,
+        collection_name: str = "",
+        top_k: int = 0,
+    ) -> List[Dict[str, Any]]:
         """向量相似度搜索。"""
+        collection_name = (collection_name or RAG_COLLECTION_NAME).strip()
+        top_k = int(top_k or RAG_DEFAULT_TOP_K)
+        if not query or not collection_name or top_k <= 0:
+            return []
+
+        cache_key = (query, collection_name, top_k)
+        self._cache_stats["vector_calls"] = int(self._cache_stats.get("vector_calls", 0)) + 1
+        cached = self._cache_get_vector(cache_key)
+        if cached is not None:
+            self._cache_stats["vector_hits"] = int(self._cache_stats.get("vector_hits", 0)) + 1
+            self._log_cache_stats_if_needed()
+            logger.debug(
+                "vector_search cache hit: collection=%s, top_k=%d", collection_name, top_k
+            )
+            return [dict(item) for item in cached]
+        self._cache_stats["vector_misses"] = int(self._cache_stats.get("vector_misses", 0)) + 1
+
+        start_time = datetime.utcnow()
         if not milvus_client.connected:
             milvus_client.connect()
         try:
@@ -252,7 +408,10 @@ class RAGService:
                 collection_name, dimension=384, load=False
             )
         except Exception as e:
-            logger.warning(f"Milvus not available for vector search, fallback to empty results: {e}")
+            logger.warning(
+                "Milvus not available for vector search, fallback to empty results: %s",
+                e,
+            )
             return []
         try:
             from pymilvus import utility
@@ -260,7 +419,7 @@ class RAGService:
                 logger.warning(f"Collection '{collection_name}' does not exist")
                 return []
         except Exception as e:
-            logger.warning(f"Failed to check collection existence: {e}")
+            logger.warning("Failed to check collection existence: %s", e)
             return []
         if collection_name not in self._milvus_loaded_collections:
             try:
@@ -281,14 +440,25 @@ class RAGService:
                     is_loaded = "LOADED" in str(load_state).upper()
 
                 if not is_loaded:
-                    logger.info(f"Collection '{collection_name}' is not loaded (state: {load_state}), loading now...")
+                    logger.info(
+                        "Collection '%s' is not loaded (state: %s), loading now...",
+                        collection_name,
+                        load_state,
+                    )
                     collection.load()
                 self._milvus_loaded_collections.add(collection_name)
             except Exception as e:
-                logger.warning(f"Failed to ensure collection '{collection_name}' loaded, will rely on retry: {e}")
+                logger.warning(
+                    "Failed to ensure collection '%s' loaded, will rely on retry: %s",
+                    collection_name,
+                    e,
+                )
         query_vector = [self.generate_embedding(query)]
         try:
-            search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
+            search_params = {
+                "metric_type": str(MILVUS_METRIC_TYPE or "L2"),
+                "params": {"nprobe": int(MILVUS_NPROBE or 10)},
+            }
             results = collection.search(
                 data=query_vector,
                 anns_field="embedding",
@@ -298,7 +468,10 @@ class RAGService:
             )
         except Exception as e:
             if "not loaded" in str(e).lower() or "collection not loaded" in str(e).lower():
-                logger.warning(f"Search failed due to collection not loaded, retrying after reload: {e}")
+                logger.warning(
+                    "Search failed due to collection not loaded, retrying after reload: %s",
+                    e,
+                )
                 try:
                     collection.load()
                     self._milvus_loaded_collections.add(collection_name)
@@ -310,10 +483,10 @@ class RAGService:
                         output_fields=["text_id"]
                     )
                 except Exception as retry_error:
-                    logger.error(f"Retry search failed: {retry_error}")
+                    logger.error("Retry search failed: %s", retry_error)
                     return []
             else:
-                logger.error(f"Search failed: {e}")
+                logger.error("Search failed: %s", e)
                 return []
         search_results = []
         if results and len(results) > 0:
@@ -325,6 +498,18 @@ class RAGService:
                     "score": 1 / (1 + hit.distance) if hit.distance > 0 else 1.0,
                 })
         
+        elapsed_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
+        logger.info(
+            "vector_search done: collection=%s, top_k=%d, hits=%d, elapsed=%.1fms",
+            collection_name,
+            top_k,
+            len(search_results),
+            elapsed_ms,
+        )
+
+        self._cache_set_vector(cache_key, [dict(item) for item in search_results])
+        self._log_cache_stats_if_needed()
+
         return search_results
     
     async def graph_search(self, entity_name: str, relation_type: str = None, limit: int = 10) -> List[Dict[str, Any]]:
@@ -356,6 +541,60 @@ class RAGService:
         )
         
         return results
+
+    async def _graph_search_many(
+        self, entity_names: List[str], relation_type: str = None, per_entity_limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """批量图关系查询：把多次 graph_search 合并为一次 Neo4j 查询，减少 round-trip。"""
+        names = [str(x).strip() for x in (entity_names or []) if str(x).strip()]
+        if not names:
+            return []
+        names = names[:10]
+
+        rel = None
+        if relation_type and isinstance(relation_type, str):
+            rel_candidate = relation_type.strip().upper()
+            if re.match(r"^[A-Z_][A-Z0-9_]*$", rel_candidate):
+                rel = rel_candidate
+
+        per_limit = max(1, min(int(per_entity_limit or 5), 20))
+        if rel:
+            query = f"""
+            UNWIND $names AS name
+            CALL {{
+              WITH name
+              MATCH (a)-[r:{rel}]->(b)
+              WHERE a.name CONTAINS name OR b.name CONTAINS name
+              RETURN a, r, b, labels(a) as a_labels, labels(b) as b_labels, type(r) as rel_type
+              LIMIT $per_limit
+            }}
+            RETURN name as query_name, a, r, b, a_labels, b_labels, rel_type
+            """
+        else:
+            query = """
+            UNWIND $names AS name
+            CALL {
+              WITH name
+              MATCH (a)-[r]->(b)
+              WHERE a.name CONTAINS name OR b.name CONTAINS name
+              RETURN a, r, b, labels(a) as a_labels, labels(b) as b_labels, type(r) as rel_type
+              LIMIT $per_limit
+            }
+            RETURN name as query_name, a, r, b, a_labels, b_labels, rel_type
+            """
+
+        loop = asyncio.get_event_loop()
+        try:
+            rows = await loop.run_in_executor(
+                None,
+                neo4j_client.execute_query,
+                query,
+                {"names": names, "per_limit": per_limit},
+            )
+            return rows or []
+        except Exception as e:
+            logger.warning("_graph_search_many failed: %s", e)
+            return []
     
     async def graph_subgraph_search(self, entities: List[str], depth: int = 2) -> Dict[str, Any]:
         """基于多实体构建子图。depth 经校验后拼接（Neo4j 限制）。"""
@@ -437,7 +676,6 @@ class RAGService:
         q = query.strip()
         if not q:
             return False
-        # 同时覆盖“有哪些景点”和“有多少个景点/几个景点”这两类意图
         pattern = (
             r"有哪些景点|景点都有(什么|哪些)|景点情况|景点分布|有什么景点|景点.*有哪些"
             r"|有多少个景点|多少个景点|景点有多少个|景区有多少个景点|几个景点"
@@ -504,19 +742,27 @@ class RAGService:
 
     async def hybrid_search(self, query: str, top_k: int = 5) -> Dict[str, Any]:
         """向量检索 + 实体识别 + 图检索 + 结果融合（并行优化）。"""
-        vector_results = await self.vector_search(query, top_k=top_k)
-        vector_results_relevant = [r for r in (vector_results or []) if (r.get("score") or 0) >= RELEVANCE_SCORE_THRESHOLD]
+        errors: Dict[str, str] = {}
+        try:
+            vector_results = await self.vector_search(query, top_k=top_k)
+        except Exception as e:
+            errors["milvus"] = str(e)
+            logger.warning("hybrid_search vector_search failed (fallback to empty): %s", e)
+            vector_results = []
+        vector_results_relevant = [
+            r
+            for r in (vector_results or [])
+            if (r.get("score") or 0) >= RAG_RELEVANCE_SCORE_THRESHOLD
+        ]
         if not vector_results_relevant and vector_results:
             vector_results_relevant = vector_results[:1]
         vector_results = vector_results_relevant
 
-        # 批量提取实体，减少重复处理
         texts_to_extract = [query]
         if vector_results:
             text_ids = [r.get("text_id", "") for r in vector_results[:3] if r.get("text_id")]
             texts_to_extract.extend(text_ids)
         
-        # 并行提取实体（如果文本较多）
         if len(texts_to_extract) > 1:
             loop = asyncio.get_event_loop()
             entities_list = await asyncio.gather(*[
@@ -529,7 +775,6 @@ class RAGService:
         else:
             entities = self.extract_entities(query)
         
-        # 使用字典去重，保留最高置信度
         unique_entities = {}
         for entity in entities:
             text = entity["text"]
@@ -544,37 +789,40 @@ class RAGService:
             if (r.get("text_id") or "").strip() and not (r.get("text_id") or "").strip().startswith("attraction_")
         ]
         
-        tasks = []
+        graph_results: List[Dict[str, Any]] = []
+        subgraph_data = None
         if entity_names:
-            tasks.extend([self.graph_search(name, limit=5) for name in entity_names[:5]])
+            tasks = [
+                self._graph_search_many(entity_names[:5], per_entity_limit=5),
+            ]
             if len(entity_names) > 1:
                 tasks.append(self.graph_subgraph_search(entity_names[:3], depth=2))
-        
-        graph_results = []
-        subgraph_data = None
-        if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            task_idx = 0
-            for name in entity_names[:5]:
-                if task_idx < len(results):
-                    r = results[task_idx]
-                    if not isinstance(r, Exception):
-                        graph_results.extend(r)
-                    task_idx += 1
-            if len(entity_names) > 1 and task_idx < len(results):
-                r = results[task_idx]
-                if not isinstance(r, Exception):
-                    subgraph_data = r
-        
-        # 并行执行文本内容获取（使用线程池避免阻塞）
+            if results:
+                r0 = results[0]
+                if not isinstance(r0, Exception):
+                    graph_results = r0 or []
+                elif isinstance(r0, Exception):
+                    errors["neo4j_graph"] = str(r0)
+            if len(tasks) > 1 and len(results) > 1:
+                r1 = results[1]
+                if not isinstance(r1, Exception):
+                    subgraph_data = r1
+                else:
+                    errors["neo4j_subgraph"] = str(r1)
         text_contents = {}
         if text_ids_to_fetch:
             loop = asyncio.get_event_loop()
-            text_contents = await loop.run_in_executor(
-                None, 
-                self._get_text_contents_from_neo4j, 
-                text_ids_to_fetch
-            )
+            try:
+                text_contents = await loop.run_in_executor(
+                    None,
+                    self._get_text_contents_from_neo4j,
+                    text_ids_to_fetch,
+                )
+            except Exception as e:
+                errors["neo4j_text"] = str(e)
+                logger.warning("hybrid_search fetch text contents failed: %s", e)
+                text_contents = {}
         
         for r in vector_results or []:
             tid = (r.get("text_id") or "").strip()
@@ -594,16 +842,13 @@ class RAGService:
                 except ValueError:
                     pass
         
-        # 检测列举类查询（"有哪些景点"），主动查询景区下的所有景点
         is_listing_query = self._is_listing_query(query)
         if is_listing_query and primary_attraction_id is not None:
-            # 通过找到的景点反查所属景区
             try:
                 parent_info = self._get_scenic_spot_by_attraction_id(primary_attraction_id)
                 if parent_info:
                     s_name = parent_info.get("s_name")
                     if s_name:
-                        # 先拉取该景区下所有景点的 id（用于拼“所有景点簇”）
                         scenic_aids: List[int] = []
                         try:
                             scenic_aids_q = """
@@ -629,8 +874,6 @@ class RAGService:
                         sentence = self._get_scenic_attractions_sentence_by_name(str(s_name).strip())
                         if sentence:
                             enhanced_results = sentence + "\n\n" + (enhanced_results or "")
-
-                        # 列举类问题：尽量把“该景区下的所有景点簇信息”也拼进去
                         if scenic_aids:
                             clusters_ctx = await self._get_attraction_cluster_context(scenic_aids, max_items=30)
                             if clusters_ctx:
@@ -702,7 +945,6 @@ class RAGService:
                         enhanced_results = scenic_ctx + "\n\n" + (enhanced_results or "")
                         scenic_ctx_found = True
                         break
-        # 列举类查询通常已拼接“多个景点簇”，这里不再补 primary 单簇，避免重复
         is_listing_query = self._is_listing_query(query)
         if primary_attraction_id is not None and (not is_listing_query) and not (query_about_scenic and scenic_ctx_found):
             cluster_ctx = await self._get_attraction_cluster_context([primary_attraction_id], max_items=1)
@@ -718,6 +960,7 @@ class RAGService:
             "query": query,
             "attraction_ids": attraction_ids,
             "primary_attraction_id": primary_attraction_id,
+            "errors": errors,
         }
 
     async def _build_scenic_attractions_context(
@@ -793,14 +1036,10 @@ class RAGService:
         return ""
 
     async def _get_attraction_cluster_context(self, attraction_ids: List[int], max_items: int = 20) -> str:
-        """从 Neo4j 拉取景点一簇（属性+出边），格式化为文本供 LLM（并行优化）。
-
-        max_items: 为避免一次性塞入过多簇导致上下文截断，做安全上限（列举类问题建议 20 左右）。
-        """
+        """从 Neo4j 拉取景点一簇（属性+出边），格式化为文本供 LLM。"""
         if not attraction_ids:
             return ""
         
-        # 并行查询多个景点
         async def fetch_attraction_cluster(aid: int):
             try:
                 query = """
@@ -856,8 +1095,6 @@ class RAGService:
                 logger.warning(f"拉取景点簇失败 attraction_id={aid}: {e}")
                 return None
         
-        # 并行获取所有景点簇
-        # 去重 + 截断（保序）
         unique_ids: List[int] = []
         seen_ids: set[int] = set()
         for aid in attraction_ids:
@@ -1042,18 +1279,15 @@ class RAGService:
             rag_results = await self.hybrid_search(query, top_k=5)
             primary_attraction_id = rag_results.get("primary_attraction_id")
             out_context = rag_results.get("enhanced_context", "") or ""
-            # 检测列举类查询，主动补充景区下的所有景点信息
             if self._is_listing_query(query):
                 scenic_ctx = await self._build_scenic_attractions_context(
                     query=query,
                     rag_results=rag_results,
                     conversation_history=conversation_history,
                 )
-                # 避免重复（hybrid_search 可能已经拼过“根据图数据库…”）
                 already_has_list = "根据图数据库，景区「" in (out_context or "")
                 if scenic_ctx and not already_has_list:
                     out_context = f"{out_context}\n\n{scenic_ctx}" if out_context else scenic_ctx
-                # 如果还没有找到景区信息，尝试从 primary_attraction_id 反查
                 elif rag_results.get("primary_attraction_id") is not None and not already_has_list:
                     try:
                         aid = rag_results.get("primary_attraction_id")
@@ -1073,6 +1307,7 @@ class RAGService:
                 "subgraph": rag_results.get("subgraph"),
                 "enhanced_context": out_context or "",
                 "entities": rag_results.get("entities", []),
+                "errors": rag_results.get("errors", {}),
             }
         base_system_prompt = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
 回答要求：

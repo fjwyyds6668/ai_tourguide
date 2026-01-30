@@ -70,11 +70,17 @@ async def upload_image(
         raise HTTPException(status_code=400, detail="仅支持上传图片文件")
 
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
+    max_mb = getattr(settings, "ADMIN_MAX_IMAGE_SIZE_MB", 10)
+    if len(content) > max_mb * 1024 * 1024:
         raise HTTPException(status_code=400, detail="图片大小不能超过 10MB")
 
     ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in [".png", ".jpg", ".jpeg", ".webp", ".gif"]:
+    allowed_exts = getattr(
+        settings,
+        "ADMIN_ALLOWED_IMAGE_EXTS",
+        [".png", ".jpg", ".jpeg", ".webp", ".gif"],
+    )
+    if ext not in allowed_exts:
         if file.content_type == "image/png":
             ext = ".png"
         elif file.content_type in ("image/jpg", "image/jpeg"):
@@ -258,17 +264,40 @@ async def list_scenic_spots(
 
     scenic_ids = [int(s.id) for s in rows]
 
-    counts_map: dict[int, dict] = {}
-    for sid in scenic_ids:
+    counts_map: dict[int, dict] = {sid: {"attractions_count": 0, "knowledge_count": 0} for sid in scenic_ids}
+
+    if scenic_ids:
         try:
-            a_cnt = await prisma.attraction.count(where={"scenicSpotId": sid})
+            att_rows = await prisma.attraction.find_many(
+                where={"scenicSpotId": {"in": scenic_ids}},
+                select={"scenicSpotId": True},
+            )
+            for a in att_rows or []:
+                sid = getattr(a, "scenicSpotId", None)
+                if sid is None:
+                    continue
+                sid_int = int(sid)
+                if sid_int not in counts_map:
+                    counts_map[sid_int] = {"attractions_count": 0, "knowledge_count": 0}
+                counts_map[sid_int]["attractions_count"] += 1
         except Exception:
-            a_cnt = 0
+            pass
+
         try:
-            k_cnt = await prisma.knowledge.count(where={"scenicSpotId": sid})
+            kb_rows = await prisma.knowledge.find_many(
+                where={"scenicSpotId": {"in": scenic_ids}},
+                select={"scenicSpotId": True},
+            )
+            for k in kb_rows or []:
+                sid = getattr(k, "scenicSpotId", None)
+                if sid is None:
+                    continue
+                sid_int = int(sid)
+                if sid_int not in counts_map:
+                    counts_map[sid_int] = {"attractions_count": 0, "knowledge_count": 0}
+                counts_map[sid_int]["knowledge_count"] += 1
         except Exception:
-            k_cnt = 0
-        counts_map[sid] = {"attractions_count": a_cnt, "knowledge_count": k_cnt}
+            pass
 
     res: List[ScenicSpotResponse] = []
     for s in rows:
@@ -1829,10 +1858,25 @@ async def update_tts_config(
         new_lines.append(f"COSYVOICE2_DEVICE={req.cosyvoice2_device}\n")
     if req.cosyvoice2_language is not None and "COSYVOICE2_LANGUAGE" not in updated_keys:
         new_lines.append(f"COSYVOICE2_LANGUAGE={req.cosyvoice2_language}\n")
+
+    tmp_file = env_file + ".tmp"
+    backup_file = env_file + ".bak"
     try:
-        with open(env_file, "w", encoding="utf-8") as f:
+        with open(tmp_file, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
+        try:
+            if os.path.exists(env_file):
+                with open(env_file, "r", encoding="utf-8") as src, open(backup_file, "w", encoding="utf-8") as dst:
+                    dst.writelines(src.readlines())
+        except Exception:
+            logger.warning("备份 .env 文件失败（将直接覆盖原文件）")
+        os.replace(tmp_file, env_file)
     except Exception as e:
+        try:
+            if os.path.exists(backup_file):
+                os.replace(backup_file, env_file)
+        except Exception:
+            logger.error("恢复 .env 备份失败")
         raise HTTPException(status_code=500, detail=f"写入配置文件失败: {str(e)}")
     
     return {

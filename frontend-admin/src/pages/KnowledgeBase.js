@@ -103,7 +103,16 @@ const KnowledgeBase = () => {
   const knowledgeColumns = useMemo(
     () => [
       { title: 'ID', dataIndex: 'text_id', key: 'text_id' },
-      { title: '内容', dataIndex: 'text', key: 'text', ellipsis: true },
+      {
+        title: '内容',
+        dataIndex: 'text',
+        key: 'text',
+        render: (text) => (
+          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {text}
+          </div>
+        ),
+      },
       {
         title: '操作',
         key: 'action',
