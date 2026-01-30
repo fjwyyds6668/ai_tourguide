@@ -48,7 +48,7 @@
               <el-input
                 v-model="textInput"
                 type="textarea"
-                :rows="3"
+                :rows="5"
                 placeholder="在此输入要对数字人说的话（Enter 发送，Ctrl+Enter 换行）"
                 @keyup.enter.exact.prevent="handleSendText"
                 @keyup.ctrl.enter.prevent="handleSendText"
@@ -151,7 +151,6 @@ import { formatTime } from '../utils/format'
 import { Live2dManager } from '../lib/live2d/live2dManager'
 import { LAppDelegate } from '../lib/live2d/src/lappdelegate'
 
-// 状态管理
 const isRecording = ref(false)
 const isSpeaking = ref(false)
 const processing = ref(false)
@@ -169,16 +168,13 @@ const historyLoading = ref(false)
 let mediaRecorder = null
 let audioChunks = []
 
-// TTS 音频队列管理
 const audioQueue = []
 let isPlayingQueue = false
 let currentAudio = null
-let ttsRequestQueue = Promise.resolve() // TTS 请求队列，确保按顺序执行
+let ttsRequestQueue = Promise.resolve()
 
-// 初始化
 onMounted(async () => {
   await loadCharacters()
-  // 默认选择第一个角色
   if (characters.value.length > 0) {
     selectedCharacterId.value = characters.value[0].id
   }
@@ -189,7 +185,7 @@ const loadCharacters = async (retries = 2) => {
   try {
     const res = await api.get('/characters/characters', {
       params: { active_only: true },
-      timeout: 10000 // 角色列表查询设置较短超时
+      timeout: 10000
     })
     characters.value = res.data || []
   } catch (error) {
@@ -216,7 +212,6 @@ const currentLive2DGroup = computed(() => {
 
 const handleCharacterChange = () => {}
 
-// 录音控制
 const toggleRecording = async () => {
   if (!isRecording.value) {
     startRecording()
@@ -256,11 +251,9 @@ const stopRecording = () => {
   }
 }
 
-// 处理音频
 const processAudio = async (audioBlob) => {
   processing.value = true
   try {
-    // 1. 语音识别
     const formData = new FormData()
     formData.append('file', audioBlob, 'audio.wav')
     formData.append('method', 'whisper')
@@ -271,16 +264,11 @@ const processAudio = async (audioBlob) => {
     
     const queryText = transcribeRes.data.text
     
-    // 添加到对话历史
     addMessage('user', queryText)
-    
-    // 立即滚动到底部，显示用户消息
     scrollToBottom()
     
-    // 并行执行：准备音频上下文（不阻塞 RAG 请求）
-    initAudioAnalyzer().catch(() => {}) // 静默处理错误
+    initAudioAnalyzer().catch(() => {})
     
-    // 2. RAG 生成回答（支持多轮对话）
     const generateRes = await api.post('/rag/generate', {
       query: queryText,
       session_id: sessionId.value,
@@ -291,16 +279,12 @@ const processAudio = async (audioBlob) => {
     const answer = generateRes.data?.answer || generateRes.data || ''
     sessionId.value = generateRes.data?.session_id || sessionId.value
     
-    // 检查答案是否为空
     if (!answer || answer.trim() === '') {
       ElMessage.warning('AI 未返回有效回答，请重试')
       return
     }
     
-    // 以"流式打字"方式展示助手回复，同时进行 TTS 合成和播放
     addAssistantStreamMessage(answer, selectedCharacterId.value)
-    
-    // 滚动到底部
     scrollToBottom()
   } catch (error) {
     const msg = await extractErrorMessage(error)
@@ -311,7 +295,6 @@ const processAudio = async (audioBlob) => {
   }
 }
 
-// 处理纯文本输入
 const handleSendText = async () => {
   const queryText = textInput.value.trim()
   if (!queryText) {
@@ -327,19 +310,14 @@ const handleSendText = async () => {
   processing.value = true
   textInput.value = ''
   try {
-    // 添加到对话历史
     addMessage('user', queryText)
-    
-    // 立即滚动到底部，显示用户消息
     scrollToBottom()
 
-    // 并行执行：触发说话动作和准备音频上下文（不阻塞 RAG 请求）
     Promise.all([
       Promise.resolve(triggerSpeakingMotion()),
-      initAudioAnalyzer() // 提前初始化音频分析器
-    ]).catch(() => {}) // 静默处理错误，不影响主流程
+      initAudioAnalyzer()
+    ]).catch(() => {})
 
-    // 调用同一套 RAG + 硅基模型
     const generateRes = await api.post('/rag/generate', {
       query: queryText,
       session_id: sessionId.value,
@@ -350,16 +328,12 @@ const handleSendText = async () => {
     const answer = generateRes.data?.answer || generateRes.data || ''
     sessionId.value = generateRes.data?.session_id || sessionId.value
     
-    // 检查答案是否为空
     if (!answer || answer.trim() === '') {
       ElMessage.warning('AI 未返回有效回答，请重试')
       return
     }
 
-    // 以"流式打字"方式展示助手回复，同时进行 TTS 合成和播放
     addAssistantStreamMessage(answer, selectedCharacterId.value)
-
-    // 滚动到底部
     scrollToBottom()
   } catch (error) {
     const msg = await extractErrorMessage(error)
@@ -370,7 +344,6 @@ const handleSendText = async () => {
   }
 }
 
-// 从后端错误响应中提取可读的错误信息（兼容 blob）
 const extractErrorMessage = async (error) => {
   try {
     const anyErr = error
@@ -391,9 +364,7 @@ const extractErrorMessage = async (error) => {
   }
 }
 
-// 停止播报
 const stopSpeaking = () => {
-  // 停止当前播放的音频
   if (currentAudio) {
     currentAudio.pause()
     currentAudio = null
@@ -403,42 +374,35 @@ const stopSpeaking = () => {
     audioSource.disconnect()
     audioSource = null
   }
-  // 清空队列
   audioQueue.forEach(url => URL.revokeObjectURL(url))
   audioQueue.length = 0
   isPlayingQueue = false
   isSpeaking.value = false
   
-  // 重置嘴巴同步
   try {
     const manager = Live2dManager.getInstance()
     if (manager) {
       manager.setLipFactor(0)
     }
   } catch (e) {
-    // 忽略
   }
 }
 
-// 添加消息到对话历史（限制长度以提升性能）
 const addMessage = (role, content) => {
   conversationHistory.value.push({
     role,
     content,
     timestamp: new Date().toISOString()
   })
-  // 如果历史记录过长，只保留最近的记录
   if (conversationHistory.value.length > MAX_HISTORY_LENGTH) {
     conversationHistory.value = conversationHistory.value.slice(-MAX_HISTORY_LENGTH)
   }
 }
 
-// 音频分析器（用于嘴巴同步）
 let audioContext = null
 let analyser = null
 let audioSource = null
 
-// 初始化音频分析器（异步，避免阻塞主线程）
 const initAudioAnalyzer = async () => {
   if (!audioContext) {
     try {
@@ -446,7 +410,6 @@ const initAudioAnalyzer = async () => {
       analyser = audioContext.createAnalyser()
       analyser.fftSize = 256
       analyser.smoothingTimeConstant = 0.8
-      // 如果 AudioContext 处于 suspended 状态，尝试恢复
       if (audioContext.state === 'suspended') {
         await audioContext.resume()
       }
@@ -457,7 +420,6 @@ const initAudioAnalyzer = async () => {
   }
 }
 
-// 控制 Live2D 嘴巴同步
 const updateLipSync = () => {
   if (!analyser || !isSpeaking.value) {
     return
@@ -466,31 +428,25 @@ const updateLipSync = () => {
   const dataArray = new Uint8Array(analyser.frequencyBinCount)
   analyser.getByteFrequencyData(dataArray)
   
-  // 计算音频强度（RMS）
   let sum = 0
   for (let i = 0; i < dataArray.length; i++) {
     sum += dataArray[i] * dataArray[i]
   }
   const rms = Math.sqrt(sum / dataArray.length) / 255
   
-  // 控制 Live2D 嘴巴参数（通过 Live2dManager）
   try {
     const manager = Live2dManager.getInstance()
     if (manager && manager.isReady()) {
-      // 设置嘴巴同步因子（0-1）
       manager.setLipFactor(Math.min(rms * 2, 1.0))
     }
   } catch (e) {
-    // Live2D 未加载时忽略
   }
   
-  // 继续更新
   if (isSpeaking.value) {
     requestAnimationFrame(updateLipSync)
   }
 }
 
-// 播放音频队列（带嘴巴同步）
 const playAudioQueue = async () => {
   if (isPlayingQueue || audioQueue.length === 0) {
     return
@@ -499,62 +455,50 @@ const playAudioQueue = async () => {
   isPlayingQueue = true
   isSpeaking.value = true
   
-  // 初始化音频分析器
   initAudioAnalyzer()
 
   while (audioQueue.length > 0) {
     const audioUrl = audioQueue.shift()
-    const isLastChunk = audioQueue.length === 0 // 标记是否是最后一段
+    const isLastChunk = audioQueue.length === 0
     try {
       await new Promise((resolve, reject) => {
-        // 使用 fetch 获取音频数据
         fetch(audioUrl)
           .then(response => response.arrayBuffer())
           .then(arrayBuffer => {
-            // 解码音频
             audioContext.decodeAudioData(arrayBuffer)
               .then(audioBuffer => {
-                // 创建音频源
                 if (audioSource) {
                   audioSource.disconnect()
                 }
                 audioSource = audioContext.createBufferSource()
                 audioSource.buffer = audioBuffer
                 
-                // 连接到分析器
                 audioSource.connect(analyser)
                 analyser.connect(audioContext.destination)
                 
-                // 开始播放
                 audioSource.start(0)
-                
-                // 开始嘴巴同步更新
                 updateLipSync()
                 
-                // 添加超时保护，避免播放卡住（音频时长 + 2秒缓冲）
                 const timeout = setTimeout(() => {
                   console.warn('音频播放超时，强制结束，是否最后一段:', isLastChunk)
                   if (audioSource) {
                     try {
                       audioSource.stop()
                     } catch (e) {
-                      // 忽略停止错误
                     }
                   }
                   URL.revokeObjectURL(audioUrl)
                   resolve()
                 }, audioBuffer.duration * 1000 + 2000)
                 
-                // 监听播放结束
                 audioSource.onended = () => {
                   clearTimeout(timeout)
                   URL.revokeObjectURL(audioUrl)
-                  // 如果是最后一段，添加延迟确保完整播放
                   if (isLastChunk) {
                     console.log('最后一段音频播放完成，等待额外延迟确保完整')
                     setTimeout(() => {
                       resolve()
-                    }, 300) // 增加延迟到 300ms，确保最后一段完整播放
+                    }, 300)
                   } else {
                     resolve()
                   }
@@ -577,7 +521,6 @@ const playAudioQueue = async () => {
       })
     } catch (error) {
       console.error('播放音频失败:', error)
-      // 如果 Web Audio API 失败，回退到普通播放
       try {
         await new Promise((resolve, reject) => {
           currentAudio = new Audio(audioUrl)
@@ -603,21 +546,18 @@ const playAudioQueue = async () => {
   isSpeaking.value = false
 }
 
-// 合成并添加 TTS 到队列（按顺序执行，确保顺序正确）
 const synthesizeAndQueue = async (text, characterId) => {
   if (!text || typeof text !== 'string' || text.length === 0) {
     console.warn('TTS 合成跳过：文本为空或无效', text)
     return
   }
 
-  // 清理文本：去除多余空格，但保留必要的标点
   const cleanedText = text.replace(/\s+/g, ' ').trim()
   if (cleanedText.length === 0) {
     console.warn('TTS 合成跳过：清理后文本为空')
     return
   }
 
-  // 将 TTS 请求加入队列，确保按顺序执行
   ttsRequestQueue = ttsRequestQueue.then(async () => {
     try {
       console.log('开始 TTS 合成，文本长度:', cleanedText.length, '预览:', cleanedText.substring(0, 30))
@@ -659,17 +599,14 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
     return
   }
 
-  // 重置 TTS 请求队列
   ttsRequestQueue = Promise.resolve()
 
-  // 优化：直接使用字符串索引，避免 Array.from 的开销
   const textLength = fullText.length
   let i = 0
-  const interval = 10 // 毫秒（优化显示速度）
-  const TTS_CHUNK_SIZE = 25 // 每 25 个字符合成一次 TTS（减少块大小，提升响应速度）
-  let ttsSynthesizedLength = 0 // 已合成 TTS 的文本长度
+  const interval = 10
+  const TTS_CHUNK_SIZE = 25
+  let ttsSynthesizedLength = 0
 
-  // 立即开始第一次 TTS，提升响应速度
   const startFirstTTS = () => {
     const initialText = fullText.substring(0, Math.min(TTS_CHUNK_SIZE, fullText.length))
     if (initialText.trim()) {
@@ -678,7 +615,6 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
     }
   }
 
-  // 立即开始第一次 TTS，减少延迟
   startFirstTTS()
 
   const timer = setInterval(() => {
@@ -687,16 +623,13 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
       // 确保最后剩余的文本也被合成，避免“最后几个字没读出来”
       if (ttsSynthesizedLength < fullText.length) {
         let remainingText = fullText.substring(ttsSynthesizedLength)
-        // 保留原始文本，不要 trim，确保包含所有字符（包括空格和标点）
         if (remainingText && remainingText.length > 0) {
-          // 如果最后一段没有标点符号，添加句号确保 TTS 完整播放
           const lastChar = remainingText[remainingText.length - 1]
           const hasPunctuation = ['。', '！', '？', '.', '!', '?', '，', ',', '；', ';'].includes(lastChar)
           if (!hasPunctuation) {
             remainingText = remainingText + '。'
           }
           
-          // 如果最后一段太短（少于5个字符），尝试向前多取一些文本，避免 TTS 截断
           if (remainingText.trim().length < 5 && ttsSynthesizedLength > 0) {
             const extendedStart = Math.max(0, ttsSynthesizedLength - 15)
             remainingText = fullText.substring(extendedStart)
@@ -720,13 +653,10 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
       clearInterval(timer)
       return
     }
-    // 优化：使用字符串切片，每次添加多个字符以减少更新频率
-    const chunkSize = Math.min(3, textLength - i) // 每次添加最多3个字符
+    const chunkSize = Math.min(3, textLength - i)
     msg.content += fullText.substring(i, i + chunkSize)
     i += chunkSize
 
-    // 当文本显示到下一个 TTS 块的位置时，触发下一段 TTS
-    // 提前一点触发，让 TTS 合成和文本显示更同步
     if (i >= ttsSynthesizedLength + TTS_CHUNK_SIZE - 5 && i < fullText.length) {
       const nextChunkStart = ttsSynthesizedLength
       const nextChunkEnd = Math.min(ttsSynthesizedLength + TTS_CHUNK_SIZE, fullText.length)
@@ -739,7 +669,6 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
   }, interval)
 }
 
-// 加载历史记录
 const loadHistory = async () => {
   if (!sessionId.value) {
     historyList.value = []
@@ -762,14 +691,12 @@ const loadHistory = async () => {
   }
 }
 
-// 监听历史对话框显示
 watch(showHistory, (val) => {
   if (val) {
     loadHistory()
   }
 })
 
-// 滚动到底部（使用 requestAnimationFrame 优化性能）
 const scrollToBottom = () => {
   requestAnimationFrame(() => {
     const listRef = document.querySelector('.conversation-list')
@@ -779,13 +706,11 @@ const scrollToBottom = () => {
   })
 }
 
-// 触发说话动作和表情
 const triggerSpeakingMotion = () => {
   try {
     const delegate = LAppDelegate.getInstance()
     if (!delegate) return
     
-    // 获取模型管理器
     const subdelegates = delegate._subdelegates
     if (!subdelegates || subdelegates.getSize() === 0) return
     
@@ -799,20 +724,17 @@ const triggerSpeakingMotion = () => {
     const model = models.at(0)
     if (!model) return
     
-    // 触发说话动作（随机选择 TapBody 动作）
     const motionGroup = 'TapBody'
     const modelSetting = model._modelSetting
     if (modelSetting) {
       const motionCount = modelSetting.getMotionCount(motionGroup) || 0
       if (motionCount > 0) {
         const motionNo = Math.floor(Math.random() * motionCount)
-        model.startMotion(motionGroup, motionNo, 2) // priority = 2
+        model.startMotion(motionGroup, motionNo, 2)
       }
       
-      // 设置微笑表情
       const expressionCount = modelSetting.getExpressionCount() || 0
       if (expressionCount > 0) {
-        // 尝试找到微笑表情
         let smileIndex = -1
         for (let i = 0; i < expressionCount; i++) {
           const exprName = modelSetting.getExpressionName(i)
@@ -934,8 +856,10 @@ const triggerSpeakingMotion = () => {
 
 .input-hint {
   margin: 0 0 6px 0;
-  font-size: 12px;
-  color: #909399;
+  font-size: 13px;
+  font-weight: 500;
+  color: #303133;
+  line-height: 1.5;
 }
 
 .textarea-wrapper {
@@ -956,6 +880,16 @@ const triggerSpeakingMotion = () => {
   padding-bottom: 52px;
   border: none;
   box-shadow: none;
+  min-height: 140px;
+  font-size: 14px;
+  color: #303133;
+  line-height: 1.6;
+  resize: none;
+}
+
+.textarea-input :deep(.el-textarea__inner::placeholder) {
+  color: #909399;
+  opacity: 1;
 }
 
 .input-buttons {
@@ -1014,7 +948,7 @@ const triggerSpeakingMotion = () => {
 
 .empty-message {
   text-align: center;
-  color: #909399;
+  color: #303133;
   padding: 32px 24px;
 }
 
@@ -1026,12 +960,13 @@ const triggerSpeakingMotion = () => {
 
 .empty-message p {
   margin: 0 0 4px 0;
-  font-size: 14px;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .empty-message .empty-desc {
-  font-size: 12px;
-  color: #c0c4cc;
+  font-size: 14px;
+  color: #606266;
 }
 
 @media (max-width: 768px) {
