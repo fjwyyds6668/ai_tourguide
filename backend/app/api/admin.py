@@ -264,40 +264,17 @@ async def list_scenic_spots(
 
     scenic_ids = [int(s.id) for s in rows]
 
-    counts_map: dict[int, dict] = {sid: {"attractions_count": 0, "knowledge_count": 0} for sid in scenic_ids}
-
-    if scenic_ids:
+    counts_map: dict[int, dict] = {}
+    for sid in scenic_ids:
         try:
-            att_rows = await prisma.attraction.find_many(
-                where={"scenicSpotId": {"in": scenic_ids}},
-                select={"scenicSpotId": True},
-            )
-            for a in att_rows or []:
-                sid = getattr(a, "scenicSpotId", None)
-                if sid is None:
-                    continue
-                sid_int = int(sid)
-                if sid_int not in counts_map:
-                    counts_map[sid_int] = {"attractions_count": 0, "knowledge_count": 0}
-                counts_map[sid_int]["attractions_count"] += 1
+            a_cnt = await prisma.attraction.count(where={"scenicSpotId": sid})
         except Exception:
-            pass
-
+            a_cnt = 0
         try:
-            kb_rows = await prisma.knowledge.find_many(
-                where={"scenicSpotId": {"in": scenic_ids}},
-                select={"scenicSpotId": True},
-            )
-            for k in kb_rows or []:
-                sid = getattr(k, "scenicSpotId", None)
-                if sid is None:
-                    continue
-                sid_int = int(sid)
-                if sid_int not in counts_map:
-                    counts_map[sid_int] = {"attractions_count": 0, "knowledge_count": 0}
-                counts_map[sid_int]["knowledge_count"] += 1
+            k_cnt = await prisma.knowledge.count(where={"scenicSpotId": sid})
         except Exception:
-            pass
+            k_cnt = 0
+        counts_map[sid] = {"attractions_count": a_cnt, "knowledge_count": k_cnt}
 
     res: List[ScenicSpotResponse] = []
     for s in rows:
