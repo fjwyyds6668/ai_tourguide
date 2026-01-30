@@ -184,25 +184,33 @@ class RAGService:
     
     def extract_entities(self, text: str) -> List[Dict[str, Any]]:
         """从文本提取实体，返回 [{"text", "type", "confidence"}]。"""
+        # 过滤掉无意义的通用词
+        stop_words = {"这里", "那里", "哪些", "什么", "这个", "那个", "景点", "景区", "地方", 
+                      "attraction", "scenic", "spot", "这里有哪些", "有哪些景点", "景点都有"}
         entities = []
         if JIEBA_AVAILABLE:
             words = pseg.cut(text)
             for word, flag in words:
-                if flag in ['ns', 'nr', 'nt', 'nz'] or len(word) >= 2:
+                # 过滤：长度>=2，不是停用词，且是地名/人名/机构名/其他专名，或长度>=3的词汇
+                if word in stop_words:
+                    continue
+                if (flag in ['ns', 'nr', 'nt', 'nz'] or len(word) >= 3) and len(word) >= 2:
                     entities.append({
                         "text": word,
                         "type": self._map_pos_to_entity_type(flag),
                         "confidence": 0.8
                     })
         else:
-            pattern = r'[\u4e00-\u9fa5]{2,4}'
+            pattern = r'[\u4e00-\u9fa5]{2,}'
             matches = re.finditer(pattern, text)
             for match in matches:
-                entities.append({
-                    "text": match.group(),
-                    "type": "KEYWORD",
-                    "confidence": 0.6
-                })
+                word = match.group()
+                if word not in stop_words:
+                    entities.append({
+                        "text": word,
+                        "type": "KEYWORD",
+                        "confidence": 0.6
+                    })
         seen = set()
         unique_entities = []
         for entity in entities:
@@ -421,6 +429,73 @@ class RAGService:
             if re.search(pat, q, re.IGNORECASE):
                 return False
         return True
+    
+    def _is_listing_query(self, query: str) -> bool:
+        """判断是否为“列举景点”类问题，例如有哪些景点、景点分布等。"""
+        if not query or not isinstance(query, str):
+            return False
+        q = query.strip()
+        if not q:
+            return False
+        pattern = r"有哪些景点|景点都有(什么|哪些)|景点情况|景点分布|有什么景点|景点.*有哪些"
+        return bool(re.search(pattern, q))
+
+    def _get_scenic_spot_by_attraction_id(self, attraction_id: int) -> Optional[Dict[str, Any]]:
+        """通过景点 id 反查所属景区，返回 {'sid', 's_name'} 或 None。"""
+        try:
+            query = """
+            MATCH (a:Attraction {id: $aid})
+            OPTIONAL MATCH (a)-[:属于]->(s1:ScenicSpot)
+            OPTIONAL MATCH (s2:ScenicSpot)-[:HAS_SPOT]->(a)
+            WITH a, coalesce(s1, s2) AS s WHERE s IS NOT NULL
+            RETURN s.scenic_spot_id AS sid, s.name AS s_name
+            LIMIT 1
+            """
+            rows = neo4j_client.execute_query(query, {"aid": int(attraction_id)})
+            if rows:
+                row0 = rows[0]
+                return {
+                    "sid": row0.get("sid"),
+                    "s_name": row0.get("s_name"),
+                }
+        except Exception as e:
+            logger.warning(f"_get_scenic_spot_by_attraction_id failed attraction_id={attraction_id}: {e}")
+        return None
+
+    def _get_scenic_attractions_sentence_by_name(self, scenic_name: str) -> str:
+        """根据景区名称查询其下相关景点，并格式化为一句话描述。"""
+        scenic_name = (scenic_name or "").strip()
+        if not scenic_name:
+            return ""
+        try:
+            scenic_attractions_q = """
+            MATCH (s:ScenicSpot {name: $name})
+            OPTIONAL MATCH (s)-[:HAS_SPOT]->(n)
+            OPTIONAL MATCH (s)<-[:属于]-(a:Attraction)
+            WITH s, collect(DISTINCT n) AS spot_list, collect(DISTINCT a) AS att_list
+            UNWIND spot_list + att_list AS x
+            WITH s, x WHERE x IS NOT NULL
+            WITH DISTINCT s, x, coalesce(x.name, x.text_id) AS xname
+            WHERE xname IS NOT NULL AND NOT (xname STARTS WITH 'kb_')
+            RETURN s.name AS scenic_name, xname AS attraction_name
+            ORDER BY attraction_name
+            LIMIT 50
+            """
+            rows = neo4j_client.execute_query(scenic_attractions_q, {"name": scenic_name}) or []
+        except Exception as e:
+            logger.warning(f"_get_scenic_attractions_sentence_by_name query failed scenic_name={scenic_name}: {e}")
+            return ""
+
+        attraction_names: List[str] = []
+        for row in rows:
+            nm = row.get("attraction_name")
+            if not nm or nm in attraction_names:
+                continue
+            attraction_names.append(nm)
+        if not attraction_names:
+            return ""
+        joined = "、".join(attraction_names)
+        return f"根据图数据库，景区「{scenic_name}」下的相关景点包括：{joined}。"
 
     async def hybrid_search(self, query: str, top_k: int = 5) -> Dict[str, Any]:
         """向量检索 + 实体识别 + 图检索 + 结果融合（并行优化）。"""
@@ -513,6 +588,50 @@ class RAGService:
                         primary_attraction_id = aid
                 except ValueError:
                     pass
+        
+        # 检测列举类查询（"有哪些景点"），主动查询景区下的所有景点
+        is_listing_query = self._is_listing_query(query)
+        if is_listing_query and primary_attraction_id is not None:
+            # 通过找到的景点反查所属景区
+            try:
+                parent_info = self._get_scenic_spot_by_attraction_id(primary_attraction_id)
+                if parent_info:
+                    s_name = parent_info.get("s_name")
+                    if s_name:
+                        # 先拉取该景区下所有景点的 id（用于拼“所有景点簇”）
+                        scenic_aids: List[int] = []
+                        try:
+                            scenic_aids_q = """
+                            MATCH (s:ScenicSpot {name: $name})
+                            OPTIONAL MATCH (s)<-[:属于]-(a:Attraction)
+                            OPTIONAL MATCH (s)-[:HAS_SPOT]->(a2:Attraction)
+                            WITH collect(DISTINCT a) + collect(DISTINCT a2) AS xs
+                            UNWIND xs AS x
+                            WITH DISTINCT x WHERE x IS NOT NULL AND x.id IS NOT NULL
+                            RETURN x.id AS aid
+                            ORDER BY aid
+                            LIMIT 200
+                            """
+                            rows = neo4j_client.execute_query(scenic_aids_q, {"name": str(s_name).strip()}) or []
+                            for rr in rows:
+                                if rr and rr.get("aid") is not None:
+                                    try:
+                                        scenic_aids.append(int(rr["aid"]))
+                                    except Exception:
+                                        continue
+                        except Exception as e:
+                            logger.warning(f"查询景区下景点id失败: {e}")
+                        sentence = self._get_scenic_attractions_sentence_by_name(str(s_name).strip())
+                        if sentence:
+                            enhanced_results = sentence + "\n\n" + (enhanced_results or "")
+
+                        # 列举类问题：尽量把“该景区下的所有景点簇信息”也拼进去
+                        if scenic_aids:
+                            clusters_ctx = await self._get_attraction_cluster_context(scenic_aids, max_items=30)
+                            if clusters_ctx:
+                                enhanced_results = (enhanced_results or "") + "\n\n" + clusters_ctx
+            except Exception as e:
+                logger.warning(f"列举查询时查询景区景点失败: {e}")
         query_about_scenic = bool(re.search(r"什么景区|哪个景区|是啥景区|这是什么景区|是哪个景区|啥景区|哪个景点.*景区|介绍.*景区|景区.*介绍|这个景区", (query or "").strip()))
         scenic_ctx_found = False
         if query_about_scenic:
@@ -520,19 +639,10 @@ class RAGService:
             if primary_attraction_id is not None:
                 async def get_scenic_from_attraction():
                     try:
-                        parent_q = """
-                        MATCH (a:Attraction {id: $aid})
-                        OPTIONAL MATCH (a)-[:属于]->(s1:ScenicSpot)
-                        OPTIONAL MATCH (s2:ScenicSpot)-[:HAS_SPOT]->(a)
-                        WITH a, coalesce(s1, s2) AS s WHERE s IS NOT NULL
-                        RETURN s.scenic_spot_id AS sid, s.name AS s_name
-                        LIMIT 1
-                        """
-                        parent_rows = neo4j_client.execute_query(parent_q, {"aid": int(primary_attraction_id)})
-                        if parent_rows:
-                            row0 = parent_rows[0]
-                            sid = row0.get("sid")
-                            s_name = row0.get("s_name")
+                        parent_info = self._get_scenic_spot_by_attraction_id(primary_attraction_id)
+                        if parent_info:
+                            sid = parent_info.get("sid")
+                            s_name = parent_info.get("s_name")
                             if sid is not None:
                                 return await self._get_scenic_spot_cluster_context(int(sid))
                             if s_name:
@@ -587,8 +697,10 @@ class RAGService:
                         enhanced_results = scenic_ctx + "\n\n" + (enhanced_results or "")
                         scenic_ctx_found = True
                         break
-        if primary_attraction_id is not None and not (query_about_scenic and scenic_ctx_found):
-            cluster_ctx = await self._get_attraction_cluster_context([primary_attraction_id])
+        # 列举类查询通常已拼接“多个景点簇”，这里不再补 primary 单簇，避免重复
+        is_listing_query = self._is_listing_query(query)
+        if primary_attraction_id is not None and (not is_listing_query) and not (query_about_scenic and scenic_ctx_found):
+            cluster_ctx = await self._get_attraction_cluster_context([primary_attraction_id], max_items=1)
             if cluster_ctx:
                 enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
         
@@ -610,13 +722,7 @@ class RAGService:
         conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         """列举景点类问题时，补充“某景区下有哪些景点”的结构化信息。"""
-        list_patterns = [
-            r"有哪些景点",
-            r"景点都有(什么|哪些)",
-            r"景点情况",
-            r"景点分布",
-        ]
-        if not any(re.search(p, query) for p in list_patterns):
+        if not self._is_listing_query(query):
             return ""
 
         scenic_names: set[str] = set()
@@ -665,35 +771,9 @@ class RAGService:
             return ""
         parts: List[str] = []
         for scenic_name in list(scenic_names)[:3]:
-            try:
-                cypher = """
-                MATCH (s:ScenicSpot {name: $name})
-                OPTIONAL MATCH (s)-[:HAS_SPOT]->(n)
-                OPTIONAL MATCH (s)<-[:属于]-(a:Attraction)
-                WITH s, collect(DISTINCT n) AS spot_list, collect(DISTINCT a) AS att_list
-                UNWIND spot_list + att_list AS x
-                WITH s, x WHERE x IS NOT NULL
-                WITH DISTINCT s, x, coalesce(x.name, x.text_id) AS xname
-                WHERE xname IS NOT NULL AND NOT (xname STARTS WITH 'kb_')
-                RETURN s.name AS scenic_name, xname AS attraction_name
-                ORDER BY attraction_name
-                LIMIT 50
-                """
-                rows = neo4j_client.execute_query(cypher, {"name": scenic_name}) or []
-            except Exception as e:
-                logger.warning(f"query scenic attractions failed for '{scenic_name}': {e}")
-                continue
-
-            names: List[str] = []
-            for row in rows:
-                nm = row.get("attraction_name")
-                if not nm or nm in names:
-                    continue
-                names.append(nm)
-
-            if names:
-                joined = "、".join(names)
-                parts.append(f"根据图数据库，景区「{scenic_name}」下的相关景点包括：{joined}。")
+            sentence = self._get_scenic_attractions_sentence_by_name(scenic_name)
+            if sentence:
+                parts.append(sentence)
 
         return "\n".join(parts)
     
@@ -707,8 +787,11 @@ class RAGService:
             return (node.get("name") or "").strip()
         return ""
 
-    async def _get_attraction_cluster_context(self, attraction_ids: List[int]) -> str:
-        """从 Neo4j 拉取景点一簇（属性+出边），格式化为文本供 LLM（并行优化）。"""
+    async def _get_attraction_cluster_context(self, attraction_ids: List[int], max_items: int = 20) -> str:
+        """从 Neo4j 拉取景点一簇（属性+出边），格式化为文本供 LLM（并行优化）。
+
+        max_items: 为避免一次性塞入过多簇导致上下文截断，做安全上限（列举类问题建议 20 左右）。
+        """
         if not attraction_ids:
             return ""
         
@@ -769,7 +852,20 @@ class RAGService:
                 return None
         
         # 并行获取所有景点簇
-        unique_ids = list(set(attraction_ids[:5]))
+        # 去重 + 截断（保序）
+        unique_ids: List[int] = []
+        seen_ids: set[int] = set()
+        for aid in attraction_ids:
+            try:
+                ia = int(aid)
+            except Exception:
+                continue
+            if ia in seen_ids:
+                continue
+            seen_ids.add(ia)
+            unique_ids.append(ia)
+            if len(unique_ids) >= max(1, min(int(max_items), 80)):
+                break
         results = await asyncio.gather(*[fetch_attraction_cluster(aid) for aid in unique_ids], return_exceptions=True)
         parts = [r for r in results if r and not isinstance(r, Exception)]
         
@@ -941,14 +1037,29 @@ class RAGService:
             rag_results = await self.hybrid_search(query, top_k=5)
             primary_attraction_id = rag_results.get("primary_attraction_id")
             out_context = rag_results.get("enhanced_context", "") or ""
-            if re.search(r"有哪些景点|景点都有(什么|哪些)|景点情况|景点分布", query):
+            # 检测列举类查询，主动补充景区下的所有景点信息
+            if self._is_listing_query(query):
                 scenic_ctx = await self._build_scenic_attractions_context(
                     query=query,
                     rag_results=rag_results,
                     conversation_history=conversation_history,
                 )
-                if scenic_ctx:
+                # 避免重复（hybrid_search 可能已经拼过“根据图数据库…”）
+                already_has_list = "根据图数据库，景区「" in (out_context or "")
+                if scenic_ctx and not already_has_list:
                     out_context = f"{out_context}\n\n{scenic_ctx}" if out_context else scenic_ctx
+                # 如果还没有找到景区信息，尝试从 primary_attraction_id 反查
+                elif rag_results.get("primary_attraction_id") is not None and not already_has_list:
+                    try:
+                        aid = rag_results.get("primary_attraction_id")
+                        parent_info = self._get_scenic_spot_by_attraction_id(aid)
+                        scenic_name = parent_info.get("s_name") if parent_info else None
+                        if scenic_name:
+                            scenic_ctx = self._get_scenic_attractions_sentence_by_name(str(scenic_name).strip())
+                            if scenic_ctx:
+                                out_context = f"{out_context}\n\n{scenic_ctx}" if out_context else scenic_ctx
+                    except Exception as e:
+                        logger.warning(f"列举查询时从primary_attraction_id反查景区失败: {e}")
 
             rag_debug = {
                 "query": rag_results.get("query") or query,
