@@ -8,6 +8,7 @@ import json
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 from typing import List, Optional
 from app.core.database import get_db
 from app.models.interaction import Interaction
@@ -1653,7 +1654,7 @@ async def import_attractions_to_graphrag(req: ImportAttractionsRequest):
 
 @router.get("/analytics/rag-logs")
 async def get_rag_logs(
-    limit: int = 50,
+    limit: int = 5,
     current_user: User = Depends(get_current_user),
 ) -> List[Dict[str, Any]]:
     """
@@ -1705,8 +1706,8 @@ async def get_interaction_analytics(
     limit: int = 100,
     db: Session = Depends(get_db)
 ):
-    """获取交互数据分析"""
-    interactions = db.query(Interaction).offset(skip).limit(limit).all()
+    """获取交互数据分析（按 ID 降序，最近的在前）"""
+    interactions = db.query(Interaction).order_by(desc(Interaction.id)).offset(skip).limit(limit).all()
     
     # 统计信息
     total = db.query(Interaction).count()

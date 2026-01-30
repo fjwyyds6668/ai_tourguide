@@ -22,10 +22,14 @@ class InteractionHistory(BaseModel):
     class Config:
         from_attributes = True
 
-@router.get("/history", response_model=List[InteractionHistory])
+class HistoryListResponse(BaseModel):
+    data: List[InteractionHistory]
+    total: int
+
+@router.get("/history", response_model=HistoryListResponse)
 async def get_interaction_history(
     session_id: Optional[str] = Query(None, description="会话ID"),
-    limit: int = Query(50, ge=1, le=100, description="返回数量限制"),
+    limit: int = Query(5, ge=1, le=100, description="返回数量限制，默认最近5条"),
     skip: int = Query(0, ge=0, description="跳过数量"),
     db: Session = Depends(get_db)
 ):
@@ -41,9 +45,10 @@ async def get_interaction_history(
         if session_id:
             query = query.filter(Interaction.session_id == session_id)
         
+        total = query.count()
         interactions = query.order_by(desc(Interaction.created_at)).offset(skip).limit(limit).all()
         
-        return [
+        data = [
             InteractionHistory(
                 id=interaction.id,
                 session_id=interaction.session_id,
@@ -54,13 +59,14 @@ async def get_interaction_history(
             )
             for interaction in interactions
         ]
+        return HistoryListResponse(data=data, total=total)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/history/{session_id}", response_model=List[InteractionHistory])
 async def get_session_history(
     session_id: str,
-    limit: int = Query(100, ge=1, le=200, description="返回数量限制"),
+    limit: int = Query(5, ge=1, le=200, description="返回数量限制，默认最近5条"),
     db: Session = Depends(get_db)
 ):
     """获取指定会话的所有交互记录"""

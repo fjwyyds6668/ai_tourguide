@@ -10,6 +10,7 @@
         v-loading="loading"
         style="width: 100%"
         stripe
+        :row-key="(row) => row.id"
       >
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="query_text" label="问题" min-width="200" />
@@ -20,13 +21,16 @@
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="暂无历史记录" />
+        </template>
       </el-table>
       
       <el-pagination
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
         :total="total"
-        :page-sizes="[10, 20, 50, 100]"
+        :page-sizes="[5, 10, 20, 50, 100]"
         layout="total, sizes, prev, pager, next, jumper"
         @size-change="loadHistory"
         @current-change="loadHistory"
@@ -44,7 +48,7 @@ import api from '../api'
 const historyList = ref([])
 const loading = ref(false)
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(5)
 const total = ref(0)
 
 const loadHistory = async () => {
@@ -56,9 +60,9 @@ const loadHistory = async () => {
         limit: pageSize.value
       }
     })
-    historyList.value = res.data
-    // 注意：如果API返回总数，使用返回的总数；否则使用当前数据长度
-    total.value = res.data.length === pageSize.value ? (currentPage.value * pageSize.value + 1) : (currentPage.value - 1) * pageSize.value + res.data.length
+    // 接口返回 { data: [...], total: 总数 }
+    historyList.value = res.data?.data ?? res.data ?? []
+    total.value = res.data?.total ?? 0
   } catch (error) {
     ElMessage.error('加载历史记录失败')
     console.error(error)

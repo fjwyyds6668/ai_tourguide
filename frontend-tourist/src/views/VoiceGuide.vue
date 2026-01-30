@@ -113,7 +113,12 @@
       title="历史记录"
       width="800px"
     >
-      <el-table :data="historyList" style="width: 100%">
+      <el-table
+        :data="historyList"
+        v-loading="historyLoading"
+        style="width: 100%"
+        :row-key="(row) => row.id ?? row.created_at + row.query_text"
+      >
         <el-table-column prop="query_text" label="问题" width="300" />
         <el-table-column prop="response_text" label="回答" />
         <el-table-column prop="created_at" label="时间" width="180">
@@ -121,6 +126,9 @@
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="暂无历史记录，开始与AI导游对话后会显示在这里" />
+        </template>
       </el-table>
     </el-dialog>
   </div>
@@ -145,6 +153,7 @@ const conversationHistory = ref([])
 const textInput = ref('')
 const showHistory = ref(false)
 const historyList = ref([])
+const historyLoading = ref(false)
 
 let mediaRecorder = null
 let audioChunks = []
@@ -576,10 +585,14 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
   const timer = setInterval(() => {
     if (i >= chars.length) {
       clearInterval(timer)
-      // 确保最后剩余的文本也被合成
+      // 确保最后剩余的文本也被合成，避免“最后几个字没读出来”
       if (ttsSynthesizedLength < fullText.length) {
-        const remainingText = fullText.substring(ttsSynthesizedLength)
-        if (remainingText.trim()) {
+        let remainingText = fullText.substring(ttsSynthesizedLength).trim()
+        if (remainingText) {
+          // 最后一段过短时 TTS 易截断，补句号并保证至少几个字，减少漏读
+          if (remainingText.length <= 6 && remainingText[remainingText.length - 1] !== '。' && remainingText[remainingText.length - 1] !== '！' && remainingText[remainingText.length - 1] !== '？') {
+            remainingText = remainingText + '。'
+          }
           synthesizeAndQueue(remainingText, characterId || selectedCharacterId.value)
         }
       }
@@ -609,18 +622,24 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
 
 // 加载历史记录
 const loadHistory = async () => {
-  if (!sessionId.value) return
-  
+  if (!sessionId.value) {
+    historyList.value = []
+    return
+  }
+  historyLoading.value = true
   try {
     const res = await api.get('/history/history', {
       params: {
         session_id: sessionId.value,
-        limit: 50
+        limit: 5
       }
     })
-    historyList.value = res.data
+    historyList.value = res.data?.data ?? res.data ?? []
   } catch (error) {
     console.error('加载历史失败:', error)
+    historyList.value = []
+  } finally {
+    historyLoading.value = false
   }
 }
 

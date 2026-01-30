@@ -50,19 +50,7 @@ const KnowledgeBase = () => {
     loadScenicSpots();
   }, [loadScenicSpots]);
 
-  // 当选中的景区变化时，加载该景区下的知识/景点
-  useEffect(() => {
-    if (!selectedScenicId) return;
-    loadScenicKnowledge(selectedScenicId);
-    loadScenicAttractions(selectedScenicId);
-  }, [selectedScenicId]);
-
-  const selectedScenic = useMemo(
-    () => scenicSpots.find((s) => s.id === selectedScenicId) || null,
-    [scenicSpots, selectedScenicId]
-  );
-
-  const loadScenicKnowledge = async (scenicId) => {
+  const loadScenicKnowledge = useCallback(async (scenicId) => {
     try {
       setLoading(true);
       const res = await api.get(`/admin/scenic-spots/${scenicId}/knowledge`);
@@ -73,9 +61,9 @@ const KnowledgeBase = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadScenicAttractions = async (scenicId) => {
+  const loadScenicAttractions = useCallback(async (scenicId) => {
     try {
       setLoading(true);
       const res = await api.get(`/admin/scenic-spots/${scenicId}/attractions`);
@@ -86,7 +74,19 @@ const KnowledgeBase = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // 当选中的景区变化时，加载该景区下的知识/景点
+  useEffect(() => {
+    if (!selectedScenicId) return;
+    loadScenicKnowledge(selectedScenicId);
+    loadScenicAttractions(selectedScenicId);
+  }, [selectedScenicId, loadScenicKnowledge, loadScenicAttractions]);
+
+  const selectedScenic = useMemo(
+    () => scenicSpots.find((s) => s.id === selectedScenicId) || null,
+    [scenicSpots, selectedScenicId]
+  );
 
   const handleCoverUpload = async (options) => {
     const { file, onSuccess, onError } = options;
@@ -110,45 +110,70 @@ const KnowledgeBase = () => {
     }
   };
 
-  const knowledgeColumns = [
-    {
-      title: 'ID',
-      dataIndex: 'text_id',
-      key: 'text_id',
-    },
-    {
-      title: '内容',
-      dataIndex: 'text',
-      key: 'text',
-      ellipsis: true,
-    },
-    {
-      title: '操作',
-      key: 'action',
-      render: (_, record) => (
-        <Popconfirm
-          title="确定要删除这条知识吗？"
-          okText="删除"
-          cancelText="取消"
-          onConfirm={async () => {
-            try {
-              setLoading(true);
-              await api.delete(`/admin/knowledge/${encodeURIComponent(record.text_id)}`);
-              message.success('删除成功');
-              if (selectedScenicId) loadScenicKnowledge(selectedScenicId);
-            } catch (error) {
-              console.error('删除失败:', error);
-              message.error(error.response?.data?.detail || '删除失败');
-            } finally {
-              setLoading(false);
-            }
-          }}
-        >
-          <Button danger size="small">删 除</Button>
-        </Popconfirm>
-      ),
-    },
-  ];
+  const knowledgeColumns = useMemo(
+    () => [
+      { title: 'ID', dataIndex: 'text_id', key: 'text_id' },
+      { title: '内容', dataIndex: 'text', key: 'text', ellipsis: true },
+      {
+        title: '操作',
+        key: 'action',
+        render: (_, record) => (
+          <Popconfirm
+            title="确定要删除这条知识吗？"
+            okText="删除"
+            cancelText="取消"
+            onConfirm={async () => {
+              try {
+                setLoading(true);
+                await api.delete(`/admin/knowledge/${encodeURIComponent(record.text_id)}`);
+                message.success('删除成功');
+                if (selectedScenicId) loadScenicKnowledge(selectedScenicId);
+              } catch (error) {
+                console.error('删除失败:', error);
+                message.error(error.response?.data?.detail || '删除失败');
+              } finally {
+                setLoading(false);
+              }
+            }}
+          >
+            <Button danger size="small">删 除</Button>
+          </Popconfirm>
+        ),
+      },
+    ],
+    [selectedScenicId, loadScenicKnowledge]
+  );
+
+  const attractionColumns = useMemo(
+    () => [
+      { title: 'ID', dataIndex: 'id', key: 'id' },
+      { title: '名称', dataIndex: 'name', key: 'name' },
+      {
+        title: '操作',
+        key: 'action',
+        render: (_, record) => (
+          <Popconfirm
+            title="确定要删除这个景点吗？"
+            onConfirm={async () => {
+              try {
+                setLoading(true);
+                await api.delete(`/admin/attractions/${record.id}`);
+                message.success('删除成功');
+                if (selectedScenicId) loadScenicAttractions(selectedScenicId);
+              } catch (e) {
+                message.error(e.response?.data?.detail || '删除失败');
+              } finally {
+                setLoading(false);
+              }
+            }}
+          >
+            <Button danger size="small">删 除</Button>
+          </Popconfirm>
+        ),
+      },
+    ],
+    [selectedScenicId, loadScenicAttractions]
+  );
 
   const handleSubmitKnowledge = async (values) => {
     try {
@@ -354,6 +379,7 @@ const KnowledgeBase = () => {
               bordered
               dataSource={scenicSpots}
               loading={loading}
+              locale={{ emptyText: '暂无景区，请点击「新增景区」添加' }}
               renderItem={(item) => (
                 <List.Item
                   style={{
@@ -405,6 +431,7 @@ const KnowledgeBase = () => {
                         dataSource={knowledgeData}
                         loading={loading}
                         rowKey="text_id"
+                        locale={{ emptyText: '暂无知识，可点击「添加知识」上传' }}
                       />
                     </div>
                   ),
@@ -415,38 +442,11 @@ const KnowledgeBase = () => {
                   disabled: !selectedScenicId,
                   children: (
                     <Table
-                      columns={[
-                        { title: 'ID', dataIndex: 'id', key: 'id' },
-                        { title: '名称', dataIndex: 'name', key: 'name' },
-                        { title: '位置', dataIndex: 'location', key: 'location', ellipsis: true },
-                        { title: '类别', dataIndex: 'category', key: 'category' },
-                        {
-                          title: '操作',
-                          key: 'action',
-                          render: (_, record) => (
-                            <Popconfirm
-                              title="确定要删除这个景点吗？"
-                              onConfirm={async () => {
-                                try {
-                                  setLoading(true);
-                                  await api.delete(`/admin/attractions/${record.id}`);
-                                  message.success('删除成功');
-                                  if (selectedScenicId) loadScenicAttractions(selectedScenicId);
-                                } catch (e) {
-                                  message.error(e.response?.data?.detail || '删除失败');
-                                } finally {
-                                  setLoading(false);
-                                }
-                              }}
-                            >
-                              <Button danger size="small">删 除</Button>
-                            </Popconfirm>
-                          ),
-                        },
-                      ]}
+                      columns={attractionColumns}
                       dataSource={attractionsData}
                       loading={loading}
                       rowKey="id"
+                      locale={{ emptyText: '暂无景点，可点击「添加景点」新增' }}
                     />
                   ),
                 },

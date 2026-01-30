@@ -16,6 +16,21 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+def _strip_emoji(text: str) -> str:
+    """去掉回复中所有表情符号，避免 TTS 异常或界面显示杂乱。"""
+    if not text or not isinstance(text, str):
+        return text or ""
+    # 常见 emoji / 符号块（Misc Symbols, Dingbats, Emoticons, 以及补充平面表情等）
+    s = re.sub(r"[\u2600-\u26FF\u2700-\u27BF\U0001F300-\U0001F9FF]", "", text)
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    # 去掉末尾不可见/控制字符，避免 TTS 少读最后几个字
+    s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\r\n]+$", "", s)
+    # 若末尾没有句号/问号/叹号，补句号，减少 TTS 截断
+    if s and s[-1] not in "。！？.!?…":
+        s = s.rstrip("，、；：") + "。"
+    return s
+
+
 # 尝试导入中文分词库
 try:
     import jieba
@@ -515,6 +530,114 @@ class RAGService:
             "enhanced_context": enhanced_results,
             "query": query
         }
+
+    async def _build_scenic_attractions_context(
+        self,
+        query: str,
+        rag_results: Dict[str, Any],
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
+        """
+        基于当前查询 + 图子图 + 对话上下文，补充“某个景区下有哪些景点”的结构化信息。
+        场景：用户问“现在有哪些景点”“这个景区有哪些景点”等。
+        """
+        # 只在明显是“列举景点”的问题时触发，避免所有问句都扫图
+        list_patterns = [
+            r"有哪些景点",
+            r"景点都有(什么|哪些)",
+            r"景点情况",
+            r"景点分布",
+        ]
+        if not any(re.search(p, query) for p in list_patterns):
+            return ""
+
+        scenic_names: set[str] = set()
+
+        # 1) 优先从子图里找 ScenicSpot 节点
+        subgraph = rag_results.get("subgraph") or {}
+        for node in subgraph.get("nodes", []):
+            labels = set(node.get("labels") or [])
+            props = node.get("properties") or {}
+            if "ScenicSpot" in labels and isinstance(props.get("name"), str):
+                scenic_names.add(props["name"])
+
+        # 2) 如果子图里没有，再从对话上下文里抽实体，去 Neo4j 里验证哪些是景区名
+        if not scenic_names and conversation_history:
+            # 只看最近几轮用户说的话
+            recent_user_text = "。".join(
+                msg["content"]
+                for msg in conversation_history[-6:]
+                if msg.get("role") == "user" and isinstance(msg.get("content"), str)
+            )
+            if recent_user_text:
+                for ent in self.extract_entities(recent_user_text):
+                    cand = ent.get("text")
+                    if not cand or not isinstance(cand, str):
+                        continue
+                    # 去 Neo4j 里确认一下是否存在对应的 ScenicSpot
+                    try:
+                        check_q = """
+                        MATCH (s:ScenicSpot {name: $name})
+                        RETURN s.name AS name
+                        LIMIT 1
+                        """
+                        res = neo4j_client.execute_query(check_q, {"name": cand})
+                        if res and isinstance(res, list) and res[0].get("name"):
+                            scenic_names.add(res[0]["name"])
+                    except Exception:
+                        continue
+
+        # 3) 兜底：若仍未识别到任何景区（例如用户直接问“现在有哪些景点”且无历史），则查图中所有景区
+        if not scenic_names:
+            try:
+                all_scenic_q = """
+                MATCH (s:ScenicSpot) RETURN s.name AS name LIMIT 5
+                """
+                rows = neo4j_client.execute_query(all_scenic_q, {}) or []
+                for row in rows:
+                    nm = row.get("name")
+                    if nm and isinstance(nm, str):
+                        scenic_names.add(nm)
+            except Exception as e:
+                logger.warning(f"query all ScenicSpot names failed: {e}")
+
+        if not scenic_names:
+            return ""
+
+        # 4) 针对识别到的每个景区，列出它下面的景点（HAS_SPOT 指向的 Spot/Attraction + 属于 该景区的 Attraction）
+        parts: List[str] = []
+        for scenic_name in list(scenic_names)[:3]:  # 最多 3 个景区，避免上下文过长
+            try:
+                cypher = """
+                MATCH (s:ScenicSpot {name: $name})
+                OPTIONAL MATCH (s)-[:HAS_SPOT]->(n)
+                OPTIONAL MATCH (s)<-[:属于]-(a:Attraction)
+                WITH s, collect(DISTINCT n) AS spot_list, collect(DISTINCT a) AS att_list
+                UNWIND spot_list + att_list AS x
+                WITH s, x WHERE x IS NOT NULL
+                WITH DISTINCT s, x, coalesce(x.name, x.text_id) AS xname
+                WHERE xname IS NOT NULL AND NOT (xname STARTS WITH 'kb_')
+                RETURN s.name AS scenic_name, xname AS attraction_name
+                ORDER BY attraction_name
+                LIMIT 50
+                """
+                rows = neo4j_client.execute_query(cypher, {"name": scenic_name}) or []
+            except Exception as e:
+                logger.warning(f"query scenic attractions failed for '{scenic_name}': {e}")
+                continue
+
+            names: List[str] = []
+            for row in rows:
+                nm = row.get("attraction_name")
+                if not nm or nm in names:
+                    continue
+                names.append(nm)
+
+            if names:
+                joined = "、".join(names)
+                parts.append(f"根据图数据库，景区「{scenic_name}」下的相关景点包括：{joined}。")
+
+        return "\n".join(parts)
     
     def _merge_results(self, vector_results: List[Dict], graph_results: List[Dict], entities: List[str]) -> str:
         """
@@ -580,7 +703,17 @@ class RAGService:
         # 如果使用RAG，先进行检索
         if use_rag:
             rag_results = await self.hybrid_search(query, top_k=5)
-            context = rag_results.get("enhanced_context", "")
+            context = rag_results.get("enhanced_context", "") or ""
+
+            # 基于当前查询 + 图结果 + 对话上下文，补充“当前景区有哪些景点”的结构化说明
+            scenic_ctx = await self._build_scenic_attractions_context(
+                query=query,
+                rag_results=rag_results,
+                conversation_history=conversation_history,
+            )
+            if scenic_ctx:
+                context = f"{context}\n\n{scenic_ctx}" if context else scenic_ctx
+
             rag_debug = {
                 "query": rag_results.get("query") or query,
                 "vector_results": rag_results.get("vector_results", [])[:5],
@@ -635,6 +768,9 @@ class RAGService:
                 answer = re.sub(r"编号为\s*kb_\d+", "", answer)
                 answer = re.sub(r"\bkb_\d+\b", "", answer)
                 answer = re.sub(r"\s{2,}", " ", answer).strip()
+            # 去掉所有表情符号，避免 TTS 异常或末尾不读
+            if answer:
+                answer = _strip_emoji(answer)
             # 将 RAG 检索结果 + 最终回答记录到日志文件，便于管理员在分析界面查看
             try:
                 log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
@@ -650,6 +786,15 @@ class RAGService:
                 }
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                # 只保留最近 5 条，避免日志文件无限增长
+                try:
+                    with open(log_path, "r", encoding="utf-8") as f:
+                        lines = [ln for ln in f.readlines() if ln.strip()]
+                    if len(lines) > 5:
+                        with open(log_path, "w", encoding="utf-8") as f:
+                            f.writelines(lines[-5:])
+                except Exception:
+                    pass
             except Exception as e:
                 logger.warning(f"Failed to write RAG context log: {e}")
 
