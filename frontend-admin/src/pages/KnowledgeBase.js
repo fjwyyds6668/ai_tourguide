@@ -290,19 +290,6 @@ const KnowledgeBase = () => {
             >
               新增景区
             </Button>
-            {selectedScenicId && (
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => {
-                  attractionForm.resetFields();
-                  setAttractionImageUploaded(false);
-                  setAttractionVisible(true);
-                }}
-              >
-                添加景点
-              </Button>
-            )}
             <Button
               onClick={() => {
                 if (!selectedScenic) {
@@ -441,13 +428,28 @@ const KnowledgeBase = () => {
                   label: '景点',
                   disabled: !selectedScenicId,
                   children: (
-                    <Table
-                      columns={attractionColumns}
-                      dataSource={attractionsData}
-                      loading={loading}
-                      rowKey="id"
-                      locale={{ emptyText: '暂无景点，可点击「添加景点」新增' }}
-                    />
+                    <div>
+                      <div style={{ marginBottom: 16 }}>
+                        <Button
+                          type="primary"
+                          icon={<PlusOutlined />}
+                          onClick={() => {
+                            attractionForm.resetFields();
+                            setAttractionImageUploaded(false);
+                            setAttractionVisible(true);
+                          }}
+                        >
+                          添加景点
+                        </Button>
+                      </div>
+                      <Table
+                        columns={attractionColumns}
+                        dataSource={attractionsData}
+                        loading={loading}
+                        rowKey="id"
+                        locale={{ emptyText: '暂无景点，可点击「添加景点」新增' }}
+                      />
+                    </div>
                   ),
                 },
               ]}

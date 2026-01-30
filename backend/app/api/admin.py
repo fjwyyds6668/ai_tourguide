@@ -19,6 +19,7 @@ from app.services.graph_builder import graph_builder
 from app.core.milvus_client import milvus_client
 from app.core.prisma_client import get_prisma, disconnect_prisma
 from app.core.config import settings
+from app.utils.attraction_utils import attraction_to_text as _attraction_to_text
 from pydantic import BaseModel
 from typing import Any, Dict, List
 
@@ -244,28 +245,6 @@ class ImportAttractionsRequest(BaseModel):
     build_attraction_graph: bool = True
     active_only: bool = False  # 预留：如后续 attractions 增加 isActive 字段
     limit: Optional[int] = None
-
-def _attraction_to_text(attraction: dict) -> str:
-    """将景点记录拼接为用于向量/图谱的文本。"""
-    parts = []
-    name = attraction.get("name")
-    if name:
-        parts.append(f"景点：{name}")
-    category = attraction.get("category")
-    if category:
-        parts.append(f"类别：{category}")
-    location = attraction.get("location")
-    if location:
-        parts.append(f"位置：{location}")
-    desc = attraction.get("description")
-    if desc:
-        parts.append(f"介绍：{desc}")
-    # 坐标可选，避免噪声过大
-    lat = attraction.get("latitude")
-    lng = attraction.get("longitude")
-    if lat is not None and lng is not None:
-        parts.append(f"坐标：({lat}, {lng})")
-    return "\n".join(parts).strip()
 
 
 def _normalize_scenic_name(name: str) -> str:
@@ -1678,7 +1657,7 @@ async def get_rag_logs(
         raise HTTPException(status_code=500, detail="读取 RAG 日志失败")
 
     entries: List[Dict[str, Any]] = []
-    # 取最后 limit 条（从文件尾部往前）
+    # 取最后 limit 条，按时间倒序（最近的在最前）
     for line in reversed(lines[-limit:]):
         line = line.strip()
         if not line:
@@ -1697,8 +1676,7 @@ async def get_rag_logs(
         except Exception:
             continue
 
-    # 由于是从文件尾部向前遍历，最后需要再反转一次，让最新的在最上面
-    return list(reversed(entries))
+    return entries
 
 @router.get("/analytics/interactions")
 async def get_interaction_analytics(

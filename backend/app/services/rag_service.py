@@ -522,13 +522,29 @@ class RAGService:
         # 步骤4: 结果融合和评分
         enhanced_results = self._merge_results(vector_results, graph_results, entity_names)
         
+        # 步骤5: 若检索命中某景点，拉取该景点的完整一簇信息并入上下文
+        attraction_ids = []
+        for r in (vector_results or []):
+            text_id = (r.get("text_id") or "").strip()
+            if text_id.startswith("attraction_"):
+                try:
+                    attraction_ids.append(int(text_id.replace("attraction_", "")))
+                except ValueError:
+                    pass
+        if attraction_ids:
+            cluster_ctx = await self._get_attraction_cluster_context(attraction_ids)
+            if cluster_ctx:
+                enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
+        
         return {
             "vector_results": vector_results,
             "graph_results": graph_results,
             "subgraph": subgraph_data,
             "entities": list(unique_entities.values()),
             "enhanced_context": enhanced_results,
-            "query": query
+            "query": query,
+            "attraction_ids": attraction_ids,
+            "primary_attraction_id": attraction_ids[0] if attraction_ids else None,
         }
 
     async def _build_scenic_attractions_context(
@@ -639,6 +655,80 @@ class RAGService:
 
         return "\n".join(parts)
     
+    def _get_node_name(self, node: Any) -> str:
+        """从 Neo4j 返回的节点中安全取 name（支持 Node 或 dict）"""
+        if node is None:
+            return ""
+        if isinstance(node, dict):
+            return (node.get("name") or (node.get("properties") or {}).get("name") or "").strip()
+        if hasattr(node, "get"):
+            return (node.get("name") or "").strip()
+        return ""
+
+    async def _get_attraction_cluster_context(self, attraction_ids: List[int]) -> str:
+        """
+        从 Neo4j 拉取指定景点的完整一簇信息（节点属性 + 所有出边关系），
+        格式化为文本供 LLM 使用。当检索命中某景点时，必须把该景点的全部簇信息返回。
+        """
+        if not attraction_ids:
+            return ""
+        parts = []
+        seen = set()
+        for aid in attraction_ids[:5]:  # 最多 5 个景点，避免上下文过长
+            if aid in seen:
+                continue
+            seen.add(aid)
+            try:
+                query = """
+                MATCH (a:Attraction {id: $id})
+                OPTIONAL MATCH (a)-[r]->(n)
+                RETURN a, type(r) as rel_type, n
+                """
+                rows = neo4j_client.execute_query(query, {"id": int(aid)})
+                if not rows:
+                    continue
+                att_name = ""
+                att_desc = ""
+                att_location = ""
+                att_category = ""
+                relations = []
+                for row in rows:
+                    a = row.get("a")
+                    rel_type = row.get("rel_type")
+                    n = row.get("n")
+                    if a is not None and not att_name:
+                        att_name = self._get_node_name(a) or (str(a.get("id")) if hasattr(a, "get") else "")
+                        if hasattr(a, "get"):
+                            att_desc = (a.get("description") or "").strip()
+                            att_location = (a.get("location") or "").strip()
+                            att_category = (a.get("category") or "").strip()
+                        elif isinstance(a, dict):
+                            att_desc = (a.get("description") or (a.get("properties") or {}).get("description") or "").strip()
+                            att_location = (a.get("location") or (a.get("properties") or {}).get("location") or "").strip()
+                            att_category = (a.get("category") or (a.get("properties") or {}).get("category") or "").strip()
+                    if rel_type and n is not None:
+                        n_name = self._get_node_name(n)
+                        if n_name:
+                            relations.append(f"{rel_type} -> {n_name}")
+                if not att_name and not relations:
+                    continue
+                cluster_lines = [f"景点【{att_name or ('ID:' + str(aid))}】"]
+                if att_desc:
+                    cluster_lines.append(f"描述：{att_desc}")
+                if att_location:
+                    cluster_lines.append(f"位置：{att_location}")
+                if att_category:
+                    cluster_lines.append(f"类别：{att_category}")
+                if relations:
+                    cluster_lines.append("关系与属性：" + "；".join(relations))
+                parts.append("\n".join(cluster_lines))
+            except Exception as e:
+                logger.warning(f"拉取景点簇失败 attraction_id={aid}: {e}")
+                continue
+        if not parts:
+            return ""
+        return "【景点一簇信息】\n" + "\n\n".join(parts)
+
     def _merge_results(self, vector_results: List[Dict], graph_results: List[Dict], entities: List[str]) -> str:
         """
         融合向量和图检索结果，生成增强上下文

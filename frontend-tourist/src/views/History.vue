@@ -1,8 +1,8 @@
 <template>
   <div class="history-page">
-    <el-card>
+    <el-card class="page-card">
       <template #header>
-        <h2>历史记录</h2>
+        <span class="card-title">历史记录</span>
       </template>
       
       <el-table
@@ -26,16 +26,17 @@
         </template>
       </el-table>
       
-      <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
-        :total="total"
-        :page-sizes="[5, 10, 20, 50, 100]"
-        layout="total, sizes, prev, pager, next, jumper"
-        @size-change="loadHistory"
-        @current-change="loadHistory"
-        style="margin-top: 20px; justify-content: flex-end"
-      />
+      <div class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[5, 10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="loadHistory"
+          @current-change="loadHistory"
+        />
+      </div>
     </el-card>
   </div>
 </template>
@@ -44,6 +45,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
+import { formatTime } from '../utils/format'
 
 const historyList = ref([])
 const loading = ref(false)
@@ -71,12 +73,6 @@ const loadHistory = async () => {
   }
 }
 
-const formatTime = (timeStr) => {
-  if (!timeStr) return ''
-  const date = new Date(timeStr)
-  return date.toLocaleString('zh-CN')
-}
-
 onMounted(() => {
   loadHistory()
 })
@@ -87,6 +83,28 @@ onMounted(() => {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
+}
+
+.page-card {
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.page-card :deep(.el-card__header) {
+  padding: 14px 20px;
+  font-weight: 600;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.card-title {
+  font-size: 16px;
+  color: #303133;
+}
+
+.pagination-wrap {
+  margin-top: 20px;
+  display: flex;
+  justify-content: flex-end;
 }
 </style>
 

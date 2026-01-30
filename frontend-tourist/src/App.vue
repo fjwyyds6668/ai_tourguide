@@ -47,9 +47,9 @@
         </div>
       </el-aside>
 
-      <!-- 右侧内容区：独立滚动 -->
+      <!-- 右侧内容区：顶栏与左侧品牌栏对齐 -->
       <el-container class="content" :style="{ marginLeft: collapsed ? '64px' : '220px' }">
-        <el-header class="header">
+        <el-header class="header content-header" :style="{ left: collapsed ? '64px' : '220px' }">
           <div class="header-title">AI 数字人导游系统</div>
         </el-header>
         <el-main class="main">
@@ -83,6 +83,12 @@ const onSelect = (path) => {
 </script>
 
 <style>
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
 #app {
   font-family: Avenir, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -156,6 +162,17 @@ const onSelect = (path) => {
 
 .content {
   min-height: 100vh;
+  position: relative;
+}
+
+/* 右侧顶栏固定，与左侧品牌栏同一顶边、同一高度 */
+.content-header {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 56px;
+  z-index: 9;
+  transition: left 0.2s;
 }
 
 .header {
@@ -164,6 +181,7 @@ const onSelect = (path) => {
   display: flex;
   align-items: center;
   padding: 0 20px;
+  box-sizing: border-box;
 }
 
 .header-title {
@@ -174,7 +192,9 @@ const onSelect = (path) => {
 
 .main {
   height: calc(100vh - 56px);
+  margin-top: 56px; /* 为固定顶栏留出高度 */
   overflow: auto;
+  background: #f5f7fa;
 }
 </style>
 

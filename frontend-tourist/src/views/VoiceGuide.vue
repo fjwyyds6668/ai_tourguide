@@ -1,11 +1,11 @@
 <template>
   <div class="voice-guide">
     <!-- 角色选择 -->
-    <el-card style="margin-bottom: 20px">
+    <el-card class="section-card role-card">
       <template #header>
-        <h3>选择数字人角色</h3>
+        <span class="card-title">选择数字人角色</span>
       </template>
-      <el-radio-group v-model="selectedCharacterId" @change="handleCharacterChange">
+      <el-radio-group v-model="selectedCharacterId" @change="handleCharacterChange" class="role-group">
         <el-radio-button
           v-for="character in characters"
           :key="character.id"
@@ -16,35 +16,37 @@
       </el-radio-group>
     </el-card>
 
-    <el-row :gutter="20">
+    <el-row :gutter="20" class="main-row">
       <!-- 左侧：数字人展示区 -->
-      <el-col :span="14">
-        <el-card>
+      <el-col :xs="24" :sm="24" :md="14" :lg="14">
+        <el-card class="section-card avatar-card">
           <template #header>
             <div class="card-header">
-              <h2>数字人导游</h2>
+              <span class="card-title">数字人导游</span>
               <el-button
-                type="text"
+                type="primary"
+                link
                 @click="showHistory = !showHistory"
+                class="history-btn"
               >
-                {{ showHistory ? '隐藏历史' : '查看历史' }}
+                <el-icon><Document /></el-icon>
+                <span>{{ showHistory ? '隐藏历史' : '查看历史' }}</span>
               </el-button>
             </div>
           </template>
           
-          <!-- 数字人容器：本地 Live2D 模型 -->
           <div class="avatar-wrapper">
             <Live2DCanvas character-name="Mao" character-group="free" />
           </div>
 
-          <!-- 文本输入区（按钮放在输入框内） -->
-          <div class="text-input-area under-avatar">
+          <div class="text-input-area">
+            <p class="input-hint">支持语音或文字，与数字人对话</p>
             <div class="textarea-wrapper">
               <el-input
                 v-model="textInput"
                 type="textarea"
                 :rows="3"
-                placeholder="在此输入要对数字人说的话（支持中文）"
+                placeholder="在此输入要对数字人说的话（Enter 发送，Ctrl+Enter 换行）"
                 @keyup.enter.exact.prevent="handleSendText"
                 @keyup.ctrl.enter.prevent="handleSendText"
                 class="textarea-input"
@@ -56,21 +58,21 @@
                   @click="toggleRecording"
                   :loading="processing"
                   circle
-                  size="small"
+                  size="default"
                   :title="isRecording ? '停止录音' : '开始录音'"
                 />
                 <el-button
                   type="primary"
                   @click="handleSendText"
                   :disabled="!textInput.trim() || processing"
-                  size="small"
+                  size="default"
                 >
                   发送
                 </el-button>
                 <el-button
                   v-if="isSpeaking"
                   @click="stopSpeaking"
-                  size="small"
+                  size="default"
                 >
                   停止播报
                 </el-button>
@@ -81,16 +83,16 @@
       </el-col>
 
       <!-- 右侧：对话记录 -->
-      <el-col :span="10">
-        <el-card>
+      <el-col :xs="24" :sm="24" :md="10" :lg="10">
+        <el-card class="section-card chat-card">
           <template #header>
-            <h3>对话记录</h3>
+            <span class="card-title">对话记录</span>
           </template>
           
           <div class="conversation-list" ref="conversationListRef">
             <div
               v-for="(msg, index) in conversationHistory"
-              :key="index"
+              :key="`${msg.timestamp}-${index}`"
               :class="['message-item', msg.role]"
             >
               <div class="message-header">
@@ -100,7 +102,9 @@
               <div class="message-content">{{ msg.content }}</div>
             </div>
             <div v-if="conversationHistory.length === 0" class="empty-message">
-              还没有对话记录，开始与AI导游交流吧！
+              <el-icon class="empty-icon"><ChatDotRound /></el-icon>
+              <p>还没有对话记录</p>
+              <p class="empty-desc">在左侧输入或点击麦克风开始与 AI 导游交流</p>
             </div>
           </div>
         </el-card>
@@ -137,8 +141,10 @@
 <script setup>
 import { ref, onMounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Document, ChatDotRound } from '@element-plus/icons-vue'
 import Live2DCanvas from '../components/Live2DCanvas.vue'
 import api from '../api'
+import { formatTime } from '../utils/format'
 import { Live2dManager } from '../lib/live2d/live2dManager'
 import { LAppDelegate } from '../lib/live2d/src/lappdelegate'
 
@@ -186,19 +192,8 @@ const loadCharacters = async () => {
   }
 }
 
-// 角色切换
-const handleCharacterChange = (characterId) => {
-  const character = characters.value.find(c => c.id === characterId)
-  if (character) {
-    // 可以在这里添加角色切换的逻辑
-    if (avatarRef.value) {
-      avatarRef.value.destroy()
-      nextTick(() => {
-        avatarRef.value.init()
-      })
-    }
-  }
-}
+// 角色切换（当前 Live2D 模型固定，可在此扩展多角色切换逻辑）
+const handleCharacterChange = () => {}
 
 // 录音控制
 const toggleRecording = async () => {
@@ -650,13 +645,6 @@ watch(showHistory, (val) => {
   }
 })
 
-// 格式化时间
-const formatTime = (timeStr) => {
-  if (!timeStr) return ''
-  const date = new Date(timeStr)
-  return date.toLocaleString('zh-CN')
-}
-
 // 滚动到底部
 const scrollToBottom = () => {
   nextTick(() => {
@@ -727,85 +715,165 @@ const triggerSpeakingMotion = () => {
   padding: 20px;
 }
 
+.section-card {
+  margin-bottom: 20px;
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.section-card :deep(.el-card__header) {
+  padding: 14px 20px;
+  font-weight: 600;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.card-title {
+  font-size: 16px;
+  color: #303133;
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  width: 100%;
+}
+
+.history-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.role-card {
+  margin-bottom: 20px;
+}
+
+.role-group {
+  flex-wrap: wrap;
+}
+
+.main-row {
+  margin-bottom: 20px;
 }
 
 .avatar-wrapper {
   width: 100%;
-  height: 500px;
-  margin-bottom: 20px;
-  border-radius: 8px;
+  height: 420px;
+  margin-bottom: 16px;
+  border-radius: 12px;
   overflow: hidden;
+  background: #1a1a1a;
+  border: 1px solid #e4e7ed;
 }
 
 .text-input-area {
-  margin: 10px 0 0;
+  margin-top: 0;
+  padding: 12px 0 0;
+  border-top: 1px solid #f0f0f0;
 }
 
-.text-input-area.under-avatar {
-  margin-top: 0;
-  margin-bottom: 10px;
+.input-hint {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  color: #909399;
 }
 
 .textarea-wrapper {
   position: relative;
+  border: 1px solid #dcdfe6;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.textarea-wrapper:focus-within {
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.1);
 }
 
 .textarea-input :deep(.el-textarea__inner) {
-  padding-right: 140px; /* 为按钮留出空间 */
-  padding-bottom: 45px; /* 为底部按钮留出空间 */
+  padding-right: 160px;
+  padding-bottom: 52px;
+  border: none;
+  box-shadow: none;
 }
 
 .input-buttons {
   position: absolute;
-  bottom: 8px;
-  right: 8px;
+  bottom: 10px;
+  right: 10px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   z-index: 10;
 }
 
 .conversation-list {
-  max-height: 600px;
+  max-height: 560px;
+  min-height: 280px;
   overflow-y: auto;
-  padding: 10px;
+  padding: 12px;
 }
 
 .message-item {
-  margin-bottom: 15px;
-  padding: 10px;
-  border-radius: 8px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .message-item.user {
-  background: #e3f2fd;
+  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
   text-align: right;
 }
 
 .message-item.assistant {
-  background: #f5f5f5;
+  background: linear-gradient(135deg, #f5f5f5 0%, #eeeeee 100%);
   text-align: left;
 }
 
 .message-header {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 5px;
+  margin-bottom: 6px;
   font-size: 12px;
-  color: #666;
+  color: #606266;
 }
 
 .message-content {
   word-break: break-word;
+  line-height: 1.5;
 }
 
 .empty-message {
   text-align: center;
-  color: #999;
-  padding: 40px 0;
+  color: #909399;
+  padding: 48px 24px;
+}
+
+.empty-message .empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+  color: #c0c4cc;
+}
+
+.empty-message p {
+  margin: 0 0 6px 0;
+  font-size: 14px;
+}
+
+.empty-message .empty-desc {
+  font-size: 12px;
+  color: #c0c4cc;
+}
+
+@media (max-width: 768px) {
+  .voice-guide {
+    padding: 12px;
+  }
+  .avatar-wrapper {
+    height: 320px;
+  }
 }
 </style>

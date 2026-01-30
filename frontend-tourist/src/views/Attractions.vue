@@ -1,8 +1,8 @@
 <template>
   <div class="attractions">
-    <el-card>
+    <el-card class="page-card">
       <template #header>
-        <h2>景点列表</h2>
+        <span class="card-title">景点列表</span>
       </template>
       
       <div style="display: flex; gap: 16px; margin-bottom: 20px">
@@ -32,29 +32,36 @@
         </el-input>
       </div>
       
-      <el-row :gutter="20" v-loading="loading">
-        <el-col
-          :span="8"
-          v-for="attraction in filteredAttractions"
-          :key="attraction.id"
-          style="margin-bottom: 20px"
-        >
-          <el-card shadow="hover" @click="viewDetails(attraction)">
-            <img
-              v-if="attraction.image_url"
-              :src="imageSrc(attraction.image_url)"
-              class="attraction-image"
-              alt="景点图片"
-            />
-            <div v-else class="placeholder-image">
-              <el-icon :size="48"><Picture /></el-icon>
-            </div>
-            <h3>{{ attraction.name }}</h3>
-            <p class="description">{{ attraction.description }}</p>
-            <el-tag v-if="attraction.category">{{ attraction.category }}</el-tag>
-          </el-card>
-        </el-col>
-      </el-row>
+      <div v-loading="loading" class="attractions-body">
+        <el-row v-if="filteredAttractions.length > 0" :gutter="20">
+          <el-col
+            :span="8"
+            v-for="attraction in filteredAttractions"
+            :key="attraction.id"
+            class="attraction-col"
+          >
+            <el-card shadow="hover" class="attraction-card" @click="viewDetails(attraction)">
+              <img
+                v-if="attraction.image_url"
+                :src="imageSrc(attraction.image_url)"
+                class="attraction-image"
+                alt="景点图片"
+              />
+              <div v-else class="placeholder-image">
+                <el-icon :size="48"><Picture /></el-icon>
+              </div>
+              <h3>{{ attraction.name }}</h3>
+              <p class="description">{{ attraction.description }}</p>
+              <el-tag v-if="attraction.category">{{ attraction.category }}</el-tag>
+            </el-card>
+          </el-col>
+        </el-row>
+        <el-empty
+          v-else-if="!loading"
+          :description="selectedScenicId ? '该景区暂无景点' : '请先选择景区'"
+          style="padding: 40px 0"
+        />
+      </div>
     </el-card>
     
     <el-dialog v-model="detailVisible" title="景点详情" width="600px">
@@ -160,6 +167,41 @@ onMounted(async () => {
   padding: 20px;
 }
 
+.page-card {
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.page-card :deep(.el-card__header) {
+  padding: 14px 20px;
+  font-weight: 600;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.card-title {
+  font-size: 16px;
+  color: #303133;
+}
+
+.attractions-body {
+  min-height: 200px;
+}
+
+.attraction-col {
+  margin-bottom: 20px;
+}
+
+.attraction-card {
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.attraction-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
 .attraction-image {
   width: 100%;
   height: 200px;
@@ -178,7 +220,7 @@ onMounted(async () => {
 }
 
 .description {
-  color: #666;
+  color: #606266;
   font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;

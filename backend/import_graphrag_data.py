@@ -16,27 +16,7 @@ from app.core.prisma_client import get_prisma, disconnect_prisma
 from app.core.milvus_client import milvus_client
 from app.services.rag_service import rag_service
 from app.services.graph_builder import graph_builder
-
-
-def attraction_to_text(attraction: Dict[str, Any]) -> str:
-    parts = []
-    name = attraction.get("name")
-    if name:
-        parts.append(f"景点：{name}")
-    category = attraction.get("category")
-    if category:
-        parts.append(f"类别：{category}")
-    location = attraction.get("location")
-    if location:
-        parts.append(f"位置：{location}")
-    desc = attraction.get("description")
-    if desc:
-        parts.append(f"介绍：{desc}")
-    lat = attraction.get("latitude")
-    lng = attraction.get("longitude")
-    if lat is not None and lng is not None:
-        parts.append(f"坐标：({lat}, {lng})")
-    return "\n".join(parts).strip()
+from app.utils.attraction_utils import attraction_to_text
 
 
 async def upload_texts_to_graphrag(items: List[Dict[str, Any]], collection_name: str, build_graph: bool):

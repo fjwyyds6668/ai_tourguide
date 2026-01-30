@@ -91,8 +91,9 @@ async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db
         # 获取对话历史
         conversation_history = session_service.get_conversation_history(session_id)
         
-        # 如果使用RAG，先获取上下文
+        # 如果使用RAG，先获取上下文，并提取命中的景点ID（用于热门景点访问次数统计）
         context = ""
+        rag_results = None
         if request.use_rag:
             rag_results = await rag_service.hybrid_search(request.query, top_k=5)
             context = rag_results.get("enhanced_context", "")
@@ -110,14 +111,18 @@ async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db
         session_service.add_message(session_id, "user", request.query)
         session_service.add_message(session_id, "assistant", answer)
         
-        # 保存交互记录到数据库
+        # 使用 RAG 返回的 primary_attraction_id（hybrid_search 已解析），用于热门景点访问次数统计
+        primary_attraction_id = rag_results.get("primary_attraction_id") if rag_results else None
+
+        # 保存交互记录到数据库（含 attraction_id 以统计访问次数）
         try:
             interaction = Interaction(
                 session_id=session_id,
                 character_id=request.character_id,
                 query_text=request.query,
                 response_text=answer,
-                interaction_type="voice_query"
+                interaction_type="voice_query",
+                attraction_id=primary_attraction_id,
             )
             db.add(interaction)
             db.commit()
