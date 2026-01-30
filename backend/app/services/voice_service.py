@@ -16,13 +16,39 @@ class VoiceService:
     def __init__(self):
         self.whisper_model = None
         self.vosk_model = None
+        self._ffmpeg_available = self._check_ffmpeg()
         self._init_models()
+    
+    def _check_ffmpeg(self) -> bool:
+        """检查 ffmpeg 是否可用（Whisper 需要 ffmpeg）"""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["ffmpeg", "-version"],
+                capture_output=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                logger.info("ffmpeg 已安装并可用")
+                return True
+        except FileNotFoundError:
+            logger.warning("ffmpeg 未安装或不在 PATH 中")
+        except Exception as e:
+            logger.warning(f"检查 ffmpeg 时出错: {e}")
+        return False
     
     def _init_models(self):
         """初始化语音识别模型"""
+        if not self._ffmpeg_available:
+            logger.warning("ffmpeg 不可用，Whisper 语音识别功能将无法使用。请安装 ffmpeg：conda install -c conda-forge ffmpeg")
+        
         try:
+            import warnings
             import whisper
-            self.whisper_model = whisper.load_model("base")
+            # 抑制 FP16 在 CPU 上的警告（这是正常的回退行为）
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
+                self.whisper_model = whisper.load_model("base")
             logger.info("Whisper model loaded")
         except Exception as e:
             logger.warning(f"Failed to load Whisper: {e}")
@@ -37,10 +63,59 @@ class VoiceService:
     async def transcribe_whisper(self, audio_file_path: str) -> str:
         """使用 Whisper 进行语音识别"""
         if not self.whisper_model:
-            raise ValueError("Whisper model not loaded")
-
-        result = self.whisper_model.transcribe(audio_file_path, language="zh")
-        return result["text"].strip()
+            raise ValueError("Whisper 模型未加载")
+        
+        if not self._ffmpeg_available:
+            raise Exception(
+                "ffmpeg 未安装或不可用。Whisper 需要 ffmpeg 来处理音频文件。\n"
+                "安装方法（Windows）：\n"
+                "1. 使用 conda: conda install -c conda-forge ffmpeg\n"
+                "2. 或下载 ffmpeg 并添加到系统 PATH: https://ffmpeg.org/download.html"
+            )
+        
+        if not os.path.exists(audio_file_path):
+            raise FileNotFoundError(f"音频文件不存在: {audio_file_path}")
+        
+        file_size = os.path.getsize(audio_file_path)
+        if file_size == 0:
+            raise ValueError("音频文件为空")
+        
+        logger.info(f"开始 Whisper 识别: file={audio_file_path}, size={file_size} bytes")
+        
+        try:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
+                result = self.whisper_model.transcribe(audio_file_path, language="zh")
+            
+            text = result.get("text", "").strip()
+            if not text:
+                logger.warning("Whisper 识别结果为空")
+                return ""
+            
+            logger.info(f"Whisper 识别成功: text_length={len(text)}")
+            return text
+        except FileNotFoundError as e:
+            if "ffmpeg" in str(e).lower() or "系统找不到指定的文件" in str(e):
+                logger.error("ffmpeg 未找到", exc_info=True)
+                raise Exception(
+                    "ffmpeg 未安装或不在系统 PATH 中。\n"
+                    "安装方法（Windows）：\n"
+                    "1. 使用 conda: conda install -c conda-forge ffmpeg\n"
+                    "2. 或下载 ffmpeg 并添加到系统 PATH: https://ffmpeg.org/download.html"
+                )
+            raise
+        except Exception as e:
+            logger.error(f"Whisper 识别失败: {e}", exc_info=True)
+            error_msg = str(e)
+            if "ffmpeg" in error_msg.lower() or "系统找不到指定的文件" in error_msg:
+                raise Exception(
+                    "ffmpeg 未安装或不在系统 PATH 中。\n"
+                    "安装方法（Windows）：\n"
+                    "1. 使用 conda: conda install -c conda-forge ffmpeg\n"
+                    "2. 或下载 ffmpeg 并添加到系统 PATH: https://ffmpeg.org/download.html"
+                )
+            raise Exception(f"Whisper 语音识别失败: {error_msg}")
     
     async def transcribe_vosk(self, audio_file_path: str) -> str:
         """使用 Vosk 进行语音识别"""

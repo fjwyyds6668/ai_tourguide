@@ -79,24 +79,42 @@ async def transcribe_audio(
     method: str = "whisper"
 ):
     """语音识别"""
+    tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
             content = await file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
+        
+        if not tmp_path or not os.path.exists(tmp_path):
+            raise HTTPException(status_code=500, detail="临时文件创建失败")
+        
+        file_size = os.path.getsize(tmp_path)
+        logger.info(f"语音识别请求: method={method}, file_size={file_size} bytes")
+        
         if method == "whisper":
             text = await voice_service.transcribe_whisper(tmp_path)
         elif method == "vosk":
             text = await voice_service.transcribe_vosk(tmp_path)
         else:
             raise HTTPException(status_code=400, detail="Unsupported method")
-        os.unlink(tmp_path)
         
-        return {"text": text, "method": method}
-    except Exception as e:
-        if os.path.exists(tmp_path):
+        if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
-        raise HTTPException(status_code=500, detail=str(e))
+        
+        logger.info(f"语音识别成功: method={method}, text_length={len(text)}")
+        return {"text": text, "method": method}
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"语音识别失败: method={method}, error={error_msg}", exc_info=True)
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"语音识别失败: {error_msg}")
 
 class SynthesizeRequest(BaseModel):
     text: str

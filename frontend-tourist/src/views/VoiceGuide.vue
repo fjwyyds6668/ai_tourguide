@@ -23,15 +23,6 @@
           <template #header>
             <div class="card-header">
               <span class="card-title">数字人导游</span>
-              <el-button
-                type="primary"
-                link
-                @click="showHistory = !showHistory"
-                class="history-btn"
-              >
-                <el-icon><Document /></el-icon>
-                <span>{{ showHistory ? '隐藏历史' : '查看历史' }}</span>
-              </el-button>
             </div>
           </template>
           
@@ -48,7 +39,7 @@
               <el-input
                 v-model="textInput"
                 type="textarea"
-                :rows="5"
+                :rows="3"
                 placeholder="在此输入要对数字人说的话（Enter 发送，Ctrl+Enter 换行）"
                 @keyup.enter.exact.prevent="handleSendText"
                 @keyup.ctrl.enter.prevent="handleSendText"
@@ -114,30 +105,6 @@
       </el-col>
     </el-row>
 
-    <!-- 历史记录对话框 -->
-    <el-dialog
-      v-model="showHistory"
-      title="历史记录"
-      width="800px"
-    >
-      <el-table
-        :data="historyList"
-        v-loading="historyLoading"
-        style="width: 100%"
-        :row-key="(row) => row.id ?? row.created_at + row.query_text"
-      >
-        <el-table-column prop="query_text" label="问题" width="300" />
-        <el-table-column prop="response_text" label="回答" />
-        <el-table-column prop="created_at" label="时间" width="180">
-          <template #default="{ row }">
-            {{ formatTime(row.created_at) }}
-          </template>
-        </el-table-column>
-        <template #empty>
-          <el-empty description="暂无历史记录，开始与AI导游对话后会显示在这里" />
-        </template>
-      </el-table>
-    </el-dialog>
   </div>
 </template>
 
@@ -161,9 +128,6 @@ const characters = ref([])
 const MAX_HISTORY_LENGTH = 50
 const conversationHistory = ref([])
 const textInput = ref('')
-const showHistory = ref(false)
-const historyList = ref([])
-const historyLoading = ref(false)
 
 let mediaRecorder = null
 let audioChunks = []
@@ -669,34 +633,6 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
   }, interval)
 }
 
-const loadHistory = async () => {
-  if (!sessionId.value) {
-    historyList.value = []
-    return
-  }
-  historyLoading.value = true
-  try {
-    const res = await api.get('/history/history', {
-      params: {
-        session_id: sessionId.value,
-        limit: 5
-      }
-    })
-    historyList.value = res.data?.data ?? res.data ?? []
-  } catch (error) {
-    console.error('加载历史失败:', error)
-    historyList.value = []
-  } finally {
-    historyLoading.value = false
-  }
-}
-
-watch(showHistory, (val) => {
-  if (val) {
-    loadHistory()
-  }
-})
-
 const scrollToBottom = () => {
   requestAnimationFrame(() => {
     const listRef = document.querySelector('.conversation-list')
@@ -759,10 +695,9 @@ const triggerSpeakingMotion = () => {
   max-width: 1400px;
   margin: 0 auto;
   padding: 12px;
-  height: calc(100vh - 24px);
+  min-height: calc(100vh - 24px);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 
 .section-card {
