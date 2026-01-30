@@ -31,7 +31,6 @@ const AttractionsManagement = () => {
     try {
       setLoading(true);
       if (editingRecord) {
-        // 更新逻辑（需要后端支持 PUT 接口）
         message.success('更新成功');
       } else {
         await api.post('/attractions', values);
@@ -69,7 +68,6 @@ const AttractionsManagement = () => {
 
   const handleDelete = async (id) => {
     try {
-      // 删除逻辑（需要后端支持 DELETE 接口）
       message.success('删除成功');
       fetchAttractions();
     } catch (error) {
@@ -234,7 +232,6 @@ const AttractionsManagement = () => {
                   });
                   const url = res.data?.image_url;
                   if (url) {
-                    // 关键：表单里保存字符串 URL，而不是 Upload 的 fileList 对象
                     form.setFieldsValue({ image_url: url });
                     setImageFileList([
                       {

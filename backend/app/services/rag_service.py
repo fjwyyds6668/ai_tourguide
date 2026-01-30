@@ -1,7 +1,4 @@
-"""
-GraphRAG 检索服务
-GraphRAG: 结合图数据库和向量检索的增强生成技术
-"""
+"""GraphRAG 检索服务：图数据库 + 向量检索增强生成"""
 import logging
 import re
 import json
@@ -16,22 +13,20 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+RELEVANCE_SCORE_THRESHOLD = 0.2  # 向量相似度下限，低于此值视为不相关
+
 def _strip_emoji(text: str) -> str:
-    """去掉回复中所有表情符号，避免 TTS 异常或界面显示杂乱。"""
+    """去掉表情与末尾控制字符，避免 TTS 异常；缺句尾时补句号。"""
     if not text or not isinstance(text, str):
         return text or ""
-    # 常见 emoji / 符号块（Misc Symbols, Dingbats, Emoticons, 以及补充平面表情等）
     s = re.sub(r"[\u2600-\u26FF\u2700-\u27BF\U0001F300-\U0001F9FF]", "", text)
     s = re.sub(r"\s{2,}", " ", s).strip()
-    # 去掉末尾不可见/控制字符，避免 TTS 少读最后几个字
     s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\r\n]+$", "", s)
-    # 若末尾没有句号/问号/叹号，补句号，减少 TTS 截断
     if s and s[-1] not in "。！？.!?…":
         s = s.rstrip("，、；：") + "。"
     return s
 
 
-# 尝试导入中文分词库
 try:
     import jieba
     import jieba.posseg as pseg
@@ -41,31 +36,18 @@ except ImportError:
     logger.warning("jieba not available, using simple keyword extraction")
 
 class RAGService:
-    """
-    GraphRAG 检索增强生成服务
-    
-    GraphRAG 核心功能：
-    1. 实体识别（NER）：从查询中提取实体
-    2. 向量检索：使用 Milvus 进行语义相似度搜索
-    3. 图检索：使用 Neo4j 查询实体关系和子图
-    4. 结果融合：结合向量和图检索结果生成增强上下文
-    """
-    
+    """GraphRAG：实体识别 + Milvus 向量检索 + Neo4j 图检索 + 结果融合。"""
+
     def __init__(self):
         self.embedding_model = None
         self.llm_client = None
-        # Milvus 集合加载状态缓存：避免每次搜索都 load_state/load
         self._milvus_loaded_collections: set[str] = set()
         self._init_embedding_model()
         self._init_ner()
         self._init_llm_client()
 
     async def parse_scenic_text(self, text: str) -> Optional[Dict[str, Any]]:
-        """
-        将景区介绍类文本结构化为 JSON，供图数据库构建“一簇”使用。
-        如果判断不是景区类文本，则返回 None。
-        """
-        # 简单启发式：包含这些关键词时才尝试解析，避免对所有知识都调用 LLM
+        """将景区介绍结构化为 JSON 供图库建簇；非景区类返回 None。"""
         scenic_keywords = ["景区", "风景区", "旅游度假区", "景点", "度假区"]
         if not any(k in text for k in scenic_keywords):
             return None
@@ -98,15 +80,11 @@ class RAGService:
             )
             raw = resp.choices[0].message.content
             data = json.loads(raw)
-
-            # 基本字段校验
             if not isinstance(data, dict):
                 return None
             scenic_name = data.get("scenic_spot")
             if not scenic_name or not isinstance(scenic_name, str):
                 return None
-
-            # 规范化字段类型
             data["location"] = data.get("location") or []
             data["features"] = data.get("features") or []
             data["spots"] = data.get("spots") or []
@@ -117,15 +95,7 @@ class RAGService:
             return None
 
     async def parse_attraction_text(self, name: str, text: str) -> Optional[Dict[str, Any]]:
-        """
-        将“单个景点”介绍结构化为 JSON，供图数据库构建“以景点为中心的一簇”使用。
-        返回字段：
-        - name: 景点名称
-        - location: 行政层级数组，例如 ["四川省", "宜宾市", "长宁县"]（可为空）
-        - features: 特色/要点数组
-        - honors: 荣誉/称号数组
-        - category: 类别（可为空）
-        """
+        """将单景点介绍结构化为 JSON 供图库建簇。"""
         if not name or not isinstance(name, str):
             return None
         if not self.llm_client:
@@ -169,9 +139,7 @@ class RAGService:
             return None
     
     def _init_embedding_model(self):
-        """初始化嵌入模型"""
         try:
-            # 使用较小的多语言模型，维度为 384
             self.embedding_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
             logger.info("Embedding model loaded")
         except Exception as e:
@@ -179,9 +147,7 @@ class RAGService:
             self.embedding_model = None
     
     def _init_ner(self):
-        """初始化实体识别"""
         if JIEBA_AVAILABLE:
-            # 加载自定义词典（可以添加景点名称等）
             try:
                 jieba.initialize()
                 logger.info("NER model (jieba) initialized")
@@ -189,15 +155,10 @@ class RAGService:
                 logger.warning(f"Failed to initialize jieba: {e}")
     
     def _init_llm_client(self):
-        """初始化LLM客户端（硅基流动/OpenAI）"""
         try:
             if settings.OPENAI_API_KEY:
                 import openai
-                # 配置OpenAI客户端
-                client_kwargs = {
-                    "api_key": settings.OPENAI_API_KEY
-                }
-                # 如果配置了硅基流动的API地址，使用它
+                client_kwargs = {"api_key": settings.OPENAI_API_KEY}
                 if settings.OPENAI_API_BASE:
                     client_kwargs["base_url"] = settings.OPENAI_API_BASE
                 
@@ -210,17 +171,11 @@ class RAGService:
             self.llm_client = None
     
     def extract_entities(self, text: str) -> List[Dict[str, Any]]:
-        """
-        从文本中提取实体（命名实体识别）
-        返回: [{"text": "实体名", "type": "实体类型", "start": 0, "end": 2}]
-        """
+        """从文本提取实体，返回 [{"text", "type", "confidence"}]。"""
         entities = []
-        
         if JIEBA_AVAILABLE:
-            # 使用 jieba 进行词性标注和实体识别
             words = pseg.cut(text)
             for word, flag in words:
-                # 识别地名、机构名、人名等
                 if flag in ['ns', 'nr', 'nt', 'nz'] or len(word) >= 2:
                     entities.append({
                         "text": word,
@@ -228,8 +183,6 @@ class RAGService:
                         "confidence": 0.8
                     })
         else:
-            # 简单关键词提取（备用方案）
-            # 提取2-4字的中文词组
             pattern = r'[\u4e00-\u9fa5]{2,4}'
             matches = re.finditer(pattern, text)
             for match in matches:
@@ -238,8 +191,6 @@ class RAGService:
                     "type": "KEYWORD",
                     "confidence": 0.6
                 })
-        
-        # 去重
         seen = set()
         unique_entities = []
         for entity in entities:
@@ -250,12 +201,8 @@ class RAGService:
         return unique_entities
     
     def _map_pos_to_entity_type(self, pos: str) -> str:
-        """将词性标注映射到实体类型"""
         mapping = {
-            'ns': 'LOCATION',  # 地名
-            'nr': 'PERSON',    # 人名
-            'nt': 'ORG',       # 机构名
-            'nz': 'OTHER',     # 其他专名
+            'ns': 'LOCATION', 'nr': 'PERSON', 'nt': 'ORG', 'nz': 'OTHER',
         }
         return mapping.get(pos, 'KEYWORD')
     
@@ -277,23 +224,16 @@ class RAGService:
         return embs.tolist()
     
     async def vector_search(self, query: str, collection_name: str = "tour_knowledge", top_k: int = 5) -> List[Dict[str, Any]]:
-        """向量相似度搜索"""
+        """向量相似度搜索。"""
         if not milvus_client.connected:
             milvus_client.connect()
-        
-        # 确保集合存在：首次使用/未上传知识库时，避免 SchemaNotReadyException
         try:
             collection = milvus_client.create_collection_if_not_exists(
-                collection_name,
-                dimension=384,  # 与 embedding 模型维度保持一致
-                load=False  # 先不加载，后面统一处理
+                collection_name, dimension=384, load=False
             )
         except Exception as e:
-            # Milvus 未安装/未启动/不可用时，向量检索降级为空（GraphRAG 仍可继续走图检索/LLM）
             logger.warning(f"Milvus not available for vector search, fallback to empty results: {e}")
             return []
-        
-        # 检查集合是否存在
         try:
             from pymilvus import utility
             if not utility.has_collection(collection_name):
@@ -302,8 +242,6 @@ class RAGService:
         except Exception as e:
             logger.warning(f"Failed to check collection existence: {e}")
             return []
-        
-        # 尽量避免每次请求都 load_state/load：用内存缓存 + 失败兜底
         if collection_name not in self._milvus_loaded_collections:
             try:
                 from pymilvus import utility
@@ -328,11 +266,7 @@ class RAGService:
                 self._milvus_loaded_collections.add(collection_name)
             except Exception as e:
                 logger.warning(f"Failed to ensure collection '{collection_name}' loaded, will rely on retry: {e}")
-        
-        # 生成查询向量
         query_vector = [self.generate_embedding(query)]
-        
-        # 搜索
         try:
             search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
             results = collection.search(
@@ -343,7 +277,6 @@ class RAGService:
                 output_fields=["text_id"]
             )
         except Exception as e:
-            # 如果搜索失败，可能是集合未加载，尝试重新加载后重试一次
             if "not loaded" in str(e).lower() or "collection not loaded" in str(e).lower():
                 logger.warning(f"Search failed due to collection not loaded, retrying after reload: {e}")
                 try:
@@ -362,8 +295,6 @@ class RAGService:
             else:
                 logger.error(f"Search failed: {e}")
                 return []
-        
-        # 格式化结果
         search_results = []
         if results and len(results) > 0:
             for hit in results[0]:
@@ -371,18 +302,13 @@ class RAGService:
                     "id": hit.id,
                     "text_id": hit.entity.get("text_id", ""),
                     "distance": hit.distance,
-                    "score": 1 / (1 + hit.distance) if hit.distance > 0 else 1.0  # 转换为相似度分数
+                    "score": 1 / (1 + hit.distance) if hit.distance > 0 else 1.0,
                 })
         
         return search_results
     
     async def graph_search(self, entity_name: str, relation_type: str = None, limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        图数据库关系查询
-        
-        GraphRAG 核心：通过图结构查询实体之间的关系和上下文
-        """
-        # 关系类型无法参数化，只能做白名单/格式校验后再拼接，避免注入
+        """图数据库关系查询。relation_type 白名单校验后拼接，避免注入。"""
         rel = None
         if relation_type and isinstance(relation_type, str):
             rel_candidate = relation_type.strip().upper()
@@ -412,15 +338,9 @@ class RAGService:
         return results
     
     async def graph_subgraph_search(self, entities: List[str], depth: int = 2) -> Dict[str, Any]:
-        """
-        图子图搜索：基于多个实体构建子图
-        
-        这是 GraphRAG 的核心功能之一，通过实体构建相关子图
-        """
+        """基于多实体构建子图。depth 经校验后拼接（Neo4j 限制）。"""
         if not entities:
             return {"nodes": [], "relationships": []}
-        
-        # 深度不能参数化到可变长度里（Neo4j 限制），但可以严格校验后插入整数；实体列表用参数化
         safe_depth = 2
         try:
             safe_depth = int(depth)
@@ -444,8 +364,6 @@ class RAGService:
         LIMIT 50
         """
         results = neo4j_client.execute_query(query, {"entities": entities})
-        
-        # 格式化结果
         nodes = {}
         relationships = []
         
@@ -472,31 +390,40 @@ class RAGService:
             "entity_count": len(entities)
         }
     
+    def _query_needs_context(self, query: str) -> bool:
+        """寒暄/致谢/告别/能力询问等返回 False，不检索；景区/景点问题才走 RAG。"""
+        if not query or not isinstance(query, str):
+            return False
+        q = query.strip()
+        if len(q) <= 1:
+            return False
+        no_context_patterns = [
+            r"^(你好|您好|嗨|hello|hi|在吗|在不在)\s*[？?]?$",
+            r"^(谢谢|感谢|多谢|谢谢您)\s*[！!。.]?$",
+            r"^(再见|拜拜|bye)\s*[！!。.]?$",
+            r"^(你是谁|你能做什么|有什么功能|你能干嘛|介绍下自己)\s*[？?]?$",
+            r"^(帮助|help|怎么用|如何使用)\s*[？?]?$",
+            r"^随便(问问|问问看)?\s*[？?]?$",
+        ]
+        for pat in no_context_patterns:
+            if re.search(pat, q, re.IGNORECASE):
+                return False
+        return True
+
     async def hybrid_search(self, query: str, top_k: int = 5) -> Dict[str, Any]:
-        """
-        GraphRAG 混合检索：结合向量搜索和图搜索
-        
-        工作流程：
-        1. 向量检索：在知识库中查找语义相似的内容
-        2. 实体识别：从查询和向量结果中提取实体
-        3. 图检索：基于实体查询图数据库中的关系和子图
-        4. 结果融合：合并向量和图检索结果，生成增强上下文
-        """
-        # 步骤1: 向量搜索
+        """向量检索 + 实体识别 + 图检索 + 结果融合。"""
         vector_results = await self.vector_search(query, top_k=top_k)
-        
-        # 步骤2: 实体识别（GraphRAG 核心）
+        vector_results_relevant = [r for r in (vector_results or []) if (r.get("score") or 0) >= RELEVANCE_SCORE_THRESHOLD]
+        if not vector_results_relevant and vector_results:
+            vector_results_relevant = vector_results[:1]
+        vector_results = vector_results_relevant
+
         entities = self.extract_entities(query)
-        
-        # 从向量搜索结果中也可能提取实体
         if vector_results:
-            for result in vector_results[:3]:  # 只处理前3个结果
+            for result in vector_results[:3]:
                 text_id = result.get("text_id", "")
                 if text_id:
-                    # 假设 text_id 可能包含实体信息
                     entities.extend(self.extract_entities(text_id))
-        
-        # 去重实体
         unique_entities = {}
         for entity in entities:
             text = entity["text"]
@@ -504,35 +431,64 @@ class RAGService:
                 unique_entities[text] = entity
         
         entity_names = [e["text"] for e in unique_entities.values()]
-        
-        # 步骤3: 图检索
         graph_results = []
         subgraph_data = None
-        
         if entity_names:
-            # 对每个实体进行图搜索
-            for entity_name in entity_names[:5]:  # 限制实体数量
+            for entity_name in entity_names[:5]:
                 results = await self.graph_search(entity_name, limit=5)
                 graph_results.extend(results)
-            
-            # 子图搜索（GraphRAG 高级功能）
             if len(entity_names) > 1:
                 subgraph_data = await self.graph_subgraph_search(entity_names[:3], depth=2)
-        
-        # 步骤4: 结果融合和评分
+        text_ids_to_fetch = [
+            (r.get("text_id") or "").strip()
+            for r in (vector_results or [])
+            if (r.get("text_id") or "").strip() and not (r.get("text_id") or "").strip().startswith("attraction_")
+        ]
+        text_contents = self._get_text_contents_from_neo4j(text_ids_to_fetch) if text_ids_to_fetch else {}
+        for r in vector_results or []:
+            tid = (r.get("text_id") or "").strip()
+            if tid and tid in text_contents:
+                r["content"] = text_contents[tid]
         enhanced_results = self._merge_results(vector_results, graph_results, entity_names)
-        
-        # 步骤5: 若检索命中某景点，拉取该景点的完整一簇信息并入上下文
         attraction_ids = []
+        primary_attraction_id = None
         for r in (vector_results or []):
             text_id = (r.get("text_id") or "").strip()
             if text_id.startswith("attraction_"):
                 try:
-                    attraction_ids.append(int(text_id.replace("attraction_", "")))
+                    aid = int(text_id.replace("attraction_", ""))
+                    attraction_ids.append(aid)
+                    if primary_attraction_id is None:
+                        primary_attraction_id = aid
                 except ValueError:
                     pass
-        if attraction_ids:
-            cluster_ctx = await self._get_attraction_cluster_context(attraction_ids)
+        query_about_scenic = bool(re.search(r"什么景区|哪个景区|是啥景区|这是什么景区|是哪个景区|啥景区|哪个景点.*景区", (query or "").strip()))
+        if primary_attraction_id is not None and query_about_scenic:
+            try:
+                parent_q = """
+                MATCH (a:Attraction {id: $aid})
+                OPTIONAL MATCH (a)-[:属于]->(s1:ScenicSpot)
+                OPTIONAL MATCH (s2:ScenicSpot)-[:HAS_SPOT]->(a)
+                WITH a, coalesce(s1, s2) AS s WHERE s IS NOT NULL
+                RETURN s.scenic_spot_id AS sid, s.name AS s_name
+                LIMIT 1
+                """
+                parent_rows = neo4j_client.execute_query(parent_q, {"aid": int(primary_attraction_id)})
+                if parent_rows:
+                    row0 = parent_rows[0]
+                    sid = row0.get("sid")
+                    s_name = row0.get("s_name")
+                    scenic_ctx = ""
+                    if sid is not None:
+                        scenic_ctx = await self._get_scenic_spot_cluster_context(int(sid))
+                    if not scenic_ctx and s_name:
+                        scenic_ctx = await self._get_scenic_spot_cluster_context_by_name(str(s_name).strip())
+                    if scenic_ctx:
+                        enhanced_results = scenic_ctx + "\n\n" + (enhanced_results or "")
+            except Exception as e:
+                logger.warning(f"查询景点所属景区失败: {e}")
+        if primary_attraction_id is not None:
+            cluster_ctx = await self._get_attraction_cluster_context([primary_attraction_id])
             if cluster_ctx:
                 enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
         
@@ -544,7 +500,7 @@ class RAGService:
             "enhanced_context": enhanced_results,
             "query": query,
             "attraction_ids": attraction_ids,
-            "primary_attraction_id": attraction_ids[0] if attraction_ids else None,
+            "primary_attraction_id": primary_attraction_id,
         }
 
     async def _build_scenic_attractions_context(
@@ -553,11 +509,7 @@ class RAGService:
         rag_results: Dict[str, Any],
         conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> str:
-        """
-        基于当前查询 + 图子图 + 对话上下文，补充“某个景区下有哪些景点”的结构化信息。
-        场景：用户问“现在有哪些景点”“这个景区有哪些景点”等。
-        """
-        # 只在明显是“列举景点”的问题时触发，避免所有问句都扫图
+        """列举景点类问题时，补充“某景区下有哪些景点”的结构化信息。"""
         list_patterns = [
             r"有哪些景点",
             r"景点都有(什么|哪些)",
@@ -568,18 +520,13 @@ class RAGService:
             return ""
 
         scenic_names: set[str] = set()
-
-        # 1) 优先从子图里找 ScenicSpot 节点
         subgraph = rag_results.get("subgraph") or {}
         for node in subgraph.get("nodes", []):
             labels = set(node.get("labels") or [])
             props = node.get("properties") or {}
             if "ScenicSpot" in labels and isinstance(props.get("name"), str):
                 scenic_names.add(props["name"])
-
-        # 2) 如果子图里没有，再从对话上下文里抽实体，去 Neo4j 里验证哪些是景区名
         if not scenic_names and conversation_history:
-            # 只看最近几轮用户说的话
             recent_user_text = "。".join(
                 msg["content"]
                 for msg in conversation_history[-6:]
@@ -590,7 +537,6 @@ class RAGService:
                     cand = ent.get("text")
                     if not cand or not isinstance(cand, str):
                         continue
-                    # 去 Neo4j 里确认一下是否存在对应的 ScenicSpot
                     try:
                         check_q = """
                         MATCH (s:ScenicSpot {name: $name})
@@ -602,8 +548,6 @@ class RAGService:
                             scenic_names.add(res[0]["name"])
                     except Exception:
                         continue
-
-        # 3) 兜底：若仍未识别到任何景区（例如用户直接问“现在有哪些景点”且无历史），则查图中所有景区
         if not scenic_names:
             try:
                 all_scenic_q = """
@@ -619,10 +563,8 @@ class RAGService:
 
         if not scenic_names:
             return ""
-
-        # 4) 针对识别到的每个景区，列出它下面的景点（HAS_SPOT 指向的 Spot/Attraction + 属于 该景区的 Attraction）
         parts: List[str] = []
-        for scenic_name in list(scenic_names)[:3]:  # 最多 3 个景区，避免上下文过长
+        for scenic_name in list(scenic_names)[:3]:
             try:
                 cypher = """
                 MATCH (s:ScenicSpot {name: $name})
@@ -656,7 +598,7 @@ class RAGService:
         return "\n".join(parts)
     
     def _get_node_name(self, node: Any) -> str:
-        """从 Neo4j 返回的节点中安全取 name（支持 Node 或 dict）"""
+        """Neo4j 节点安全取 name。"""
         if node is None:
             return ""
         if isinstance(node, dict):
@@ -666,15 +608,12 @@ class RAGService:
         return ""
 
     async def _get_attraction_cluster_context(self, attraction_ids: List[int]) -> str:
-        """
-        从 Neo4j 拉取指定景点的完整一簇信息（节点属性 + 所有出边关系），
-        格式化为文本供 LLM 使用。当检索命中某景点时，必须把该景点的全部簇信息返回。
-        """
+        """从 Neo4j 拉取景点一簇（属性+出边），格式化为文本供 LLM。"""
         if not attraction_ids:
             return ""
         parts = []
         seen = set()
-        for aid in attraction_ids[:5]:  # 最多 5 个景点，避免上下文过长
+        for aid in attraction_ids[:5]:
             if aid in seen:
                 continue
             seen.add(aid)
@@ -729,23 +668,122 @@ class RAGService:
             return ""
         return "【景点一簇信息】\n" + "\n\n".join(parts)
 
+    def _parse_scenic_spot_rows(self, rows: List[Dict]) -> str:
+        """解析 ScenicSpot 行为景区一簇文本，供按 id/name 共用。"""
+        if not rows:
+            return ""
+        s_name = ""
+        s_area = ""
+        s_location = ""
+        spot_names = []
+        feature_names = []
+        honor_names = []
+        location_name = ""
+        for row in rows or []:
+            s = row.get("s")
+            rel_type = row.get("rel_type")
+            n = row.get("n")
+            if s is not None and not s_name:
+                if hasattr(s, "get"):
+                    s_name = (s.get("name") or "").strip()
+                    s_area = (s.get("area") or "").strip()
+                    s_location = (s.get("location") or "").strip()
+                elif isinstance(s, dict):
+                    s_name = (s.get("name") or (s.get("properties") or {}).get("name") or "").strip()
+                    s_area = (s.get("area") or (s.get("properties") or {}).get("area") or "").strip()
+                    s_location = (s.get("location") or (s.get("properties") or {}).get("location") or "").strip()
+            if rel_type and n is not None:
+                n_name = self._get_node_name(n)
+                if not n_name:
+                    continue
+                if rel_type == "HAS_SPOT":
+                    spot_names.append(n_name)
+                elif rel_type == "HAS_FEATURE":
+                    feature_names.append(n_name)
+                elif rel_type == "HAS_HONOR":
+                    honor_names.append(n_name)
+                elif rel_type == "位于":
+                    location_name = n_name
+        if not s_name:
+            return ""
+        lines = [f"景区【{s_name}】"]
+        if s_area:
+            lines.append(f"面积：{s_area}")
+        if s_location:
+            lines.append(f"位置：{s_location}")
+        if location_name:
+            lines.append(f"所在：{location_name}")
+        if spot_names:
+            lines.append("下属景点：" + "、".join(spot_names[:20]))
+        if feature_names:
+            lines.append("特色：" + "、".join(feature_names[:15]))
+        if honor_names:
+            lines.append("荣誉：" + "、".join(honor_names[:10]))
+        return "【景区一簇信息】\n" + "\n".join(lines)
+
+    async def _get_scenic_spot_cluster_context(self, scenic_spot_id: int) -> str:
+        """按 scenic_spot_id 拉取景区一簇。"""
+        try:
+            query = """
+            MATCH (s:ScenicSpot {scenic_spot_id: $sid})
+            OPTIONAL MATCH (s)-[r]->(n)
+            RETURN s, type(r) as rel_type, n
+            """
+            rows = neo4j_client.execute_query(query, {"sid": int(scenic_spot_id)})
+            return self._parse_scenic_spot_rows(rows or [])
+        except Exception as e:
+            logger.warning(f"拉取景区簇失败 scenic_spot_id={scenic_spot_id}: {e}")
+            return ""
+
+    async def _get_scenic_spot_cluster_context_by_name(self, scenic_name: str) -> str:
+        """按景区名称拉取景区一簇（兼容无 scenic_spot_id 的旧节点）。"""
+        if not (scenic_name or "").strip():
+            return ""
+        try:
+            query = """
+            MATCH (s:ScenicSpot {name: $name})
+            OPTIONAL MATCH (s)-[r]->(n)
+            RETURN s, type(r) as rel_type, n
+            """
+            rows = neo4j_client.execute_query(query, {"name": (scenic_name or "").strip()})
+            return self._parse_scenic_spot_rows(rows or [])
+        except Exception as e:
+            logger.warning(f"拉取景区簇失败（按名称） scenic_name={scenic_name}: {e}")
+            return ""
+
+    def _get_text_contents_from_neo4j(self, text_ids: List[str]) -> Dict[str, str]:
+        """按 text_id 从 Neo4j Text 节点拉取正文。"""
+        if not text_ids:
+            return {}
+        result = {}
+        try:
+            query = """
+            MATCH (t:Text) WHERE t.id IN $ids
+            RETURN t.id AS id, t.content AS content
+            """
+            rows = neo4j_client.execute_query(query, {"ids": list(text_ids)})
+            for row in rows or []:
+                tid = row.get("id")
+                content = row.get("content")
+                if tid is not None and content:
+                    result[str(tid)] = (content if isinstance(content, str) else "").strip()
+        except Exception as e:
+            logger.warning(f"从 Neo4j 拉取文本正文失败: {e}")
+        return result
+
     def _merge_results(self, vector_results: List[Dict], graph_results: List[Dict], entities: List[str]) -> str:
-        """
-        融合向量和图检索结果，生成增强上下文
-        
-        这是 GraphRAG 的关键：将结构化图信息与文本信息结合
-        """
+        """融合向量+图检索结果为增强上下文。"""
         context_parts = []
-        
-        # 添加向量检索的文本内容
         if vector_results:
             context_parts.append("相关文本内容：")
-            for i, result in enumerate(vector_results[:3], 1):
+            for i, result in enumerate(vector_results[:5], 1):
                 text_id = result.get("text_id", "")
                 score = result.get("score", 0)
-                context_parts.append(f"{i}. {text_id} (相似度: {score:.2f})")
-        
-        # 添加图检索的关系信息
+                content = result.get("content", "").strip()
+                if content:
+                    context_parts.append(f"{i}. (相似度: {score:.2f})\n{content}")
+                else:
+                    context_parts.append(f"{i}. {text_id} (相似度: {score:.2f})")
         if graph_results:
             context_parts.append("\n相关实体关系：")
             seen_relations = set()
@@ -758,8 +796,6 @@ class RAGService:
                     if relation_key not in seen_relations:
                         seen_relations.add(relation_key)
                         context_parts.append(f"- {a_name} {rel_type} {b_name}")
-        
-        # 添加识别的实体
         if entities:
             context_parts.append(f"\n识别到的实体：{', '.join(entities[:5])}")
         
@@ -772,48 +808,46 @@ class RAGService:
         use_rag: bool = True,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         character_prompt: Optional[str] = None
-    ) -> str:
-        """
-        使用LLM生成回答（支持硅基流动和多轮对话）
-        
-        Args:
-            query: 用户查询
-            context: 可选的上下文信息
-            use_rag: 是否使用RAG检索增强
-            conversation_history: 对话历史记录
-            character_prompt: 角色提示词
-        
-        Returns:
-            生成的回答
-        """
+    ) -> Dict[str, Any]:
+        """生成回答；RAG 仅在内部执行一次。返回 {answer, primary_attraction_id, context}。"""
         if not self.llm_client:
-            return "抱歉，AI服务未配置，无法生成回答。"
-        
-        rag_debug: Optional[Dict[str, Any]] = None
-        # 如果使用RAG，先进行检索
-        if use_rag:
-            rag_results = await self.hybrid_search(query, top_k=5)
-            context = rag_results.get("enhanced_context", "") or ""
+            return {"answer": "抱歉，AI服务未配置，无法生成回答。", "primary_attraction_id": None, "context": ""}
 
-            # 基于当前查询 + 图结果 + 对话上下文，补充“当前景区有哪些景点”的结构化说明
+        out_context = context or ""
+        primary_attraction_id: Optional[int] = None
+        rag_debug: Optional[Dict[str, Any]] = None
+        needs_context = self._query_needs_context(query) if use_rag else False
+        if use_rag and not needs_context:
+            out_context = "当前问题无需知识库上下文，请自然、简短回复。"
+            rag_debug = {
+                "query": query,
+                "vector_results": [],
+                "graph_results": [],
+                "subgraph": None,
+                "enhanced_context": out_context,
+                "entities": [],
+                "skip_rag_reason": "问题为寒暄/通用问答，无需检索",
+            }
+        elif use_rag:
+            rag_results = await self.hybrid_search(query, top_k=5)
+            primary_attraction_id = rag_results.get("primary_attraction_id")
+            out_context = rag_results.get("enhanced_context", "") or ""
             scenic_ctx = await self._build_scenic_attractions_context(
                 query=query,
                 rag_results=rag_results,
                 conversation_history=conversation_history,
             )
             if scenic_ctx:
-                context = f"{context}\n\n{scenic_ctx}" if context else scenic_ctx
+                out_context = f"{out_context}\n\n{scenic_ctx}" if out_context else scenic_ctx
 
             rag_debug = {
                 "query": rag_results.get("query") or query,
                 "vector_results": rag_results.get("vector_results", [])[:5],
                 "graph_results": rag_results.get("graph_results", [])[:5],
                 "subgraph": rag_results.get("subgraph"),
-                "enhanced_context": context or "",
+                "enhanced_context": out_context or "",
                 "entities": rag_results.get("entities", []),
             }
-        
-        # 构建系统提示词
         base_system_prompt = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
 回答要求：
 1. 基于提供的上下文信息回答
@@ -821,29 +855,23 @@ class RAGService:
 3. 如果信息不足，诚实说明
 4. 不要编造信息
 5. 不要透露任何内部标识符/编号/ID（例如 kb_***、text_id、session_id 等）；自我介绍时也不要输出任何“编号”"""
-        
-        # 如果有角色提示词，合并到系统提示词中
         if character_prompt:
             system_prompt = f"{base_system_prompt}\n\n角色设定：{character_prompt}"
         else:
             system_prompt = base_system_prompt
-        
-        # 构建消息列表
         messages = [{"role": "system", "content": system_prompt}]
-        
-        # 添加对话历史
         if conversation_history:
             messages.extend(conversation_history)
-        
-        # 添加当前查询和上下文
         user_prompt = f"""用户问题：{query}
 
 上下文信息：
-{context if context else "无额外上下文信息"}
+{out_context if out_context else "无额外上下文信息"}
 
 请基于以上信息回答用户的问题。"""
         messages.append({"role": "user", "content": user_prompt})
-        
+        if rag_debug is not None:
+            rag_debug["final_sent_to_llm"] = user_prompt
+
         try:
             response = self.llm_client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
@@ -853,15 +881,12 @@ class RAGService:
             )
             
             answer = response.choices[0].message.content
-            # 安全清理：移除知识库内部 text_id / 编号，避免暴露 kb_*** 这类内部标识
             if answer:
                 answer = re.sub(r"编号为\s*kb_\d+", "", answer)
                 answer = re.sub(r"\bkb_\d+\b", "", answer)
                 answer = re.sub(r"\s{2,}", " ", answer).strip()
-            # 去掉所有表情符号，避免 TTS 异常或末尾不读
             if answer:
                 answer = _strip_emoji(answer)
-            # 将 RAG 检索结果 + 最终回答记录到日志文件，便于管理员在分析界面查看
             try:
                 log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
                 os.makedirs(log_root, exist_ok=True)
@@ -876,7 +901,6 @@ class RAGService:
                 }
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-                # 只保留最近 5 条，避免日志文件无限增长
                 try:
                     with open(log_path, "r", encoding="utf-8") as f:
                         lines = [ln for ln in f.readlines() if ln.strip()]
@@ -887,14 +911,12 @@ class RAGService:
                     pass
             except Exception as e:
                 logger.warning(f"Failed to write RAG context log: {e}")
-
             logger.info(f"Generated answer for query: {query[:50]}...")
-            return answer
-            
+            return {"answer": answer, "primary_attraction_id": primary_attraction_id, "context": out_context}
         except Exception as e:
             logger.error(f"Failed to generate answer: {e}")
-            return f"抱歉，生成回答时出现错误：{str(e)}"
+            return {"answer": f"抱歉，生成回答时出现错误：{str(e)}", "primary_attraction_id": None, "context": out_context}
 
-# 全局 RAG 服务实例
+
 rag_service = RAGService()
 

@@ -36,7 +36,10 @@
           </template>
           
           <div class="avatar-wrapper">
-            <Live2DCanvas character-name="Mao" character-group="free" />
+            <Live2DCanvas
+              :character-name="currentLive2DName"
+              :character-group="currentLive2DGroup"
+            />
           </div>
 
           <div class="text-input-area">
@@ -139,7 +142,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document, ChatDotRound } from '@element-plus/icons-vue'
 import Live2DCanvas from '../components/Live2DCanvas.vue'
@@ -192,7 +195,17 @@ const loadCharacters = async () => {
   }
 }
 
-// 角色切换（当前 Live2D 模型固定，可在此扩展多角色切换逻辑）
+const currentLive2DName = computed(() => {
+  if (!selectedCharacterId.value || !characters.value.length) return 'Mao'
+  const c = characters.value.find((ch) => ch.id === selectedCharacterId.value)
+  return c?.live2d_character_name || 'Mao'
+})
+const currentLive2DGroup = computed(() => {
+  if (!selectedCharacterId.value || !characters.value.length) return 'free'
+  const c = characters.value.find((ch) => ch.id === selectedCharacterId.value)
+  return c?.live2d_character_group || 'free'
+})
+
 const handleCharacterChange = () => {}
 
 // 录音控制

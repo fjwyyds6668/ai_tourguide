@@ -144,12 +144,10 @@ async def update_character(character_id: int, character: CharacterUpdate):
     try:
         prisma = await get_prisma()
         
-        # 检查角色是否存在
         existing = await prisma.character.find_unique(where={"id": character_id})
         if not existing:
             raise HTTPException(status_code=404, detail="角色不存在")
         
-        # 构建更新数据
         update_data = {}
         if character.name is not None:
             update_data["name"] = character.name
@@ -200,7 +198,6 @@ async def delete_character(character_id: int):
     try:
         prisma = await get_prisma()
         
-        # 检查角色是否存在
         existing = await prisma.character.find_unique(where={"id": character_id})
         if not existing:
             raise HTTPException(status_code=404, detail="角色不存在")

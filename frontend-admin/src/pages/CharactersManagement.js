@@ -3,7 +3,6 @@ import { Button, Card, Form, Input, Modal, Space, Switch, Table, Tag, message, S
 import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import api from '../api';
 
-// 可用的 Live2D 角色列表
 const LIVE2D_CHARACTER_OPTIONS = [
   { value: 'Mao', label: 'Mao - 艺术家风格，有丰富的动作和表情（默认）' },
   { value: 'Chitose', label: 'Chitose - 温柔风格，有指引动作' },
@@ -17,7 +16,6 @@ const LIVE2D_CHARACTER_OPTIONS = [
   { value: 'Kei', label: 'Kei - 专业风格（支持多语言）' },
 ];
 
-// Live2D 角色组选项
 const LIVE2D_GROUP_OPTIONS = [
   { value: 'free', label: 'free（免费组，默认）' },
 ];
@@ -38,7 +36,6 @@ const CharactersManagement = () => {
       setVoiceOptions(res.data || []);
     } catch (e) {
       console.error(e);
-      // 不阻塞页面，保持为空（用户仍可手动输入，但建议通过下拉选择）
     }
   }, []);
 

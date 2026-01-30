@@ -149,16 +149,22 @@ const Analytics = () => {
           );
         };
 
-        const renderContext = () => {
-          if (!ctx) return <div style={{ color: '#999' }}>（未构造上下文或未使用 RAG）</div>;
+        const fullContext = debug.final_sent_to_llm || ctx;
+        const renderFullContext = () => {
+          if (!fullContext) return <div style={{ color: '#999' }}>（未构造上下文或未使用 RAG）</div>;
           return (
             <div
               style={{
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
+                marginTop: 4,
+                padding: 8,
+                background: '#fafafa',
+                borderRadius: 4,
+                fontSize: 12,
               }}
             >
-              {ctx}
+              {fullContext}
             </div>
           );
         };
@@ -180,8 +186,8 @@ const Analytics = () => {
               {renderGraph()}
             </div>
             <div>
-              <strong>③ 组装后传给 LLM 的上下文</strong>
-              {renderContext()}
+              <strong>③ 组装后传给 LLM 的完整信息</strong>
+              {renderFullContext()}
             </div>
             <div style={{ marginTop: 8 }}>
               <strong>④ 大模型回复</strong>

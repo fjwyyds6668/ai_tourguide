@@ -5,25 +5,17 @@ import api from '../api';
 
 const KnowledgeBase = () => {
   const [loading, setLoading] = useState(false);
-
-  // Scenic spots
   const [scenicSpots, setScenicSpots] = useState([]);
   const [selectedScenicId, setSelectedScenicId] = useState(null);
   const [scenicVisible, setScenicVisible] = useState(false);
   const [scenicEditing, setScenicEditing] = useState(null);
   const [scenicForm] = Form.useForm();
-
-  // Scenic knowledge
   const [knowledgeVisible, setKnowledgeVisible] = useState(false);
   const [knowledgeForm] = Form.useForm();
   const [knowledgeData, setKnowledgeData] = useState([]);
-
-  // Attractions under scenic
   const [attractionsData, setAttractionsData] = useState([]);
   const [attractionVisible, setAttractionVisible] = useState(false);
   const [attractionForm] = Form.useForm();
-
-  // 图片上传状态追踪
   const [coverImageUploaded, setCoverImageUploaded] = useState(false);
   const [attractionImageUploaded, setAttractionImageUploaded] = useState(false);
 
@@ -75,8 +67,6 @@ const KnowledgeBase = () => {
       setLoading(false);
     }
   }, []);
-
-  // 当选中的景区变化时，加载该景区下的知识/景点
   useEffect(() => {
     if (!selectedScenicId) return;
     loadScenicKnowledge(selectedScenicId);
@@ -476,7 +466,6 @@ const KnowledgeBase = () => {
             try {
               setLoading(true);
               if (scenicEditing?.id) {
-                // 编辑模式：只更新景区基本信息
                 const { knowledge_text, ...scenicValues } = values;
                 await api.put(`/admin/scenic-spots/${scenicEditing.id}`, scenicValues);
                 message.success('更新成功');
@@ -485,12 +474,10 @@ const KnowledgeBase = () => {
                 setCoverImageUploaded(false);
                 await loadScenicSpots(scenicEditing.id);
               } else {
-                // 新增模式：创建景区并可选添加知识
                 const { knowledge_text, ...scenicValues } = values;
                 const res = await api.post('/admin/scenic-spots', scenicValues);
                 const newId = res.data?.id;
                 
-                // 如果填写了知识内容，同时上传知识
                 if (knowledge_text && knowledge_text.trim() && newId) {
                   try {
                     await api.post(
@@ -549,7 +536,6 @@ const KnowledgeBase = () => {
               </Upload>
             </Space.Compact>
           </Form.Item>
-          {/* 新增模式下显示知识内容输入框 */}
           {!scenicEditing && (
             <Form.Item name="knowledge_text" label="景区知识（可选）">
               <Input.TextArea 

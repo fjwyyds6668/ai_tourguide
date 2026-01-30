@@ -2,13 +2,15 @@
 语音相关 API
 """
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from typing import Optional, List
 import tempfile
 import os
 import re
 import logging
+import io
+import wave
 from app.services.voice_service import voice_service
 from app.core.prisma_client import get_prisma
 from app.core.config import settings
@@ -35,18 +37,15 @@ _PUNCTUATION_RE = re.compile(r"[^\u4e00-\u9fff0-9\s]")
 def _remove_invalid_unicode(text: str) -> str:
     """移除无效的 Unicode 代理对字符"""
     try:
-        # 先尝试编码为 UTF-8，如果失败则过滤掉无效字符
         text.encode('utf-8')
         return text
     except UnicodeEncodeError:
-        # 如果有编码错误，逐个字符检查并过滤
         result = []
         for char in text:
             try:
                 char.encode('utf-8')
                 result.append(char)
             except UnicodeEncodeError:
-                # 跳过无效字符
                 continue
         return ''.join(result)
 
@@ -55,17 +54,24 @@ def _normalize_tts_text(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = _CONTROL_CHARS_RE.sub("", text)
     text = _EMOJI_RE.sub("", text)
-    # 移除无效的 Unicode 代理对字符
     text = _remove_invalid_unicode(text)
-    # 移除所有标点符号，只保留中文、数字和空格
     text = _PUNCTUATION_RE.sub("", text)
-    # 将多个连续空格替换为单个空格
     text = re.sub(r"\s+", " ", text)
     text = text.strip()
-    # 避免超长文本导致合成慢/失败/资源占用过大
     if len(text) > 800:
         text = text[:800]
     return text
+
+
+def _minimal_silent_wav_bytes() -> bytes:
+    """生成极短静音 WAV（约 0.1 秒），用于「规范化后无有效内容」时避免返回 400、保持前端队列不中断。"""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(8000)
+        wav.writeframes(b"\x00\x00" * 800)
+    return buf.getvalue()
 
 @router.post("/transcribe")
 async def transcribe_audio(
@@ -74,21 +80,16 @@ async def transcribe_audio(
 ):
     """语音识别"""
     try:
-        # 保存上传的音频文件
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
             content = await file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
-        
-        # 根据方法选择识别引擎
         if method == "whisper":
             text = await voice_service.transcribe_whisper(tmp_path)
         elif method == "vosk":
             text = await voice_service.transcribe_vosk(tmp_path)
         else:
             raise HTTPException(status_code=400, detail="Unsupported method")
-        
-        # 清理临时文件
         os.unlink(tmp_path)
         
         return {"text": text, "method": method}
@@ -121,11 +122,13 @@ async def synthesize_speech(
     """语音合成（优先科大讯飞 TTS，失败可降级到离线本地 TTS：CosyVoice2）"""
     try:
         text = _normalize_tts_text(req.text)
-
         if not text:
-            raise HTTPException(status_code=400, detail="要合成的文本为空")
-
-        # 确定使用的语音
+            logger.debug("TTS 请求文本规范化后为空，返回静音 WAV")
+            return Response(
+                content=_minimal_silent_wav_bytes(),
+                media_type="audio/wav",
+                headers={"Content-Disposition": "inline; filename=speech.wav"},
+            )
         voice = req.voice
         voice_from_request = bool(req.voice)
         
@@ -140,10 +143,6 @@ async def synthesize_speech(
                     logger.info(f"使用角色 {req.character_id} 配置的语音: {voice}")
             except Exception as e:
                 logger.warning(f"获取角色语音配置失败: {e}")
-
-        # 校验 voice：
-        # - 如果是“请求里显式传入”的 voice（用户主动选择），则严格校验，不合法直接报错
-        # - 如果是“从角色配置拿到”的 voice（可能是历史遗留的 zh-CN-xxxNeural 等），则自动忽略并回退到默认音色
         if voice and voice not in XFYUN_VOICE_VALUES:
             if voice_from_request:
                 raise HTTPException(
@@ -152,8 +151,6 @@ async def synthesize_speech(
                 )
             logger.warning(f"角色配置的语音不受支持，已忽略并回退到默认音色：{voice}")
             voice = None
-
-        # 优先在线 TTS（科大讯飞）；如启用离线 TTS，则在在线失败时降级到本地 TTS
         audio_path = None
         last_error = None
 
@@ -166,7 +163,6 @@ async def synthesize_speech(
 
         if (audio_path is None) and settings.LOCAL_TTS_ENABLED:
             try:
-                # 备用方案：使用本地 TTS（CosyVoice2）
                 audio_path = await voice_service.synthesize_local_cosyvoice2(text, voice=voice)
                 last_error = None
                 logger.info("使用 CosyVoice2 TTS（备用方案）合成成功")
@@ -179,8 +175,6 @@ async def synthesize_speech(
         
         if not os.path.exists(audio_path):
             raise HTTPException(status_code=500, detail="音频文件生成失败")
-
-        # 根据输出文件扩展名设置 media_type
         ext = os.path.splitext(audio_path)[1].lower()
         if ext == ".wav":
             media_type = "audio/wav"
@@ -194,7 +188,6 @@ async def synthesize_speech(
         raise
     except Exception as e:
         logger.error(f"TTS synthesize failed: {e}")
-        # 提供更友好的错误信息
         error_detail = str(e)
         if "XFYUN_APPID" in error_detail or "XFYUN_API_KEY" in error_detail or "XFYUN_API_SECRET" in error_detail:
             error_detail = "科大讯飞 TTS 未配置。请设置 XFYUN_APPID / XFYUN_API_KEY / XFYUN_API_SECRET，或启用离线本地 TTS（CosyVoice2）。"

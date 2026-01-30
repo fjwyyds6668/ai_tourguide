@@ -1,8 +1,4 @@
-/**
- * 格式化时间字符串为本地化显示
- * @param {string} timeStr - ISO 或可被 Date 解析的时间字符串
- * @returns {string}
- */
+/** ISO/可解析时间字符串 -> 本地化显示 */
 export function formatTime(timeStr) {
   if (!timeStr) return ''
   const date = new Date(timeStr)

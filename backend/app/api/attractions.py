@@ -72,7 +72,6 @@ async def get_attractions(
         take=min(max(int(limit), 1), 500),
         order={"id": "asc"},
     )
-    # Prisma 返回字段是 camelCase，需要映射到 response 字段
     return [
         AttractionResponse(
             id=r.id,
@@ -160,11 +159,9 @@ async def create_attraction(attraction: AttractionCreate):
             "category": attraction.category,
             "imageUrl": attraction.image_url,
             "audioUrl": attraction.audio_url,
-            # scenicSpotId 由后续“景区管理”接口来设置，这里保留为空
         }
     )
     
-    # 自动同步到 GraphRAG
     try:
         attraction_dict = {
             "id": created.id,
@@ -227,7 +224,6 @@ async def update_attraction(
 
     updated = await prisma.attraction.update(where={"id": attraction_id}, data=data)
     
-    # 自动同步到 GraphRAG
     try:
         attraction_dict = {
             "id": updated.id,
@@ -282,7 +278,6 @@ async def delete_attraction(attraction_id: int):
 
     await prisma.attraction.delete(where={"id": attraction_id})
     
-    # 自动从 GraphRAG 删除
     try:
         await _sync_attraction_to_graphrag(attraction_dict, operation="delete")
     except Exception as e:

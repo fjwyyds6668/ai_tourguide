@@ -5,7 +5,7 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { LAppDelegate } from '../lib/live2d/src/lappdelegate'
 import { Live2dManager } from '../lib/live2d/live2dManager'
 import { RESOURCE_TYPE } from '../lib/adhProtocol'
@@ -30,25 +30,31 @@ const buildCharacterResource = () => {
   }
 }
 
-onMounted(() => {
-  // 初始化 Live2D（依赖 canvas id=live2dCanvas）
-  const ok = LAppDelegate.getInstance().initialize()
-  if (!ok) return
-
-  // 运行渲染循环
-  LAppDelegate.getInstance().run()
-
-  // 加载默认角色
+const loadCharacter = () => {
   try {
     Live2dManager.getInstance().changeCharacter(buildCharacterResource())
     Live2dManager.getInstance().setReady(true)
   } catch (e) {
     console.error('Live2D load character failed:', e)
   }
+}
 
+onMounted(() => {
+  const ok = LAppDelegate.getInstance().initialize()
+  if (!ok) return
+  LAppDelegate.getInstance().run()
+  loadCharacter()
   resizeHandler = () => LAppDelegate.getInstance().onResize()
   window.addEventListener('resize', resizeHandler, { passive: true })
 })
+
+watch(
+  () => [props.characterName, props.characterGroup],
+  () => {
+    if (!canvasRef.value) return
+    loadCharacter()
+  }
+)
 
 onUnmounted(() => {
   if (resizeHandler) window.removeEventListener('resize', resizeHandler)

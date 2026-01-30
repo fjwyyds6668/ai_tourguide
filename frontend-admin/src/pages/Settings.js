@@ -12,8 +12,6 @@ const Settings = () => {
   const [saving, setSaving] = useState(false);
   const [voiceOptions, setVoiceOptions] = useState([]);
   const [config, setConfig] = useState({
-    // 线上：科大讯飞 TTS（WebSocket API）
-    // 备用：本地 CosyVoice2（由后端 LOCAL_TTS_* 控制降级/强制）
     xfyun_voice: 'x4_yezi',
     local_tts_enabled: false,
     local_tts_force: false,
@@ -29,7 +27,6 @@ const Settings = () => {
       setVoiceOptions(res.data || []);
     } catch (error) {
       console.error('Failed to fetch voice options:', error);
-      // 不阻塞设置页
     }
   }, []);
 

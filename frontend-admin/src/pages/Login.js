@@ -11,7 +11,6 @@ const Login = () => {
   const onFinish = async (values) => {
     try {
       setLoading(true);
-      // OAuth2PasswordRequestForm 需要 application/x-www-form-urlencoded 格式
       const params = new URLSearchParams();
       params.append('username', values.username);
       params.append('password', values.password);
@@ -24,7 +23,6 @@ const Login = () => {
 
       const { access_token, user } = response.data;
       
-      // 保存 token 和用户信息
       localStorage.setItem('token', access_token);
       localStorage.setItem('user', JSON.stringify(user));
       
@@ -32,7 +30,6 @@ const Login = () => {
       navigate('/');
     } catch (error) {
       console.error('Login error:', error);
-      // 尝试从不同位置获取错误信息
       const errorMessage = 
         error.response?.data?.detail || 
         error.response?.data?.message || 

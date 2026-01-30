@@ -1,6 +1,4 @@
-"""
-GraphRAG 检索 API
-"""
+"""GraphRAG 检索 API"""
 import logging
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
@@ -27,15 +25,15 @@ class QueryResponse(BaseModel):
 
 class GenerateRequest(BaseModel):
     query: str
-    session_id: Optional[str] = None  # 会话ID，用于多轮对话
-    character_id: Optional[int] = None  # 角色ID
-    use_rag: bool = True  # 是否使用RAG检索增强
+    session_id: Optional[str] = None
+    character_id: Optional[int] = None
+    use_rag: bool = True
 
 class GenerateResponse(BaseModel):
     answer: str
     query: str
     context: str = ""
-    session_id: str  # 返回会话ID
+    session_id: str
 
 @router.post("/search", response_model=QueryResponse)
 async def hybrid_search(request: QueryRequest):
@@ -66,9 +64,8 @@ async def graph_search(entity_name: str, relation_type: str = None, limit: int =
 
 @router.post("/generate", response_model=GenerateResponse)
 async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db)):
-    """使用硅基流动生成回答（支持RAG增强和多轮对话）"""
+    """生成回答（RAG + 多轮对话）。"""
     try:
-        # 获取或创建会话
         session_id = request.session_id
         if not session_id:
             session_id = session_service.create_session(request.character_id)
@@ -76,8 +73,6 @@ async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db
             session = session_service.get_session(session_id)
             if not session:
                 session_id = session_service.create_session(request.character_id)
-        
-        # 获取角色信息（如果有）——即使出错也不影响整体回答
         character_prompt = None
         if request.character_id:
             try:
@@ -87,34 +82,19 @@ async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db
                     character_prompt = character.prompt
             except Exception as e:
                 logger.error(f"Failed to load character prompt: {e}")
-        
-        # 获取对话历史
         conversation_history = session_service.get_conversation_history(session_id)
-        
-        # 如果使用RAG，先获取上下文，并提取命中的景点ID（用于热门景点访问次数统计）
-        context = ""
-        rag_results = None
-        if request.use_rag:
-            rag_results = await rag_service.hybrid_search(request.query, top_k=5)
-            context = rag_results.get("enhanced_context", "")
-        
-        # 生成回答
-        answer = await rag_service.generate_answer(
+        result = await rag_service.generate_answer(
             query=request.query,
-            context=context,
+            context=None,
             use_rag=request.use_rag,
             conversation_history=conversation_history,
             character_prompt=character_prompt
         )
-        
-        # 保存到会话历史
+        answer = result["answer"]
+        context = result.get("context", "")
+        primary_attraction_id = result.get("primary_attraction_id")
         session_service.add_message(session_id, "user", request.query)
         session_service.add_message(session_id, "assistant", answer)
-        
-        # 使用 RAG 返回的 primary_attraction_id（hybrid_search 已解析），用于热门景点访问次数统计
-        primary_attraction_id = rag_results.get("primary_attraction_id") if rag_results else None
-
-        # 保存交互记录到数据库（含 attraction_id 以统计访问次数）
         try:
             interaction = Interaction(
                 session_id=session_id,

@@ -1,6 +1,4 @@
-"""
-管理员 API
-"""
+"""管理员 API"""
 import os
 import uuid
 import logging
@@ -29,12 +27,7 @@ router = APIRouter()
 
 
 def _get_prisma_model(prisma, *candidate_names: str):
-    """
-    prisma-client-py 对 model 的访问名在不同版本/配置下可能是：
-    - scenicspot
-    - scenicSpot
-    这里做一层兼容，避免因生成代码差异导致运行期报错。
-    """
+    """兼容 prisma-client-py 的 model 名（scenicspot / scenicSpot）。"""
     for name in candidate_names:
         if hasattr(prisma, name):
             return getattr(prisma, name)
@@ -69,7 +62,7 @@ async def upload_image(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
 ):
-    """上传图片附件，返回可访问的 URL（/uploads/images/xxx）"""
+    """上传图片，返回 /uploads/images/xxx URL。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可上传")
 
@@ -82,7 +75,6 @@ async def upload_image(
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in [".png", ".jpg", ".jpeg", ".webp", ".gif"]:
-        # 兜底：根据 content_type 猜扩展名
         if file.content_type == "image/png":
             ext = ".png"
         elif file.content_type in ("image/jpg", "image/jpeg"):
@@ -93,8 +85,6 @@ async def upload_image(
             ext = ".gif"
         else:
             raise HTTPException(status_code=400, detail="不支持的图片格式")
-
-    # 保存路径：backend/uploads/images
     uploads_root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
     images_dir = os.path.join(uploads_root, "images")
     os.makedirs(images_dir, exist_ok=True)
@@ -159,8 +149,6 @@ async def reclassify_existing_data(
 
     updated_knowledge = 0
     updated_attractions = 0
-
-    # 1) Knowledge 归类（只处理 scenicSpotId 为空的）
     know_rows = await prisma.knowledge.find_many(
         where={"scenicSpotId": None},
         take=limit,
@@ -183,8 +171,6 @@ async def reclassify_existing_data(
             updated_knowledge += 1
         except Exception:
             continue
-
-    # 2) Attraction 归类（只处理 scenicSpotId 为空的）
     att_rows = await prisma.attraction.find_many(
         where={"scenicSpotId": None},
         take=limit,
@@ -207,8 +193,6 @@ async def reclassify_existing_data(
             locations = []
             if parsed and isinstance(parsed.get("location"), list):
                 locations = [str(x).strip() for x in parsed.get("location") if str(x).strip()]
-
-            # 粗归类策略：先用 attraction.location 的“最后一级行政区”，没有就跳过
             scenic_guess = None
             if locations:
                 scenic_guess = locations[-1]
@@ -234,12 +218,7 @@ async def reclassify_existing_data(
     }
 
 class ImportAttractionsRequest(BaseModel):
-    """
-    从 attractions 表批量导入到 GraphRAG：
-    - Milvus: attraction 文本 embedding -> collection
-    - Neo4j: Text 节点 + Entity 节点 + MENTIONS 关系
-    - 可选：Neo4j Attraction 节点 + NEARBY（同类）关系
-    """
+    """批量导入 attractions 到 GraphRAG（Milvus + Neo4j）。"""
     collection_name: str = "tour_knowledge"
     build_graph: bool = True
     build_attraction_graph: bool = True
@@ -248,7 +227,7 @@ class ImportAttractionsRequest(BaseModel):
 
 
 def _normalize_scenic_name(name: str) -> str:
-    """与 graph_builder.build_scenic_cluster 里一致的景区名归一化（仅用于迁移/兼容旧数据）。"""
+    """景区名归一化（去尾缀），与 graph_builder 一致。"""
     name = str(name or "").strip()
     for suffix in ["旅游度假区", "旅游区", "度假区", "风景区", "景区"]:
         if name.endswith(suffix) and len(name) > len(suffix):
@@ -263,14 +242,13 @@ async def list_scenic_spots(
     skip: int = 0,
     limit: int = 200,
 ):
-    """景区列表（含景点数/知识数统计，仅管理员）"""
+    """景区列表（含景点数/知识数）。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
 
     prisma = await get_prisma()
     scenic_model = _get_prisma_model(prisma, "scenicspot", "scenicSpot")
 
-    # 限制最大分页，避免一次性拉太多
     limit = max(1, min(int(limit), 1000))
     skip = max(0, int(skip))
 
@@ -280,7 +258,6 @@ async def list_scenic_spots(
 
     scenic_ids = [int(s.id) for s in rows]
 
-    # 简单可靠：逐个景区 count，避免与底层表名/大小写相关的 query_raw 兼容问题
     counts_map: dict[int, dict] = {}
     for sid in scenic_ids:
         try:
@@ -312,7 +289,7 @@ async def list_scenic_spots(
 
 @router.post("/scenic-spots", response_model=ScenicSpotResponse)
 async def create_scenic_spot(req: ScenicSpotCreateRequest, current_user: User = Depends(get_current_user)):
-    """创建景区（仅管理员）"""
+    """创建景区。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
 
@@ -344,7 +321,7 @@ async def update_scenic_spot(
     req: ScenicSpotUpdateRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """更新景区（仅管理员）"""
+    """更新景区。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
 
@@ -393,7 +370,6 @@ async def delete_scenic_spot(
     prisma = await get_prisma()
     scenic_model = _get_prisma_model(prisma, "scenicspot", "scenicSpot")
 
-    # 分批拉取，避免 take=100000 占用内存
     async def _fetch_all(model, where: dict, batch: int = 500):
         out = []
         skip = 0
@@ -412,21 +388,14 @@ async def delete_scenic_spot(
         raise HTTPException(status_code=400, detail="该景区下仍有关联的景点/知识，请先清空或使用 cascade=true 级联删除")
 
     if cascade:
-        # 级联删除（批处理优先）：Milvus + Neo4j 清理尽量批量；PG 优先 delete_many
         collection_name = settings.GRAPHRAG_COLLECTION_NAME or "tour_knowledge"
-
         attraction_ids = [int(a.id) for a in attractions]
         attraction_text_ids = [f"attraction_{aid}" for aid in attraction_ids]
         knowledge_text_ids = [str(k.textId) for k in knowledge if getattr(k, "textId", None)]
-
-        # 1) Milvus 批量删除（景点 + 知识）
         try:
             await _delete_text_ids_from_milvus(attraction_text_ids + knowledge_text_ids, collection_name=collection_name)
         except Exception as e:
             logger.warning(f"Milvus batch delete failed: {e}")
-
-        # 2) Neo4j 批量删除
-        # 2.1) 删除景点 Text 节点（attraction_{id}）
         if attraction_text_ids:
             try:
                 q_del_texts = """
@@ -437,8 +406,6 @@ async def delete_scenic_spot(
                 graph_builder.client.execute_query(q_del_texts, {"ids": attraction_text_ids})
             except Exception as e:
                 logger.warning(f"Neo4j delete attraction texts failed: {e}")
-
-        # 2.2) 删除景点簇（Attraction + 仅属于该景点的辐射节点）
         if attraction_ids:
             try:
                 q_del_attractions = """
@@ -460,8 +427,6 @@ async def delete_scenic_spot(
                 graph_builder.client.execute_query(q_del_attractions, {"ids": attraction_ids})
             except Exception as e:
                 logger.warning(f"Neo4j delete attractions cluster failed: {e}")
-
-        # 2.3) 删除知识 Text 节点（不逐条调用 _delete_knowledge_from_neo4j，改批量）
         if knowledge_text_ids:
             try:
                 q_del_k_texts = """
@@ -478,8 +443,6 @@ async def delete_scenic_spot(
                 graph_builder.client.execute_query(q_del_k_texts, {"ids": knowledge_text_ids})
             except Exception as e:
                 logger.warning(f"Neo4j delete knowledge texts failed: {e}")
-
-        # 2.4) 删除景区簇（按 scenic_spot_id 精准清理）
         try:
             q_del_scenic_cluster = """
             MATCH (s:ScenicSpot {scenic_spot_id: $sid})
@@ -502,12 +465,8 @@ async def delete_scenic_spot(
             graph_builder.client.execute_query(q_del_scenic_cluster, {"sid": int(scenic_spot_id)})
         except Exception as e:
             logger.warning(f"Neo4j delete scenic cluster failed: {e}")
-
-        # 3) PostgreSQL 批量删除
-        # 3) PostgreSQL 强一致事务删除：景点/知识/景区 同一个事务中删除
         try:
             async with (await get_prisma()).tx() as tx:
-                # attractions & knowledge 按 scenicSpotId 批删
                 await tx.attraction.delete_many(where={"scenicSpotId": scenic_spot_id})
                 await tx.knowledge.delete_many(where={"scenicSpotId": scenic_spot_id})
                 tx_scenic_model = _get_prisma_model(tx, "scenicspot", "scenicSpot")
@@ -516,8 +475,6 @@ async def delete_scenic_spot(
             logger.error(f"PG transactional delete for scenic_spot_id={scenic_spot_id} failed: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"删除景区及关联数据失败，请稍后重试: {e}")
         return {"message": "scenic spot deleted"}
-
-    # 非级联：这里才会真正删除景区本身
     await scenic_model.delete(where={"id": scenic_spot_id})
     return {"message": "scenic spot deleted"}
 
@@ -527,7 +484,7 @@ async def list_scenic_spot_knowledge(
     scenic_spot_id: int,
     current_user: User = Depends(get_current_user),
 ):
-    """获取某景区下的“景区总知识”列表（仅管理员）"""
+    """获取某景区下的景区总知识列表。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     prisma = await get_prisma()
@@ -569,8 +526,6 @@ async def upload_scenic_spot_knowledge(
     if not scenic:
         raise HTTPException(status_code=404, detail="ScenicSpot not found")
 
-    # 先同步到 GraphRAG（Milvus + Neo4j）
-    # 为了保证“按景区一簇”，若解析出的 scenic_spot 不一致，则强制覆盖为当前景区名
     fixed_items: List[KnowledgeBaseItem] = []
     for it in items:
         fixed_items.append(
@@ -582,8 +537,6 @@ async def upload_scenic_spot_knowledge(
             )
         )
 
-    # 同步：复用现有上传逻辑
-    # 传入 scenic_spot_id + 景区名，确保 Neo4j 以 scenic_spot_id 为唯一键构建“一簇”
     result = await _upload_items_to_graphrag(
         fixed_items,
         collection_name,
@@ -591,7 +544,6 @@ async def upload_scenic_spot_knowledge(
         scenic_name_override=str(scenic.name),
     )
 
-    # 再持久化到 PostgreSQL（带 scenicSpotId）
     for it in fixed_items:
         meta_str = _serialize_metadata(it.metadata)
         await prisma.knowledge.upsert(
@@ -619,7 +571,7 @@ async def list_scenic_spot_attractions(
     scenic_spot_id: int,
     current_user: User = Depends(get_current_user),
 ):
-    """获取某景区下的景点列表（仅管理员）"""
+    """获取某景区下的景点列表。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     prisma = await get_prisma()
@@ -651,7 +603,7 @@ async def create_scenic_spot_attraction(
     req: AttractionAdminCreateRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """在指定景区下创建景点，并同步 GraphRAG（按簇）（仅管理员）"""
+    """在指定景区下创建景点并同步 GraphRAG。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     prisma = await get_prisma()
@@ -695,7 +647,7 @@ async def update_attraction_admin(
     req: AttractionAdminUpdateRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """更新景点并同步 GraphRAG（按簇）（仅管理员）"""
+    """更新景点并同步 GraphRAG。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     prisma = await get_prisma()
@@ -741,7 +693,7 @@ async def update_attraction_admin(
 
 @router.delete("/attractions/{attraction_id}")
 async def delete_attraction_admin(attraction_id: int, current_user: User = Depends(get_current_user)):
-    """删除景点并按簇清理 GraphRAG（仅管理员）"""
+    """删除景点并清理 GraphRAG。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     prisma = await get_prisma()
@@ -786,13 +738,10 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
         collection_name = settings.GRAPHRAG_COLLECTION_NAME
         
         if operation == "delete":
-            # 删除操作：从 Milvus 和 Neo4j 中移除
             try:
-                # 从 Milvus 删除
                 from pymilvus import utility
                 if utility.has_collection(collection_name):
                     collection = milvus_client.get_collection(collection_name, load=True)
-                    # Milvus 需要通过表达式删除，使用 text_id 字段
                     expr = f'text_id == "{text_id}"'
                     collection.delete(expr)
                     collection.flush()
@@ -801,7 +750,6 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                 logger.warning(f"从 Milvus 删除失败: {e}")
             
             try:
-                # 从 Neo4j 删除 Text 节点和相关关系
                 query = """
                 MATCH (t:Text {id: $text_id})
                 DETACH DELETE t
@@ -811,9 +759,7 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
             except Exception as e:
                 logger.warning(f"从 Neo4j 删除失败: {e}")
             
-            # 删除 Attraction 节点（如果存在）
             try:
-                # 按“簇”删除：只删除属于该景点的辐射节点（Feature/Honor/Image/Audio），位置/类别节点保留
                 query = """
                 MATCH (a:Attraction {id: $id})
                 OPTIONAL MATCH (a)-[r:HAS_FEATURE|HAS_HONOR|HAS_IMAGE|HAS_AUDIO]->(n)
@@ -830,27 +776,20 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                 logger.warning(f"从 Neo4j 删除景点节点失败: {e}")
         
         else:
-            # 创建/更新操作
             text = _attraction_to_text(attraction_dict)
             if not text:
                 logger.warning(f"景点 {attraction_dict.get('id')} 文本为空，跳过 GraphRAG 同步")
                 return
-            
-            # 1. 更新 Milvus（先删除旧的，再插入新的）
             try:
                 collection = milvus_client.create_collection_if_not_exists(
                     collection_name,
                     dimension=384
                 )
-                
-                # 删除旧数据（如果存在）
                 from pymilvus import utility
                 if utility.has_collection(collection_name):
                     expr = f'text_id == "{text_id}"'
                     collection.delete(expr)
                     collection.flush()
-                
-                # 生成新的嵌入向量并插入
                 embedding = rag_service.generate_embedding(text)
                 entities = [
                     [text_id],
@@ -862,13 +801,7 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
             except Exception as e:
                 logger.error(f"更新 Milvus 失败: {e}")
                 raise
-            
-            # 2. 更新 Neo4j（创建/更新 Text 节点和实体）
             try:
-                # 统一走“以景点为中心的一簇”：
-                # - 中心节点：(:Attraction {id})
-                # - 辐射节点：Feature/Honor/Category/Image/Audio/位置链
-                # - Text 只作为可选关联，不再生成散点 MENTIONS
                 parsed = None
                 try:
                     parsed = await rag_service.parse_attraction_text(attraction_dict.get("name") or "", text)
@@ -885,21 +818,14 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
             except Exception as e:
                 logger.error(f"更新 Neo4j 失败: {e}")
                 raise
-            
-            # 旧逻辑：create_attraction_node + extract_and_store_entities
-            # 已由 build_attraction_cluster 统一覆盖
-        
     except Exception as e:
         logger.error(f"同步景点到 GraphRAG 失败: {e}", exc_info=True)
-        # 不抛出异常，避免影响主流程
 
 def _serialize_metadata(metadata: dict) -> str:
-    """将 metadata dict 序列化为 JSON 字符串"""
     return json.dumps(metadata or {}, ensure_ascii=False)
 
 
 def _deserialize_metadata(metadata_str: str | None) -> dict:
-    """将 metadata JSON 字符串反序列化为 dict"""
     if not metadata_str:
         return {}
     try:
@@ -909,7 +835,6 @@ def _deserialize_metadata(metadata_str: str | None) -> dict:
 
 
 async def _delete_knowledge_from_milvus(text_id: str, collection_name: str = "tour_knowledge") -> None:
-    """从 Milvus 删除指定 text_id 的向量"""
     try:
         from pymilvus import utility
         if utility.has_collection(collection_name):
@@ -923,7 +848,6 @@ async def _delete_knowledge_from_milvus(text_id: str, collection_name: str = "to
 
 
 async def _delete_text_ids_from_milvus(text_ids: List[str], collection_name: str = "tour_knowledge") -> None:
-    """从 Milvus 批量删除多个 text_id（分块 + 尽量一次 flush）"""
     if not text_ids:
         return
     try:
@@ -931,8 +855,6 @@ async def _delete_text_ids_from_milvus(text_ids: List[str], collection_name: str
         if not utility.has_collection(collection_name):
             return
         collection = milvus_client.get_collection(collection_name, load=True)
-
-        # Milvus 对 expr 长度有限制；分块拼接 OR
         chunk_size = 200
         for i in range(0, len(text_ids), chunk_size):
             chunk = text_ids[i : i + chunk_size]
@@ -951,10 +873,8 @@ async def _delete_text_ids_from_milvus(text_ids: List[str], collection_name: str
 
 
 async def _delete_knowledge_from_neo4j(text_id: str) -> None:
-    """从 Neo4j 删除指定 text_id 的 Text 节点及其关联的景区簇（如果该景区不再被其他 Text 描述）"""
+    """删除 Neo4j 中 text_id 的 Text 及无其他 Text 描述的景区簇。"""
     try:
-        # 1) 先查找该 Text 节点描述的景区，并检查是否还有其他 Text 节点描述该景区
-        #    注意：必须在删除 Text 节点之前检查，否则无法正确判断
         query_check = """
         MATCH (t:Text {id: $text_id})-[:DESCRIBES]->(s:ScenicSpot)
         OPTIONAL MATCH (s)<-[:DESCRIBES]-(other:Text)
@@ -967,8 +887,6 @@ async def _delete_knowledge_from_neo4j(text_id: str) -> None:
         RETURN scenic_spot_id, scenic_name, remaining_text_ids
         """
         result = graph_builder.client.execute_query(query_check, {"text_id": text_id})
-        
-        # 2) 删除 Text 节点本身
         query_text = """
         MATCH (t:Text {id: $text_id})
         OPTIONAL MATCH (t)-[r1:MENTIONS]->(e)
@@ -980,20 +898,14 @@ async def _delete_knowledge_from_neo4j(text_id: str) -> None:
         DETACH DELETE t
         """
         graph_builder.client.execute_query(query_text, {"text_id": text_id})
-        
-        # 3) 如果该景区没有其他 Text 节点描述，删除整个景区簇
         if result and len(result) > 0:
             for row in result:
                 remaining_text_ids = row.get("remaining_text_ids", [])
-                # 过滤掉 None 值
                 remaining_text_ids = [tid for tid in remaining_text_ids if tid is not None]
-                
-                # 如果没有其他 Text 节点描述该景区，删除整个簇
                 if len(remaining_text_ids) == 0:
                     scenic_id = row.get("scenic_spot_id", None)
                     scenic_name = row.get("scenic_name", None)
                     if scenic_id is None:
-                        # 兼容旧数据：没有 scenic_spot_id 时兜底按 name 删除“无 Text 描述”的簇
                         if scenic_name:
                             scenic_id = None
                         else:
@@ -1008,7 +920,6 @@ async def _delete_knowledge_from_neo4j(text_id: str) -> None:
                             continue
 
                     if scenic_id is not None:
-                        # 按 scenic_spot_id 删除整簇（Spot/Feature/Honor 视为该簇专属，可清理）
                         query_delete_cluster = """
                         MATCH (s:ScenicSpot {scenic_spot_id: $sid})
                         // 1) 先断开位置关系（位置节点可能共享）
@@ -1033,7 +944,6 @@ async def _delete_knowledge_from_neo4j(text_id: str) -> None:
                         graph_builder.client.execute_query(query_delete_cluster, {"sid": int(scenic_id)})
                         logger.info(f"已完整删除景区簇: {scenic_name or scenic_id}")
                     elif scenic_name:
-                        # 旧数据按 name 删除
                         query_delete_cluster_legacy = """
                         MATCH (s:ScenicSpot {name: $name})
                         OPTIONAL MATCH (s)-[r_loc:位于]->(loc)
@@ -1068,27 +978,18 @@ async def _upload_items_to_graphrag(
     build_graph: bool,
     scenic_name_override: str | None = None,
 ) -> dict:
-    """复用 /admin/knowledge/upload 的逻辑，供批量导入调用。"""
-    # 步骤1: 创建集合（如果不存在）
+    """批量导入时复用上传逻辑。"""
     collection = milvus_client.create_collection_if_not_exists(
         collection_name,
         dimension=384
     )
-
-    # 步骤2: 生成嵌入向量并存储到 Milvus
     texts = [item.text for item in items]
-    # 避免阻塞事件循环：embedding 生成放到线程池 + 批量 encode
     embeddings = await asyncio.to_thread(rag_service.generate_embeddings_batch, texts)
-
-    # 准备数据（与 milvus schema: [text_id, embedding]）
     entities = [
         [item.text_id for item in items],
         embeddings
     ]
-
-    # 先删除旧数据（避免重复 text_id 产生多条）
     try:
-        # Milvus 表达式对 VARCHAR 的 IN 支持依赖版本；这里保守逐条 delete，最后 flush 一次
         for tid in entities[0]:
             collection.delete(f'text_id == "{tid}"')
     except Exception as e:
@@ -1097,11 +998,9 @@ async def _upload_items_to_graphrag(
     collection.insert(entities)
     collection.flush()
 
-    # 步骤3: 构建图结构
     total_entities = 0
     if build_graph:
         for item in items:
-            # 优先尝试解析为景区结构化信息
             parsed = None
             try:
                 parsed = await rag_service.parse_scenic_text(item.text)
@@ -1109,7 +1008,6 @@ async def _upload_items_to_graphrag(
                 logger.debug(f"parse_scenic_text failed for text_id={item.text_id}: {e}")
             
             if parsed:
-                # 景区类文本：只构建景区簇，不创建通用实体散点
                 await graph_builder.build_scenic_cluster(
                     parsed,
                     text_id=item.text_id,
@@ -1117,16 +1015,14 @@ async def _upload_items_to_graphrag(
                     scenic_name_override=scenic_name_override,
                 )
                 logger.info(f"Built scenic cluster for text_id={item.text_id}, scenic_spot={parsed.get('scenic_spot')}")
-                # 统计：景区簇里的节点数（位置+子景点+特色+荣誉）
                 total_entities += (
                     len(parsed.get("location", [])) +
                     len(parsed.get("spots", [])) +
                     len(parsed.get("features", [])) +
                     len(parsed.get("awards", [])) +
-                    1  # 景区节点本身
+                    1
                 )
             else:
-                # 非景区类文本：走通用实体抽取路径
                 extracted = rag_service.extract_entities(item.text)
                 total_entities += len(extracted)
                 await graph_builder.extract_and_store_entities(item.text, item.text_id, extracted)
@@ -1144,14 +1040,9 @@ async def upload_knowledge(
     collection_name: str = "tour_knowledge",
     build_graph: bool = True
 ):
-    """
-    上传知识库内容到向量数据库和图数据库（自动同步到 GraphRAG），并持久化到 PostgreSQL
-    """
+    """上传知识到 GraphRAG 并持久化到 PostgreSQL。"""
     try:
-        # 先同步到 GraphRAG（Milvus + Neo4j）
         result = await _upload_items_to_graphrag(items, collection_name, build_graph)
-
-        # 再持久化到 PostgreSQL（Prisma），并自动归类到 ScenicSpot（可手动覆盖 scenic_spot_id）
         prisma = await get_prisma()
         scenic_model = _get_prisma_model(prisma, "scenicspot", "scenicSpot")
         for item in items:
@@ -1160,8 +1051,6 @@ async def upload_knowledge(
             try:
                 meta_str = _serialize_metadata(item.metadata)
                 scenic_spot_id = item.scenic_spot_id
-
-                # 自动识别景区：如果未手动指定 scenic_spot_id，则尝试从文本解析
                 if scenic_spot_id is None:
                     try:
                         parsed = await rag_service.parse_scenic_text(item.text)
@@ -1204,9 +1093,6 @@ async def upload_knowledge(
 
 @router.get("/knowledge", response_model=List[KnowledgeBaseItem])
 async def list_knowledge():
-    """
-    获取知识库列表（管理端使用，来自 PostgreSQL 的 knowledge 表）
-    """
     prisma = await get_prisma()
     rows = await prisma.knowledge.find_many(order={"id": "asc"}, take=1000)
     return [
@@ -1226,22 +1112,15 @@ async def update_knowledge(
     collection_name: str = "tour_knowledge",
     build_graph: bool = True
 ):
-    """更新知识库内容（自动同步到 GraphRAG）"""
+    """更新知识库并同步 GraphRAG。"""
     if not settings.AUTO_UPDATE_GRAPH_RAG:
         raise HTTPException(status_code=400, detail="GraphRAG 自动更新已禁用")
     
     try:
-        # 确保 text_id 一致
         item.text_id = text_id
-        
-        # 先删除旧数据（复用公共函数）
         await _delete_knowledge_from_milvus(text_id, collection_name)
         await _delete_knowledge_from_neo4j(text_id)
-        
-        # 重新上传（使用现有的上传逻辑）
         result = await _upload_items_to_graphrag([item], collection_name, build_graph)
-
-        # 更新 PostgreSQL 中的记录
         prisma = await get_prisma()
         try:
             await prisma.knowledge.update(
@@ -1263,16 +1142,13 @@ async def delete_knowledge(
     text_id: str,
     collection_name: str = "tour_knowledge"
 ):
-    """删除知识库内容（自动从 GraphRAG 删除）"""
+    """删除知识库并清理 GraphRAG。"""
     if not settings.AUTO_UPDATE_GRAPH_RAG:
         raise HTTPException(status_code=400, detail="GraphRAG 自动更新已禁用")
     
     try:
-        # 从 Milvus 和 Neo4j 删除（复用公共函数）
         await _delete_knowledge_from_milvus(text_id, collection_name)
         await _delete_knowledge_from_neo4j(text_id)
-        
-        # 从 PostgreSQL 删除
         try:
             prisma = await get_prisma()
             await prisma.knowledge.delete(where={"textId": text_id})
@@ -1297,23 +1173,19 @@ async def rebuild_knowledge_cluster(
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     
     try:
-        # 1. 从 PostgreSQL 获取知识内容
         prisma = await get_prisma()
         knowledge = await prisma.knowledge.find_unique(where={"textId": text_id})
         if not knowledge:
             raise HTTPException(status_code=404, detail=f"知识 {text_id} 不存在")
         
-        # 2. 先删除旧簇（复用公共函数）
         await _delete_knowledge_from_neo4j(text_id)
         
-        # 3. 重新构建簇
         item = KnowledgeBaseItem(
             text_id=text_id,
             text=knowledge.text,
             metadata=_deserialize_metadata(knowledge.metadata)
         )
         
-        # 重新上传（会触发 parse_scenic_text + build_scenic_cluster）
         result = await _upload_items_to_graphrag([item], "tour_knowledge", build_graph=True)
         
         return {
@@ -1363,7 +1235,6 @@ async def migrate_neo4j_scenic_spots(
 
     prisma = await get_prisma()
     scenic_model = _get_prisma_model(prisma, "scenicspot", "scenicSpot")
-    # 分批拉取，避免一次性 take=100000
     scenic_rows = []
     skip = 0
     batch = 1000
@@ -1387,7 +1258,6 @@ async def migrate_neo4j_scenic_spots(
             }
         )
 
-    # 迁移：UNWIND PG 景区列表，按 name/alias 匹配 Neo4j 旧节点并搬迁关系
     q_migrate = """
     UNWIND $spots AS sp
     WITH sp
@@ -1444,8 +1314,6 @@ async def migrate_neo4j_scenic_spots(
     WITH old, s
     RETURN count(DISTINCT old) AS matched_old, count(DISTINCT s) AS ensured_new
     """
-
-    # 清理：删除所有“无 scenic_spot_id 且已没有任何关系”的旧 ScenicSpot
     q_cleanup = """
     MATCH (old:ScenicSpot)
     WHERE old.scenic_spot_id IS NULL OR old.scenic_spot_id = 0
@@ -1456,7 +1324,6 @@ async def migrate_neo4j_scenic_spots(
     """
 
     if dry_run:
-        # 只返回将要处理的数量（粗略统计：匹配旧节点数量）
         q_preview = """
         UNWIND $spots AS sp
         MATCH (old:ScenicSpot)
@@ -1497,11 +1364,8 @@ async def clear_vector_database(
         if not utility.has_collection(collection_name):
             return {"message": f"Collection {collection_name} 不存在，无需清空"}
         
-        # 获取集合并加载（删除操作需要集合已加载）
         collection = milvus_client.get_collection(collection_name, load=True)
         
-        # 删除所有数据（使用 LIKE '%' 表达式匹配所有 text_id）
-        # 参考 clear_milvus.py 的实现方式
         expr = "text_id like '%'"
         collection.delete(expr)
         collection.flush()
@@ -1543,17 +1407,14 @@ async def load_collection(
         if not utility.has_collection(collection_name):
             raise HTTPException(status_code=404, detail=f"Collection {collection_name} 不存在")
         
-        # 获取集合并加载
         collection = milvus_client.get_collection(collection_name, load=False)
         
-        # 检查当前加载状态
         try:
             load_state = utility.load_state(collection_name)
             logger.info(f"Collection '{collection_name}' current load state: {load_state}")
         except Exception as e:
             logger.warning(f"Failed to check load state: {e}")
         
-        # 加载集合
         collection.load()
         logger.info(f"Collection '{collection_name}' loaded successfully")
         try:
@@ -1584,7 +1445,6 @@ async def import_attractions_to_graphrag(req: ImportAttractionsRequest):
     try:
         prisma = await get_prisma()
 
-        # Prisma 返回的是对象，这里统一转 dict（通过 __dict__ 不稳定，手动映射）
         attractions = await prisma.attraction.find_many(
             order={"id": "asc"},
             take=req.limit
@@ -1602,11 +1462,9 @@ async def import_attractions_to_graphrag(req: ImportAttractionsRequest):
                 "category": a.category,
             })
 
-        # 1) 可选：构建 Attraction 图谱（节点+同类 NEARBY）
         if req.build_attraction_graph:
             await graph_builder.build_attraction_graph(att_dicts)
 
-        # 2) 写入 GraphRAG（向量 + Text/Entity/MENTIONS）
         items: List[KnowledgeBaseItem] = []
         for att in att_dicts:
             text_id = f"attraction_{att['id']}"
@@ -1624,7 +1482,6 @@ async def import_attractions_to_graphrag(req: ImportAttractionsRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # 避免脚本/一次性任务场景下连接泄露
         try:
             await disconnect_prisma()
         except Exception:
@@ -1657,7 +1514,6 @@ async def get_rag_logs(
         raise HTTPException(status_code=500, detail="读取 RAG 日志失败")
 
     entries: List[Dict[str, Any]] = []
-    # 取最后 limit 条，按时间倒序（最近的在最前）
     for line in reversed(lines[-limit:]):
         line = line.strip()
         if not line:
@@ -1687,7 +1543,6 @@ async def get_interaction_analytics(
     """获取交互数据分析（按 ID 降序，最近的在前）"""
     interactions = db.query(Interaction).order_by(desc(Interaction.id)).offset(skip).limit(limit).all()
     
-    # 统计信息
     total = db.query(Interaction).count()
     by_type = {}
     for interaction in interactions:
@@ -1716,7 +1571,6 @@ async def get_popular_attractions(db: Session = Depends(get_db)):
         func.count(Interaction.id).desc()
     ).limit(10).all()
     
-    # 将 SQLAlchemy 返回的 Row/元组转换为普通字典，方便 FastAPI 编码为 JSON
     popular_list = [
         {
             "id": row[0],
@@ -1764,14 +1618,12 @@ async def upload_admin_avatar(
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="仅支持上传图片文件")
 
-    # 限制文件大小（5MB）
     content = await file.read()
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="图片大小不能超过 5MB")
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in [".png", ".jpg", ".jpeg", ".webp", ".gif"]:
-        # 兜底：根据 content_type 猜扩展名
         if file.content_type == "image/png":
             ext = ".png"
         elif file.content_type in ("image/jpg", "image/jpeg"):
@@ -1782,8 +1634,6 @@ async def upload_admin_avatar(
             ext = ".gif"
         else:
             raise HTTPException(status_code=400, detail="不支持的图片格式")
-
-    # 保存路径：backend/uploads/avatars
     uploads_root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
     avatars_dir = os.path.join(uploads_root, "avatars")
     os.makedirs(avatars_dir, exist_ok=True)
@@ -1792,8 +1642,6 @@ async def upload_admin_avatar(
     abs_path = os.path.join(avatars_dir, filename)
     with open(abs_path, "wb") as f:
         f.write(content)
-
-    # 可访问 URL：/uploads/avatars/xxx
     avatar_url = f"/uploads/avatars/{filename}"
     current_user.avatar_url = avatar_url
     db.add(current_user)
@@ -1813,7 +1661,6 @@ async def upload_admin_avatar(
     }
 
 class TTSConfigResponse(BaseModel):
-    """TTS配置响应"""
     xfyun_voice: str
     local_tts_enabled: bool
     local_tts_force: bool
@@ -1823,7 +1670,6 @@ class TTSConfigResponse(BaseModel):
     cosyvoice2_language: str
 
 class TTSConfigUpdateRequest(BaseModel):
-    """TTS配置更新请求"""
     xfyun_voice: Optional[str] = None
     local_tts_enabled: Optional[bool] = None
     local_tts_force: Optional[bool] = None
@@ -1835,7 +1681,6 @@ class TTSConfigUpdateRequest(BaseModel):
 
 
 def _get_env_file_path():
-    """获取 .env 文件路径"""
     backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     return os.path.join(backend_dir, ".env")
 
@@ -1917,18 +1762,15 @@ async def update_tts_config(
     with open(env_file, "r", encoding="utf-8") as f:
         env_lines = f.readlines()
     
-    # 更新或添加配置项
     updated_keys = set()
     new_lines = []
     
     for line in env_lines:
         stripped = line.strip()
-        # 跳过空行和注释（但保留它们）
         if not stripped or stripped.startswith("#"):
             new_lines.append(line)
             continue
         
-        # 检查是否是我们要更新的配置项
         if stripped.startswith("XFYUN_VOICE="):
             if req.xfyun_voice is not None:
                 new_lines.append(f"XFYUN_VOICE={req.xfyun_voice}\n")
@@ -1973,8 +1815,6 @@ async def update_tts_config(
                 new_lines.append(line)
         else:
             new_lines.append(line)
-    
-    # 添加未存在的配置项
     if req.xfyun_voice is not None and "XFYUN_VOICE" not in updated_keys:
         new_lines.append(f"XFYUN_VOICE={req.xfyun_voice}\n")
     if req.local_tts_enabled is not None and "LOCAL_TTS_ENABLED" not in updated_keys:
@@ -1989,8 +1829,6 @@ async def update_tts_config(
         new_lines.append(f"COSYVOICE2_DEVICE={req.cosyvoice2_device}\n")
     if req.cosyvoice2_language is not None and "COSYVOICE2_LANGUAGE" not in updated_keys:
         new_lines.append(f"COSYVOICE2_LANGUAGE={req.cosyvoice2_language}\n")
-    
-    # 写回 .env 文件
     try:
         with open(env_file, "w", encoding="utf-8") as f:
             f.writelines(new_lines)

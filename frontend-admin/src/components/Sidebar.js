@@ -19,7 +19,6 @@ const Sidebar = ({ collapsed, onCollapse }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // 获取用户信息
   const [user, setUser] = useState(() => {
     const userStr = localStorage.getItem('user');
     return userStr ? JSON.parse(userStr) : null;
@@ -27,11 +26,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
 
   const avatarSrc = useMemo(() => {
     if (!user?.avatar_url) return null;
-    // 后端返回的是 /uploads/avatars/xxx，通过 CRA proxy 可直接访问
     return user.avatar_url;
   }, [user]);
 
-  // 退出登录
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -145,7 +142,6 @@ const Sidebar = ({ collapsed, onCollapse }) => {
       onCollapse={onCollapse}
       theme="light"
       style={{
-        // 侧边栏固定；避免底部用户区被折叠触发器盖住
         overflow: 'auto',
         height: '100vh',
         position: 'fixed',
@@ -167,7 +163,6 @@ const Sidebar = ({ collapsed, onCollapse }) => {
       {user && (
         <div style={{
           position: 'absolute',
-          // Antd Sider 的 trigger 在最底部（约 48px 高），把用户区抬上去
           bottom: 56,
           left: 0,
           right: 0,

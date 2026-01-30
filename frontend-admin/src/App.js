@@ -22,18 +22,15 @@ function App() {
   return (
     <Router>
       <Routes>
-        {/* 公开路由 */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         
-        {/* 受保护的路由 */}
         <Route
           path="/*"
           element={
             <ProtectedRoute>
               <Layout style={{ minHeight: '100vh' }}>
                 <Sidebar collapsed={collapsed} onCollapse={setCollapsed} />
-                {/* 右侧内容区：给固定侧边栏预留空间，并让内容区独立滚动 */}
                 <Layout style={{ marginLeft: siderWidth, minHeight: '100vh' }}>
                   <Content style={{ margin: '24px 16px', padding: 24, background: '#fff', overflow: 'auto' }}>
                     <Routes>
@@ -41,7 +38,6 @@ function App() {
                       <Route path="/characters" element={<CharactersManagement />} />
                       <Route path="/knowledge" element={<KnowledgeBase />} />
                       <Route path="/analytics" element={<Analytics />} />
-                      {/* 景点管理已合并进“景区管理”( /knowledge )，保留旧路由可选：这里先重定向 */}
                       <Route path="/attractions" element={<Navigate to="/knowledge" replace />} />
                       <Route path="/settings" element={<Settings />} />
                       <Route path="*" element={<Navigate to="/" replace />} />

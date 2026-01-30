@@ -15,7 +15,6 @@ const Register = () => {
         username: values.username,
         email: values.email,
         password: values.password,
-        // 后端会统一将通过此入口注册的用户标记为管理员
       });
 
       message.success('注册成功，请登录');

@@ -1,7 +1,4 @@
-"""
-知识图谱构建服务
-用于将文本知识转换为图结构存储到 Neo4j
-"""
+"""知识图谱构建：文本 -> Neo4j 图结构。"""
 import logging
 from typing import List, Dict, Any
 from app.core.neo4j_client import neo4j_client
@@ -9,15 +6,8 @@ from app.core.neo4j_client import neo4j_client
 logger = logging.getLogger(__name__)
 
 class GraphBuilder:
-    """
-    知识图谱构建器
-    
-    将文本知识转换为图结构：
-    - 提取实体（景点、人物、事件等）
-    - 识别关系（相邻、相关、推荐等）
-    - 存储到 Neo4j 图数据库
-    """
-    
+    """将文本知识转为图结构并写入 Neo4j。"""
+
     def __init__(self):
         self.client = neo4j_client
     
@@ -49,13 +39,7 @@ class GraphBuilder:
         text: str | None = None,
         parsed: Dict[str, Any] | None = None,
     ) -> None:
-        """
-        以“单个景点”为中心构建一簇（星状簇），确保不会产生离散节点。
-
-        - 中心节点：(:Attraction {id})
-        - 辐射节点：Category / Feature / Honor / Image / Audio / 位置链（省市县）
-        - 关系：HAS_CATEGORY / HAS_FEATURE / HAS_HONOR / HAS_IMAGE / HAS_AUDIO / 位于 / 隶属
-        """
+        """以单景点为中心构建一簇（Attraction + 辐射节点）。"""
         if not attraction_data:
             return
         att_id = attraction_data.get("id")
@@ -65,11 +49,7 @@ class GraphBuilder:
         name = str(name).strip()
         if not name:
             return
-
-        # 获取景区ID（景点所属的景区）
         scenic_spot_id = attraction_data.get("scenic_spot_id")
-
-        # 1) upsert 中心节点
         q_center = """
         MERGE (a:Attraction {id: $id})
         SET a.name = $name,
@@ -94,15 +74,11 @@ class GraphBuilder:
             "audio_url": attraction_data.get("audio_url"),
             "scenic_spot_id": int(scenic_spot_id) if scenic_spot_id else None,
         })
-
-        # 2) 清理该景点旧簇关系（保留位置节点/类别节点/景区节点本体）
         q_clean_rels = """
         MATCH (a:Attraction {id: $id})-[r:HAS_CATEGORY|HAS_FEATURE|HAS_HONOR|HAS_IMAGE|HAS_AUDIO|位于|属于]->(n)
         DELETE r
         """
         self.client.execute_query(q_clean_rels, {"id": int(att_id)})
-
-        # 3) 清理“只属于这个景点”的孤立辐射节点（Feature/Honor/Image/Audio）
         q_clean_orphans = """
         MATCH (a:Attraction {id: $id})-[r:HAS_FEATURE|HAS_HONOR|HAS_IMAGE|HAS_AUDIO]->(n)
         WITH n, COUNT { (n)--() } AS c
@@ -110,8 +86,6 @@ class GraphBuilder:
         DETACH DELETE n
         """
         self.client.execute_query(q_clean_orphans, {"id": int(att_id)})
-
-        # 4) 关联到所属景区（ScenicSpot）- 明确“这是哪个景区下面的景点”
         has_scenic_spot = False
         if scenic_spot_id:
             q_scenic_rel = """
@@ -125,9 +99,6 @@ class GraphBuilder:
             })
             has_scenic_spot = True
             logger.info(f"景点 '{name}' (Attraction, id={att_id}) 已关联到景区 (scenic_spot_id={scenic_spot_id})")
-
-            # 如果该景区下已经有同名的 Spot（来自景区总文本解析），
-            # 则用当前 Attraction 替换掉那个 Spot，避免“花溪十三桥”出现两种节点。
             q_merge_spot = """
             MATCH (s:ScenicSpot {scenic_spot_id: $scenic_spot_id})
             OPTIONAL MATCH (s)-[r:HAS_SPOT]->(sp:Spot {name: $name})
@@ -148,8 +119,6 @@ class GraphBuilder:
                 })
             except Exception as e:
                 logger.warning(f"合并景区子景点 Spot -> Attraction 失败: {e}")
-
-        # 5) Text 关联（可选）
         if text_id and text:
             q_text = """
             MERGE (t:Text {id: $text_id})
@@ -159,34 +128,24 @@ class GraphBuilder:
             MERGE (t)-[:DESCRIBES]->(a)
             """
             self.client.execute_query(q_text, {"text_id": text_id, "text": text, "id": int(att_id)})
-
-        # 6) 位置链（景点自身的位置；景区和景点可以共享同一套省市县节点）
-        # 这里始终为景点计算位置信息，避免图查询时需要“绕景区一跳”才能拿到位置。
         locations = []
         if parsed and isinstance(parsed.get("location"), list):
             locations = [str(x).strip() for x in parsed.get("location") if str(x).strip()]
         if not locations:
             loc_raw = attraction_data.get("location") or ""
             loc_raw = str(loc_raw)
-            # 简单拆分：按常见分隔符
             for sep in [" ", "，", "、", ",", "/", "-", "—", "·"]:
                 loc_raw = loc_raw.replace(sep, " ")
             parts = [p.strip() for p in loc_raw.split(" ") if p.strip()]
-            # 过滤成“省/市/县/区”样式
             locations = [p for p in parts if any(p.endswith(s) for s in ["省", "市", "县", "区", "旗", "州"])]
-
-        # 先删旧位置关系（避免重复）
         q_clean_loc = """
         MATCH (a:Attraction {id: $id})-[r:位于]->()
         DELETE r
         """
         self.client.execute_query(q_clean_loc, {"id": int(att_id)})
-
-        # 始终为景点建立到位置节点的关系（位置节点本身可与景区共享，不会导致图混乱）
         if locations:
             params = {"id": int(att_id)}
             if len(locations) >= 3:
-                # 先创建位置节点和层级关系
                 q_loc_nodes = """
                 MERGE (prov:Province {name: $prov})
                 MERGE (city:City {name: $city})
@@ -196,7 +155,6 @@ class GraphBuilder:
                 """
                 params.update({"prov": locations[0], "city": locations[1], "county": locations[2]})
                 self.client.execute_query(q_loc_nodes, params)
-                # 再建立景点与位置的关系
                 q_loc_rel = """
                 MATCH (a:Attraction {id: $id})
                 MATCH (county:County {name: $county})
@@ -229,8 +187,6 @@ class GraphBuilder:
                 MERGE (a)-[:位于]->(prov)
                 """
                 self.client.execute_query(q_loc_rel, params)
-
-        # 6) Category（可选，允许共享）
         category = (parsed.get("category") if parsed else None) or attraction_data.get("category")
         if category:
             q_cat = """
@@ -239,8 +195,6 @@ class GraphBuilder:
             MERGE (a)-[:HAS_CATEGORY]->(c)
             """
             self.client.execute_query(q_cat, {"id": int(att_id), "name": str(category).strip()})
-
-        # 7) Image/Audio（可选）
         if attraction_data.get("image_url"):
             q_img = """
             MATCH (a:Attraction {id: $id})
@@ -255,8 +209,6 @@ class GraphBuilder:
             MERGE (a)-[:HAS_AUDIO]->(au)
             """
             self.client.execute_query(q_audio, {"id": int(att_id), "url": attraction_data.get("audio_url")})
-
-        # 8) Feature/Honor（来自 parsed）
         features = (parsed.get("features") if parsed else None) or []
         honors = (parsed.get("honors") if parsed else None) or []
         if isinstance(features, list):
@@ -310,13 +262,9 @@ class GraphBuilder:
             return False
     
     async def build_attraction_graph(self, attractions: List[Dict[str, Any]]):
-        """批量构建景点图谱"""
-        # 创建所有景点节点
+        """批量构建景点图谱。"""
         for attraction in attractions:
             await self.create_attraction_node(attraction)
-        
-        # 基于地理位置创建"相邻"关系
-        # 这里简化处理，实际应该计算距离
         for i, att1 in enumerate(attractions):
             for att2 in attractions[i+1:]:
                 if att1.get('category') == att2.get('category'):
@@ -346,15 +294,11 @@ class GraphBuilder:
         for entity in entities:
             entity_name = entity.get("text")
             entity_type = entity.get("type", "ENTITY")
-            
-            # 创建实体节点
             create_entity_query = f"""
             MERGE (e:{entity_type} {{name: $name}})
             RETURN e
             """
             self.client.execute_query(create_entity_query, {"name": entity_name})
-            
-            # 创建文本-实体关系
             create_rel_query = """
             MATCH (t:Text {id: $text_id}), (e {name: $entity_name})
             MERGE (t)-[:MENTIONS]->(e)
@@ -389,11 +333,7 @@ class GraphBuilder:
         scenic_name = scenic_name_override or parsed.get("scenic_spot")
         if not scenic_name:
             return
-        
-        # 规范化景区名称：去除可能的尾缀，确保一致性
-        # 例如："蜀南竹海旅游度假区" -> "蜀南竹海"
         scenic_name = str(scenic_name).strip()
-        # 兼容旧数据：如果没给 scenic_spot_id（例如公共上传接口），保留原有“去尾缀”归一化
         use_id = scenic_spot_id is not None
         if not use_id:
             for suffix in ["旅游度假区", "旅游区", "度假区", "风景区", "景区"]:
@@ -410,11 +350,7 @@ class GraphBuilder:
         features = parsed.get("features") or []
         spots = parsed.get("spots") or []
         awards = parsed.get("awards") or []
-
-        # 先彻底清理该 text_id 和景区相关的所有旧数据，确保重建时形成一簇
         if text_id:
-            # 1) 删除该 text_id 的 Text 节点及其所有关系（包括 MENTIONS 和 DESCRIBES）
-            #    这会清理掉之前通过 extract_and_store_entities 创建的分散节点
             q_clean_text = """
             MATCH (t:Text {id: $text_id})
             OPTIONAL MATCH (t)-[r1:MENTIONS]->(e)
@@ -426,10 +362,6 @@ class GraphBuilder:
             DETACH DELETE t
             """
             self.client.execute_query(q_clean_text, {"text_id": text_id})
-        
-        # 2) 无论是否有其他 Text 节点，都清理该 ScenicSpot 的所有关系
-        #    这样可以确保每次重建时都形成一个完整的簇
-        #    注意：位置节点（省/市/县）不会被删除，因为它们可能被其他景区共享
         q_clean_scenic_rels = """
         MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r:HAS_SPOT|HAS_FEATURE|HAS_HONOR|位于]->(n)
         DELETE r
@@ -437,17 +369,11 @@ class GraphBuilder:
         if scenic_spot_id is not None:
             self.client.execute_query(q_clean_scenic_rels, {"sid": int(scenic_spot_id)})
         else:
-            # 兼容旧逻辑：没有 id 时仍按 name 清理
             q_clean_scenic_rels_legacy = """
             MATCH (s:ScenicSpot {name: $name})-[r:HAS_SPOT|HAS_FEATURE|HAS_HONOR|位于]->(n)
             DELETE r
             """
             self.client.execute_query(q_clean_scenic_rels_legacy, {"name": scenic_name})
-        
-        # 3) 删除只连接到该景区的孤立节点（子景点、特色、荣誉等）
-        #    确保这些节点不会成为离散节点
-        #    注意：保留位置节点（省/市/县），因为它们可能被其他景区共享
-        #    注意：如果一个节点连接到多个景区，不应该删除（但这种情况不应该发生，因为我们清理了所有关系）
         q_clean_isolated = """
         MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r1:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n)
         WHERE NOT (n)-[:位于|隶属]->() 
@@ -466,9 +392,6 @@ class GraphBuilder:
             DETACH DELETE n
             """
             self.client.execute_query(q_clean_isolated_legacy, {"name": scenic_name})
-        
-        # 4) 额外检查：删除任何可能遗留的、只连接到该景区的关系
-        #    确保没有离散的节点
         q_clean_orphan_relations = """
         MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r]->(n)
         WHERE type(r) IN ['HAS_SPOT', 'HAS_FEATURE', 'HAS_HONOR']
@@ -487,9 +410,6 @@ class GraphBuilder:
             DELETE r
             """
             self.client.execute_query(q_clean_orphan_relations_legacy, {"name": scenic_name})
-
-        # 景区节点（MERGE 确保唯一）
-        # 构建位置字符串（用于存储）
         location_str = "、".join(locations) if locations else None
         
         if use_id:
@@ -516,8 +436,6 @@ class GraphBuilder:
                 s.location = coalesce(s.location, $location)
             """
             self.client.execute_query(q_scenic_legacy, {"name": scenic_name, "area": area, "location": location_str})
-
-        # 可选：把文本节点跟景区挂在一起，形成 text -> scenic 的关联
         if text_id:
             if use_id:
                 q_txt = """
@@ -533,8 +451,6 @@ class GraphBuilder:
                 MERGE (t)-[:DESCRIBES]->(s)
                 """
                 self.client.execute_query(q_txt_legacy, {"text_id": text_id, "name": scenic_name})
-
-        # 清理景区的位置关系（避免重复）
         if use_id:
             q_clean_loc = """
             MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r:位于]->()
@@ -547,13 +463,9 @@ class GraphBuilder:
             DELETE r
             """
             self.client.execute_query(q_clean_loc_legacy, {"name": scenic_name})
-
-        # 位置层级：省 / 市 / 县（一次性构建完整层级链，确保连成一簇）
         if locations:
             params = {"s_name": scenic_name}
-            # 构建完整的层级关系链，确保所有位置节点都连在一起
             if len(locations) >= 3:
-                # 省 -> 市 -> 县 -> 景区
                 q_loc = """
                 MERGE (prov:Province {name: $prov})
                 MERGE (city:City {name: $city})
@@ -583,7 +495,6 @@ class GraphBuilder:
                     """
                     self.client.execute_query(q_loc_legacy, params)
             elif len(locations) == 2:
-                # 省 -> 市 -> 景区
                 q_loc = """
                 MERGE (prov:Province {name: $prov})
                 MERGE (city:City {name: $city})
@@ -608,7 +519,6 @@ class GraphBuilder:
                     """
                     self.client.execute_query(q_loc_legacy, params)
             elif len(locations) == 1:
-                # 省 -> 景区
                 q_loc = """
                 MERGE (prov:Province {name: $prov})
                 MERGE (s:ScenicSpot {scenic_spot_id: $sid})
@@ -625,8 +535,6 @@ class GraphBuilder:
                     MERGE (s)-[:位于]->(prov)
                     """
                     self.client.execute_query(q_loc_legacy, params)
-
-        # 子景点（使用 Spot 节点，避免与真实 :Attraction{id} 冲突）
         spot_names = [str(x).strip() for x in (spots or []) if str(x).strip()]
         if spot_names:
             if use_id:
@@ -645,8 +553,6 @@ class GraphBuilder:
                 MERGE (s)-[:HAS_SPOT]->(sp)
                 """
                 self.client.execute_query(q_spot_legacy, {"names": spot_names, "s_name": scenic_name})
-
-        # 特色（Feature）批量写入
         feat_names = [str(x).strip() for x in (features or []) if str(x).strip()]
         if feat_names:
             if use_id:
@@ -665,8 +571,6 @@ class GraphBuilder:
                 MERGE (s)-[:HAS_FEATURE]->(f)
                 """
                 self.client.execute_query(q_feat_legacy, {"names": feat_names, "s_name": scenic_name})
-
-        # 荣誉（Honor）批量写入
         honor_names = [str(x).strip() for x in (awards or []) if str(x).strip()]
         if honor_names:
             if use_id:
@@ -685,9 +589,6 @@ class GraphBuilder:
                 MERGE (s)-[:HAS_HONOR]->(h)
                 """
                 self.client.execute_query(q_award_legacy, {"names": honor_names, "s_name": scenic_name})
-        
-        # 最终验证：确保所有创建的节点都连接到 ScenicSpot，没有离散节点
-        # 这个查询用于日志记录，帮助调试
         if use_id:
             q_verify = """
             MATCH (s:ScenicSpot {scenic_spot_id: $sid})
@@ -707,6 +608,5 @@ class GraphBuilder:
             logger.info(f"景区 '{scenic_name}' 已连接到 {connected_count} 个节点（Spot/Feature/Honor）")
 
 
-# 全局图构建器实例
 graph_builder = GraphBuilder()
 

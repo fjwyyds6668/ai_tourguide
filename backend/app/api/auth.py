@@ -15,7 +15,6 @@ from app.core.config import settings
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
-# 请求模型（注册只用于创建管理员账号）
 class UserRegister(BaseModel):
     username: str
     email: EmailStr
@@ -63,21 +62,18 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserRegister, db: Session = Depends(get_db)):
     """用户注册"""
-    # 检查用户名是否已存在
     if db.query(User).filter(User.username == user_data.username).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="用户名已存在"
         )
     
-    # 检查邮箱是否已存在
     if db.query(User).filter(User.email == user_data.email).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="邮箱已被注册"
         )
     
-    # 创建新用户
     try:
         hashed_password = get_password_hash(user_data.password)
     except ValueError as e:
@@ -107,7 +103,6 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """用户登录"""
-    # 查找用户
     user = db.query(User).filter(User.username == form_data.username).first()
     
     if not user or not verify_password(form_data.password, user.hashed_password):
@@ -121,7 +116,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
     user.last_login = datetime.utcnow()
     db.commit()
     
-    # 创建访问令牌
     access_token_expires = timedelta(hours=24)
     access_token = create_access_token(
         data={"sub": user.username, "is_admin": user.is_admin},
