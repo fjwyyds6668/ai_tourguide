@@ -19,7 +19,19 @@ def _strip_emoji(text: str) -> str:
     """去掉表情与末尾控制字符，避免 TTS 异常；缺句尾时补句号。"""
     if not text or not isinstance(text, str):
         return text or ""
-    s = re.sub(r"[\u2600-\u26FF\u2700-\u27BF\U0001F300-\U0001F9FF]", "", text)
+    # 说明：
+    # - 旧实现只覆盖到 U+1F9FF，像 🫶(U+1FAF6) 这种新 emoji 会漏掉
+    # - 同时清掉一些常见“装饰符号”（如全角波浪线 ～ / 波浪线 ~），避免影响展示与 TTS
+    s = re.sub(
+        r"[\u2600-\u26FF\u2700-\u27BF"
+        r"\U0001F300-\U0001F9FF"
+        r"\U0001FA00-\U0001FAFF"  # newer emoji blocks (e.g., 🫶)
+        r"]",
+        "",
+        text,
+    )
+    # 装饰性波浪线：~ / ～(FF5E) / 〜(301C)
+    s = re.sub(r"[~\uFF5E\u301C]", "", s)
     s = re.sub(r"\s{2,}", " ", s).strip()
     s = re.sub(r"[\s\u200b\u200c\u200d\ufeff\r\n]+$", "", s)
     if s and s[-1] not in "。！？.!?…":
@@ -952,7 +964,8 @@ class RAGService:
 2. 语言简洁明了，适合口语化表达
 3. 如果信息不足，诚实说明
 4. 不要编造信息
-5. 不要透露任何内部标识符/编号/ID（例如 kb_***、text_id、session_id 等）；自我介绍时也不要输出任何“编号”"""
+5. 不要透露任何内部标识符/编号/ID（例如 kb_***、text_id、session_id 等）；自我介绍时也不要输出任何“编号”
+6. 输出内容必须为“干净的纯文本”：不要使用任何表情/emoji/颜文字，也不要使用装饰性符号（例如 ～、~、🫶、✨、❤️ 等）。只使用正常中文标点（，。！？）与必要的数字/单位。"""
         if character_prompt:
             system_prompt = f"{base_system_prompt}\n\n角色设定：{character_prompt}"
         else:

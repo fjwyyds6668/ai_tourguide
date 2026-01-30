@@ -288,8 +288,14 @@ const processAudio = async (audioBlob) => {
       use_rag: true
     })
     
-    const answer = generateRes.data.answer || ''
-    sessionId.value = generateRes.data.session_id
+    const answer = generateRes.data?.answer || generateRes.data || ''
+    sessionId.value = generateRes.data?.session_id || sessionId.value
+    
+    // 检查答案是否为空
+    if (!answer || answer.trim() === '') {
+      ElMessage.warning('AI 未返回有效回答，请重试')
+      return
+    }
     
     // 以"流式打字"方式展示助手回复，同时进行 TTS 合成和播放
     addAssistantStreamMessage(answer, selectedCharacterId.value)
@@ -341,8 +347,14 @@ const handleSendText = async () => {
       use_rag: true
     })
 
-    const answer = generateRes.data.answer || ''
-    sessionId.value = generateRes.data.session_id
+    const answer = generateRes.data?.answer || generateRes.data || ''
+    sessionId.value = generateRes.data?.session_id || sessionId.value
+    
+    // 检查答案是否为空
+    if (!answer || answer.trim() === '') {
+      ElMessage.warning('AI 未返回有效回答，请重试')
+      return
+    }
 
     // 以"流式打字"方式展示助手回复，同时进行 TTS 合成和播放
     addAssistantStreamMessage(answer, selectedCharacterId.value)
@@ -492,6 +504,7 @@ const playAudioQueue = async () => {
 
   while (audioQueue.length > 0) {
     const audioUrl = audioQueue.shift()
+    const isLastChunk = audioQueue.length === 0 // 标记是否是最后一段
     try {
       await new Promise((resolve, reject) => {
         // 使用 fetch 获取音频数据
@@ -518,14 +531,38 @@ const playAudioQueue = async () => {
                 // 开始嘴巴同步更新
                 updateLipSync()
                 
-                // 监听播放结束
-                audioSource.onended = () => {
+                // 添加超时保护，避免播放卡住（音频时长 + 2秒缓冲）
+                const timeout = setTimeout(() => {
+                  console.warn('音频播放超时，强制结束，是否最后一段:', isLastChunk)
+                  if (audioSource) {
+                    try {
+                      audioSource.stop()
+                    } catch (e) {
+                      // 忽略停止错误
+                    }
+                  }
                   URL.revokeObjectURL(audioUrl)
                   resolve()
+                }, audioBuffer.duration * 1000 + 2000)
+                
+                // 监听播放结束
+                audioSource.onended = () => {
+                  clearTimeout(timeout)
+                  URL.revokeObjectURL(audioUrl)
+                  // 如果是最后一段，添加延迟确保完整播放
+                  if (isLastChunk) {
+                    console.log('最后一段音频播放完成，等待额外延迟确保完整')
+                    setTimeout(() => {
+                      resolve()
+                    }, 300) // 增加延迟到 300ms，确保最后一段完整播放
+                  } else {
+                    resolve()
+                  }
                 }
                 
                 currentAudio = {
                   pause: () => {
+                    clearTimeout(timeout)
                     if (audioSource) {
                       audioSource.stop()
                       audioSource.disconnect()
@@ -568,26 +605,41 @@ const playAudioQueue = async () => {
 
 // 合成并添加 TTS 到队列（按顺序执行，确保顺序正确）
 const synthesizeAndQueue = async (text, characterId) => {
-  if (!text || text.length === 0) {
+  if (!text || typeof text !== 'string' || text.length === 0) {
+    console.warn('TTS 合成跳过：文本为空或无效', text)
+    return
+  }
+
+  // 清理文本：去除多余空格，但保留必要的标点
+  const cleanedText = text.replace(/\s+/g, ' ').trim()
+  if (cleanedText.length === 0) {
+    console.warn('TTS 合成跳过：清理后文本为空')
     return
   }
 
   // 将 TTS 请求加入队列，确保按顺序执行
   ttsRequestQueue = ttsRequestQueue.then(async () => {
     try {
+      console.log('开始 TTS 合成，文本长度:', cleanedText.length, '预览:', cleanedText.substring(0, 30))
       const synthesizeRes = await api.post(
         '/voice/synthesize',
         { 
-          text: text, 
+          text: cleanedText, 
           character_id: characterId 
         },
-        { responseType: 'blob' }
+        { responseType: 'blob', timeout: 30000 }
       )
+      if (!synthesizeRes.data || synthesizeRes.data.size === 0) {
+        console.warn('TTS 返回空音频数据，文本:', cleanedText.substring(0, 50))
+        return
+      }
+      console.log('TTS 合成成功，音频大小:', synthesizeRes.data.size, '字节')
       const audioUrl = URL.createObjectURL(synthesizeRes.data)
       audioQueue.push(audioUrl)
       playAudioQueue()
     } catch (error) {
-      console.error('TTS 合成失败:', error)
+      console.error('TTS 合成失败:', error, '文本:', cleanedText.substring(0, 50))
+      ElMessage.error('语音合成失败，请检查网络连接')
     }
   }).catch(error => {
     console.error('TTS 队列执行失败:', error)
@@ -630,17 +682,35 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
   startFirstTTS()
 
   const timer = setInterval(() => {
-    if (i >= chars.length) {
+    if (i >= textLength) {
       clearInterval(timer)
       // 确保最后剩余的文本也被合成，避免“最后几个字没读出来”
       if (ttsSynthesizedLength < fullText.length) {
-        let remainingText = fullText.substring(ttsSynthesizedLength).trim()
-        if (remainingText) {
-          // 最后一段过短时 TTS 易截断，补句号并保证至少几个字，减少漏读
-          if (remainingText.length <= 6 && remainingText[remainingText.length - 1] !== '。' && remainingText[remainingText.length - 1] !== '！' && remainingText[remainingText.length - 1] !== '？') {
+        let remainingText = fullText.substring(ttsSynthesizedLength)
+        // 保留原始文本，不要 trim，确保包含所有字符（包括空格和标点）
+        if (remainingText && remainingText.length > 0) {
+          // 如果最后一段没有标点符号，添加句号确保 TTS 完整播放
+          const lastChar = remainingText[remainingText.length - 1]
+          const hasPunctuation = ['。', '！', '？', '.', '!', '?', '，', ',', '；', ';'].includes(lastChar)
+          if (!hasPunctuation) {
             remainingText = remainingText + '。'
           }
+          
+          // 如果最后一段太短（少于5个字符），尝试向前多取一些文本，避免 TTS 截断
+          if (remainingText.trim().length < 5 && ttsSynthesizedLength > 0) {
+            const extendedStart = Math.max(0, ttsSynthesizedLength - 15)
+            remainingText = fullText.substring(extendedStart)
+            const newLastChar = remainingText[remainingText.length - 1]
+            if (!['。', '！', '？', '.', '!', '?'].includes(newLastChar)) {
+              remainingText = remainingText + '。'
+            }
+            console.log('最后一段太短，扩展文本范围，新长度:', remainingText.length)
+          }
+          
+          console.log('合成最后一段文本，长度:', remainingText.length, '预览:', remainingText.substring(0, 50))
           synthesizeAndQueue(remainingText, characterId || selectedCharacterId.value)
+        } else {
+          console.warn('最后一段文本为空，已合成长度:', ttsSynthesizedLength, '总长度:', fullText.length)
         }
       }
       return
