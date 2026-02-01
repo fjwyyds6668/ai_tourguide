@@ -5,17 +5,16 @@
       <el-header class="header">
         <div class="header-title">AI 数字人导游系统</div>
       </el-header>
-      <el-main class="main">
+      <el-main class="main main-with-header">
         <router-view :key="route.fullPath" />
       </el-main>
     </el-container>
 
     <!-- 其他页面：左侧固定导航 + 右侧内容区 -->
     <el-container v-else class="layout">
-      <!-- 左侧固定导航 -->
       <el-aside class="aside" :width="collapsed ? '64px' : '220px'">
         <div class="brand" :class="{ collapsed }">
-          <span class="brand-text">{{ collapsed ? 'AI' : 'AI 数字人导游' }}</span>
+          <span class="brand-text">{{ collapsed ? 'AI' : 'AI 数字人导游系统' }}</span>
         </div>
 
         <el-menu
@@ -47,13 +46,8 @@
         </div>
       </el-aside>
 
-      <!-- 右侧内容区：顶栏与左侧品牌栏对齐 -->
       <el-container class="content" :style="{ marginLeft: collapsed ? '64px' : '220px' }">
-        <el-header class="header content-header" :style="{ left: collapsed ? '64px' : '220px' }">
-          <div class="header-title">AI 数字人导游系统</div>
-        </el-header>
-        <el-main class="main">
-          <!-- 某些情况下 ElementPlus 容器高度变化会导致子页面不重绘；加 key 强制刷新 -->
+        <el-main class="main main-no-header">
           <router-view :key="route.fullPath" />
         </el-main>
       </el-container>
@@ -99,6 +93,8 @@ html, body {
 
 .layout {
   height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .aside {
@@ -176,12 +172,16 @@ html, body {
 }
 
 .header {
+  height: 56px;
+  flex-shrink: 0;
   background-color: #409eff;
   color: white;
   display: flex;
   align-items: center;
   padding: 0 20px;
   box-sizing: border-box;
+  position: relative;
+  z-index: 100;
 }
 
 .header-title {
@@ -191,10 +191,19 @@ html, body {
 }
 
 .main {
-  height: calc(100vh - 56px);
-  margin-top: 56px; /* 为固定顶栏留出高度 */
   overflow: auto;
   background: #f5f7fa;
+}
+
+.main.main-with-header {
+  flex: 1;
+  min-height: 0;
+  height: calc(100vh - 56px);
+}
+
+.main.main-no-header {
+  height: 100vh;
+  margin-top: 0;
 }
 </style>
 

@@ -678,7 +678,7 @@ class RAGService:
             return False
         pattern = (
             r"有哪些景点|景点都有(什么|哪些)|景点情况|景点分布|有什么景点|景点.*有哪些"
-            r"|有多少个景点|多少个景点|景点有多少个|景区有多少个景点|几个景点"
+            r"|有多少个?景点|多少个景点|景点有多少个?|景区有多少个?景点|几个景点"
         )
         return bool(re.search(pattern, q))
 
@@ -760,7 +760,12 @@ class RAGService:
 
         texts_to_extract = [query]
         if vector_results:
-            text_ids = [r.get("text_id", "") for r in vector_results[:3] if r.get("text_id")]
+            text_ids = [
+                r.get("text_id", "")
+                for r in vector_results[:3]
+                if r.get("text_id")
+                and not (r.get("text_id", "").strip().startswith("kb_") or r.get("text_id", "").strip().startswith("attraction_"))
+            ]
             texts_to_extract.extend(text_ids)
         
         if len(texts_to_extract) > 1:
@@ -880,6 +885,24 @@ class RAGService:
                                 enhanced_results = (enhanced_results or "") + "\n\n" + clusters_ctx
             except Exception as e:
                 logger.warning(f"列举查询时查询景区景点失败: {e}")
+        # 列举类问题（如「这个景区有多少景点」）若向量未命中 attraction_XX，则无 primary_attraction_id，
+        # 此处兜底：从图库查所有景区，补充至少一个景区的景点数量，避免「查不到」。
+        if is_listing_query and "根据图数据库，景区「" not in (enhanced_results or ""):
+            try:
+                all_scenic_q = """
+                MATCH (s:ScenicSpot) RETURN s.name AS name LIMIT 5
+                """
+                rows = neo4j_client.execute_query(all_scenic_q, {}) or []
+                for row in rows:
+                    nm = (row.get("name") or "").strip() if row else ""
+                    if not nm:
+                        continue
+                    sentence = self._get_scenic_attractions_sentence_by_name(nm)
+                    if sentence:
+                        enhanced_results = (sentence + "\n\n" + (enhanced_results or "")).strip()
+                        break
+            except Exception as e:
+                logger.warning(f"列举查询兜底查景区景点数量失败: {e}")
         query_about_scenic = bool(re.search(r"什么景区|哪个景区|是啥景区|这是什么景区|是哪个景区|啥景区|哪个景点.*景区|介绍.*景区|景区.*介绍|这个景区", (query or "").strip()))
         scenic_ctx_found = False
         if query_about_scenic:

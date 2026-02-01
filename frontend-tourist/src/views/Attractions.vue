@@ -5,26 +5,12 @@
         <span class="card-title">景点列表</span>
       </template>
       
-      <div style="display: flex; gap: 16px; margin-bottom: 20px">
-        <el-select
-          v-model="selectedScenicId"
-          placeholder="请选择景区（可选）"
-          clearable
-          style="width: 260px"
-          @change="onScenicChange"
-        >
-          <el-option
-            v-for="s in scenicSpots"
-            :key="s.id"
-            :label="s.name"
-            :value="s.id"
-          />
-        </el-select>
-
+      <div class="search-row">
         <el-input
           v-model="searchText"
           placeholder="搜索景点..."
           clearable
+          class="search-input"
         >
           <template #prefix>
             <el-icon><Search /></el-icon>
@@ -118,15 +104,6 @@ const filteredAttractions = computed(() => {
   return list
 })
 
-const fetchScenicSpots = async () => {
-  try {
-    const res = await api.get('/attractions/scenic-spots')
-    scenicSpots.value = res.data || []
-  } catch (error) {
-    console.error(error)
-  }
-}
-
 const fetchAttractions = async () => {
   loading.value = true
   try {
@@ -144,10 +121,7 @@ const fetchAttractions = async () => {
   }
 }
 
-const onScenicChange = () => {
-  // 切换景区时重新加载该景区下的景点
-  fetchAttractions()
-}
+const onScenicChange = () => {}
 
 const viewDetails = (attraction) => {
   selectedAttraction.value = attraction
@@ -155,8 +129,20 @@ const viewDetails = (attraction) => {
 }
 
 onMounted(async () => {
-  await fetchScenicSpots()
-  // 不主动加载景点，等用户选择景区后再加载
+  try {
+    const res = await api.get('/attractions/scenic-spots')
+    scenicSpots.value = res.data || []
+  } catch (error) {
+    console.error(error)
+  }
+  const savedId = localStorage.getItem('current_scenic_spot_id')
+  if (savedId) {
+    const idNum = Number(savedId)
+    if (!Number.isNaN(idNum)) {
+      selectedScenicId.value = idNum
+    }
+  }
+  await fetchAttractions()
 })
 </script>
 
@@ -176,6 +162,16 @@ onMounted(async () => {
   padding: 14px 20px;
   font-weight: 600;
   border-bottom: 1px solid #f0f0f0;
+}
+
+.search-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 20px;
+}
+
+.search-input {
+  width: 300px;
 }
 
 .card-title {

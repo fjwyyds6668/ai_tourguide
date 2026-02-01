@@ -50,6 +50,7 @@ class AttractionUpdate(BaseModel):
 class ScenicSpotPublic(BaseModel):
     id: int
     name: str
+    cover_image_url: Optional[str] = None
 
 @router.get("", response_model=List[AttractionResponse])
 @router.get("/", response_model=List[AttractionResponse])
@@ -96,7 +97,14 @@ async def list_scenic_spots_public():
     prisma = await get_prisma()
     scenic_model = _get_prisma_model(prisma, "scenicspot", "scenicSpot")
     rows = await scenic_model.find_many(order={"id": "asc"}, take=1000)
-    return [ScenicSpotPublic(id=s.id, name=s.name) for s in rows]
+    return [
+        ScenicSpotPublic(
+            id=s.id,
+            name=s.name,
+            cover_image_url=getattr(s, "coverImageUrl", None),
+        )
+        for s in rows
+    ]
 
 
 @router.get("/recommendations/{user_id}")

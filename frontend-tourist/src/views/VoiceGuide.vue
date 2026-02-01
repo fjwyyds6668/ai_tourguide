@@ -26,7 +26,7 @@
             </div>
           </template>
           
-          <div class="avatar-wrapper">
+          <div class="avatar-wrapper" :style="scenicBackgroundStyle">
             <Live2DCanvas
               :character-name="currentLive2DName"
               :character-group="currentLive2DGroup"
@@ -137,10 +137,24 @@ let isPlayingQueue = false
 let currentAudio = null
 let ttsRequestQueue = Promise.resolve()
 
+const currentScenic = ref(null)
+const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
+
 onMounted(async () => {
   await loadCharacters()
   if (characters.value.length > 0) {
     selectedCharacterId.value = characters.value[0].id
+  }
+  try {
+    const savedId = localStorage.getItem('current_scenic_spot_id')
+    if (!savedId) return
+    const idNum = Number(savedId)
+    if (Number.isNaN(idNum)) return
+    const res = await api.get('/attractions/scenic-spots')
+    const spots = res.data || []
+    currentScenic.value = spots.find((s) => s.id === idNum) || null
+  } catch (e) {
+    console.error('加载当前景区信息失败:', e)
   }
 })
 
@@ -351,6 +365,23 @@ const stopSpeaking = () => {
   } catch (e) {
   }
 }
+
+const scenicBackgroundStyle = computed(() => {
+  const url = currentScenic.value?.cover_image_url
+  if (!url) {
+    return {}
+  }
+  const full =
+    url.startsWith('http://') || url.startsWith('https://')
+      ? url
+      : `${backendOrigin}${url}`
+  return {
+    backgroundImage: `url(${full})`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center center',
+    backgroundRepeat: 'no-repeat',
+  }
+})
 
 const addMessage = (role, content) => {
   conversationHistory.value.push({
