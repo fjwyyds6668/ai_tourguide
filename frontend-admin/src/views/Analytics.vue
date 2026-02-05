@@ -47,7 +47,7 @@
 
     <el-card title="RAG 检索上下文日志（传给 LLM 的信息）">
       <template #header>RAG 检索上下文日志（传给 LLM 的信息）</template>
-      <el-table :data="ragLogs" v-loading="loading" max-height="500">
+      <el-table :data="ragLogs" v-loading="ragLogsLoading" class="rag-logs-table">
         <el-table-column prop="timestamp" label="时间" width="180" />
         <el-table-column prop="use_rag" label="是否使用RAG" width="100">
           <template #default="{ row }">
@@ -96,6 +96,7 @@ import { ChatDotRound } from '@element-plus/icons-vue'
 import api from '../api'
 
 const loading = ref(false)
+const ragLogsLoading = ref(false)
 const interactionData = ref(null)
 const popularData = ref(null)
 const ragLogs = ref([])
@@ -106,17 +107,30 @@ function nodeName(n) {
   return p.name || '节点'
 }
 
+const fetchRagLogs = async () => {
+  ragLogsLoading.value = true
+  try {
+    const ragRes = await api.get('/admin/analytics/rag-logs', {
+      params: { limit: 5 }
+    })
+    ragLogs.value = ragRes.data || []
+  } catch (e) {
+    console.error('获取 RAG 日志失败:', e)
+  } finally {
+    ragLogsLoading.value = false
+  }
+}
+
 const fetchAnalytics = async () => {
   loading.value = true
   try {
-    const [interactionsRes, popularRes, ragRes] = await Promise.all([
+    const [interactionsRes, popularRes] = await Promise.all([
       api.get('/admin/analytics/interactions'),
       api.get('/admin/analytics/popular-attractions'),
-      api.get('/admin/analytics/rag-logs'),
     ])
     interactionData.value = interactionsRes.data
     popularData.value = popularRes.data
-    ragLogs.value = ragRes.data || []
+    await fetchRagLogs()
   } catch (e) {
     console.error(e)
   } finally {
@@ -130,10 +144,37 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* 确保 RAG 日志表格完全展开，无滚动限制 */
+.rag-logs-table {
+  overflow: visible;
+}
+.rag-logs-table :deep(.el-table__body-wrapper) {
+  overflow: visible !important;
+  max-height: none !important;
+  height: auto !important;
+}
+.rag-logs-table :deep(.el-scrollbar__wrap) {
+  overflow: visible !important;
+  max-height: none !important;
+  height: auto !important;
+}
+.rag-logs-table :deep(.el-scrollbar__view) {
+  overflow: visible !important;
+}
+.rag-logs-table :deep(.el-table__body) {
+  overflow: visible !important;
+}
+.rag-logs-table :deep(.el-table__row) {
+  height: auto;
+}
+.rag-logs-table :deep(.el-table__cell) {
+  padding: 12px 0;
+  vertical-align: top;
+}
 .rag-context {
-  max-height: 400px;
-  overflow-y: auto;
   font-size: 13px;
+  white-space: normal;
+  word-wrap: break-word;
 }
 .rag-context > div {
   margin-bottom: 8px;
@@ -146,6 +187,8 @@ onMounted(() => {
   background: #fafafa;
   border-radius: 4px;
   font-size: 12px;
+  max-width: 100%;
+  overflow: visible;
 }
 .answer-preview {
   white-space: pre-wrap;

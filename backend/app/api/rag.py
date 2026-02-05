@@ -2,6 +2,8 @@
 import logging
 import asyncio
 import json
+import os
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -201,6 +203,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 context = rag_results.get("enhanced_context", "") or ""
             except Exception as e:
                 logger.error(f"RAG search failed: {e}")
+                rag_results = {"errors": {"rag_search": str(e)}}
         
         # 准备 LLM 消息
         base_system_prompt = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
@@ -296,6 +299,60 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             
             # 发送完成信号
             yield f"data: {json.dumps({'type': 'done', 'content': full_answer}, ensure_ascii=False)}\n\n"
+
+            # 写入 RAG 上下文日志（与非流式接口保持一致）
+            try:
+                rag_debug: Optional[Dict[str, Any]] = None
+                if request.use_rag:
+                    rag_debug = {
+                        "query": (rag_results or {}).get("query") or request.query,
+                        "vector_results": ((rag_results or {}).get("vector_results") or [])[:5],
+                        "graph_results": ((rag_results or {}).get("graph_results") or [])[:5],
+                        "subgraph": (rag_results or {}).get("subgraph"),
+                        "enhanced_context": context or "",
+                        "entities": (rag_results or {}).get("entities", []),
+                        "errors": (rag_results or {}).get("errors", {}),
+                        "intent": (rag_results or {}).get("intent"),
+                        "strategy": (rag_results or {}).get("strategy"),
+                        "final_sent_to_llm": user_prompt,
+                    }
+                else:
+                    rag_debug = {
+                        "query": request.query,
+                        "vector_results": [],
+                        "graph_results": [],
+                        "subgraph": None,
+                        "enhanced_context": "",
+                        "entities": [],
+                        "skip_rag_reason": "未使用 RAG",
+                        "final_sent_to_llm": user_prompt,
+                    }
+
+                log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+                os.makedirs(log_root, exist_ok=True)
+                log_path = os.path.join(log_root, "rag_context.log")
+                entry = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "query": request.query,
+                    "character_prompt": character_prompt,
+                    "use_rag": request.use_rag,
+                    "rag_debug": rag_debug,
+                    "final_answer_preview": (full_answer or "")[:400],
+                }
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+                # 控制文件大小：仅保留最后 5 条
+                try:
+                    with open(log_path, "r", encoding="utf-8") as f:
+                        lines = [ln for ln in f.readlines() if ln.strip()]
+                    if len(lines) > 5:
+                        with open(log_path, "w", encoding="utf-8") as f:
+                            f.writelines(lines[-5:])
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(f"Failed to write RAG context log (stream): {e}")
             
             # 更新会话历史
             session_service.add_message(session_id, "user", request.query)
