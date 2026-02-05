@@ -35,7 +35,7 @@ const Dashboard = () => {
         <Col span={8}>
           <Card>
             <Statistic
-              title="总用户数"
+              title="总管理员数"
               value={stats.total_users}
               prefix={<UserOutlined />}
               loading={loading}

@@ -16,10 +16,6 @@ const DIGITAL_HUMAN_CHARACTER_OPTIONS = [
   { value: 'Kei', label: '专业风格（多语言）' },
 ];
 
-const DIGITAL_HUMAN_GROUP_OPTIONS = [
-  { value: 'free', label: '免费组（默认）' },
-];
-
 const emptyToNull = (v) => (v === '' ? null : v);
 
 const CharactersManagement = () => {
@@ -61,8 +57,7 @@ const CharactersManagement = () => {
     setEditing(null);
     form.resetFields();
     form.setFieldsValue({ 
-      is_active: true,
-      live2d_character_group: 'free'
+      is_active: true
     });
     setModalOpen(true);
   }, [form]);
@@ -77,7 +72,6 @@ const CharactersManagement = () => {
       prompt: row.prompt ?? '',
       voice: row.voice ?? undefined,
       live2d_character_name: row.live2d_character_name ?? undefined,
-      live2d_character_group: row.live2d_character_group ?? 'free',
       is_active: !!row.is_active,
     });
     setModalOpen(true);
@@ -161,17 +155,7 @@ const CharactersManagement = () => {
             return <span style={{ color: '#999' }}>-</span>;
           }
           const charLabel = DIGITAL_HUMAN_CHARACTER_OPTIONS.find(o => o.value === row.live2d_character_name)?.label ?? row.live2d_character_name;
-          const groupLabel = row.live2d_character_group === 'free' ? '免费组（默认）' : (row.live2d_character_group ?? '');
-          return (
-            <Space direction="vertical" size={0}>
-              <Tag color="cyan">{charLabel}</Tag>
-              {groupLabel && (
-                <Tag color="default" style={{ fontSize: '11px' }}>
-                  {groupLabel}
-                </Tag>
-              )}
-            </Space>
-          );
+          return <Tag color="cyan">{charLabel}</Tag>;
         },
       },
       {
@@ -236,7 +220,7 @@ const CharactersManagement = () => {
         prompt: emptyToNull(values.prompt?.trim() ?? ''),
         voice: emptyToNull(values.voice),
         live2d_character_name: emptyToNull(values.live2d_character_name),
-        live2d_character_group: emptyToNull(values.live2d_character_group) || 'free',
+        live2d_character_group: 'free',  // 固定使用免费组，不再显示给用户选择
         is_active: !!values.is_active,
       };
 
@@ -351,29 +335,18 @@ const CharactersManagement = () => {
           </Form.Item>
 
           <Form.Item 
-            label="数字人角色名称" 
+            label="数字人形象选择" 
             name="live2d_character_name"
             tooltip="选择该角色使用的数字人模型，留空则不使用数字人"
           >
             <Select
-              placeholder="选择数字人角色（可选）"
+              placeholder="选择数字人形象（可选）"
               allowClear
               showSearch
               filterOption={(input, option) =>
                 (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
               }
               options={DIGITAL_HUMAN_CHARACTER_OPTIONS}
-            />
-          </Form.Item>
-
-          <Form.Item 
-            label="数字人角色组" 
-            name="live2d_character_group"
-            tooltip="数字人角色所属的组，默认为免费组"
-          >
-            <Select
-              placeholder="选择角色组（默认：免费组）"
-              options={DIGITAL_HUMAN_GROUP_OPTIONS}
             />
           </Form.Item>
 
