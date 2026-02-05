@@ -6,7 +6,11 @@
         <div class="header-title">AI 数字人导游系统</div>
       </el-header>
       <el-main class="main main-with-header">
-        <router-view :key="route.fullPath" />
+        <router-view v-slot="{ Component }" :key="route.fullPath">
+          <transition name="tourist-fade" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
       </el-main>
     </el-container>
 
@@ -51,7 +55,11 @@
           class="main main-no-header"
           :class="{ 'main-no-scroll': route.path === '/voice-guide' }"
         >
-          <router-view :key="route.fullPath" />
+          <router-view v-slot="{ Component }" :key="route.fullPath">
+            <transition name="tourist-fade" mode="out-in">
+              <component :is="Component" />
+            </transition>
+          </router-view>
         </el-main>
       </el-container>
     </el-container>
@@ -80,6 +88,12 @@ const onSelect = (path) => {
 </script>
 
 <style>
+html {
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
 html, body {
   margin: 0;
   padding: 0;
@@ -139,6 +153,12 @@ html, body {
   overflow: auto;
   /* brand 56 + footer 48 = 104 */
   height: calc(100vh - 104px);
+}
+.menu .el-menu-item {
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .menu .el-menu-item { transition: none; }
 }
 
 .aside-footer {
@@ -212,6 +232,20 @@ html, body {
 /* 只有语音导览页面关闭主区域滚动，其它页面正常滚动 */
 .main-no-header.main-no-scroll {
   overflow: hidden;
+}
+
+/* 路由切换：仅透明度，缩短时间减轻卡顿 */
+.tourist-fade-enter-active,
+.tourist-fade-leave-active {
+  transition: opacity 0.1s ease;
+}
+.tourist-fade-enter-from,
+.tourist-fade-leave-to {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tourist-fade-enter-active,
+  .tourist-fade-leave-active { transition: none; }
 }
 </style>
 

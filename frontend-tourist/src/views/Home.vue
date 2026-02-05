@@ -176,6 +176,10 @@ const navigateIfSelected = (path) => {
   background-repeat: no-repeat;
   z-index: 0;
   pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .home.has-background::before { transition: none; }
 }
 
 .home-card {
@@ -185,6 +189,7 @@ const navigateIfSelected = (path) => {
   z-index: 10;
   background: #ffffff !important;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
 }
 
 .card-header {
@@ -213,6 +218,15 @@ const navigateIfSelected = (path) => {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+  transition: transform 0.12s ease;
+}
+.feature-cards .feature-col .el-card:not(.disabled):hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .feature-cards .feature-col .el-card { transition: none; }
+  .feature-cards .feature-col .el-card:not(.disabled):hover { transform: none; }
 }
 
 .feature-cards .feature-col .el-card :deep(.el-card__body) {

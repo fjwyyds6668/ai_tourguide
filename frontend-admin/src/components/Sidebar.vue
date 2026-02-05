@@ -180,6 +180,7 @@ const onAvatarFileChange = async (e) => {
   border-radius: 8px;
   margin: 2px 8px;
   height: 44px;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
 .sidebar-menu .el-menu-item.is-active {
   background: rgba(64, 158, 255, 0.2);

@@ -72,6 +72,14 @@ onMounted(async () => {
 }
 .stat-card {
   padding: 4px 0;
+  transition: transform 0.12s ease;
+}
+.stat-card:hover {
+  transform: translateY(-2px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .stat-card { transition: none; }
+  .stat-card:hover { transform: none; }
 }
 .stat-card :deep(.el-statistic__head) {
   font-size: 14px;

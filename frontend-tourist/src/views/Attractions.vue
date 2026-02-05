@@ -164,6 +164,9 @@ onMounted(async () => {
   border-radius: 12px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
+.page-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
 
 .page-card :deep(.el-card__header) {
   padding: 14px 20px;
@@ -197,12 +200,16 @@ onMounted(async () => {
 .attraction-card {
   border-radius: 8px;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.12s ease;
 }
 
 .attraction-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .attraction-card { transition: none; }
+  .attraction-card:hover { transform: none; }
 }
 
 .attraction-image {

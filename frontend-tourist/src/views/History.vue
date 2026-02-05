@@ -89,6 +89,15 @@ onMounted(() => {
   border-radius: 12px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
+.page-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.history-page :deep(.el-table__row) {
+  transition: background-color 0.1s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .history-page :deep(.el-table__row) { transition: none; }
+}
 
 .page-card :deep(.el-card__header) {
   padding: 14px 20px;

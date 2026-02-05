@@ -4,6 +4,19 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vue-vendor': ['vue', 'vue-router', 'pinia'],
+          'element-plus': ['element-plus'],
+          'element-icons': ['@element-plus/icons-vue'],
+          'axios': ['axios']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 600
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
