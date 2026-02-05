@@ -262,22 +262,7 @@ const processAudio = async (audioBlob) => {
     
     initAudioAnalyzer().catch(() => {})
     
-    const generateRes = await api.post('/rag/generate', {
-      query: queryText,
-      session_id: sessionId.value,
-      character_id: selectedCharacterId.value,
-      use_rag: true
-    })
-    
-    const answer = generateRes.data?.answer || generateRes.data || ''
-    sessionId.value = generateRes.data?.session_id || sessionId.value
-    
-    if (!answer || answer.trim() === '') {
-      ElMessage.warning('AI 未返回有效回答，请重试')
-      return
-    }
-    
-    addAssistantStreamMessage(answer, selectedCharacterId.value)
+    await streamGenerateAndSpeak(queryText, selectedCharacterId.value)
     scrollToBottom()
   } catch (error) {
     const msg = await extractErrorMessage(error)
@@ -311,22 +296,7 @@ const handleSendText = async () => {
       initAudioAnalyzer()
     ]).catch(() => {})
 
-    const generateRes = await api.post('/rag/generate', {
-      query: queryText,
-      session_id: sessionId.value,
-      character_id: selectedCharacterId.value,
-      use_rag: true
-    })
-
-    const answer = generateRes.data?.answer || generateRes.data || ''
-    sessionId.value = generateRes.data?.session_id || sessionId.value
-    
-    if (!answer || answer.trim() === '') {
-      ElMessage.warning('AI 未返回有效回答，请重试')
-      return
-    }
-
-    addAssistantStreamMessage(answer, selectedCharacterId.value)
+    await streamGenerateAndSpeak(queryText, selectedCharacterId.value)
     scrollToBottom()
   } catch (error) {
     const msg = await extractErrorMessage(error)
@@ -558,7 +528,7 @@ const playAudioQueue = async () => {
   isSpeaking.value = false
 }
 
-const synthesizeAndQueue = async (text, characterId, sessionId) => {
+const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = false) => {
   if (!text || typeof text !== 'string' || text.length === 0) {
     console.warn('TTS 合成跳过：文本为空或无效', text)
     return
@@ -570,15 +540,15 @@ const synthesizeAndQueue = async (text, characterId, sessionId) => {
     return
   }
 
+  const synthesizeUrl = useStreamApi ? '/voice/synthesize-stream' : '/voice/synthesize'
   ttsRequestQueue = ttsRequestQueue.then(async () => {
     // 如果在真正发请求前 session 已经变化，直接跳过
     if (sessionId !== ttsSessionId) {
       return
     }
     try {
-      console.log('开始 TTS 合成，文本长度:', cleanedText.length, '预览:', cleanedText.substring(0, 30))
       const synthesizeRes = await api.post(
-        '/voice/synthesize',
+        synthesizeUrl,
         { 
           text: cleanedText, 
           character_id: characterId 
@@ -608,8 +578,90 @@ const synthesizeAndQueue = async (text, characterId, sessionId) => {
   })
 }
 
-// “流式打字 + 分段提前合成”方式：
-// 目标：尽量快地让语音开始播放，同时每一段尽量长一些，减少“断句感”
+// 流式生成 + 与文字同步的 TTS：使用 SSE，收到句子就立刻合成并排队播放
+const streamGenerateAndSpeak = async (queryText, characterId) => {
+  const msgIndex = conversationHistory.value.length
+  conversationHistory.value.push({
+    role: 'assistant',
+    content: '',
+    timestamp: new Date().toISOString()
+  })
+  const thisTtsSessionId = ++ttsSessionId
+  ttsRequestQueue = Promise.resolve()
+
+  const baseURL = api.defaults.baseURL || '/api/v1'
+  const url = `${baseURL}/rag/generate-stream`
+  const body = JSON.stringify({
+    query: queryText,
+    session_id: sessionId.value || undefined,
+    character_id: characterId ?? selectedCharacterId.value,
+    use_rag: true
+  })
+
+  const msgRef = conversationHistory.value[msgIndex]
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body
+    })
+    if (!resp.ok) {
+      const errText = await resp.text()
+      throw new Error(errText || `请求失败 ${resp.status}`)
+    }
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const data = JSON.parse(line.slice(6))
+          const type = data.type
+          const content = data.content
+          if (type === 'session_id' && content) {
+            sessionId.value = content
+          } else if (type === 'text' && content && msgRef) {
+            msgRef.content = (msgRef.content || '') + content
+            scrollToBottom()
+          } else if (type === 'tts' && content && content.trim()) {
+            synthesizeAndQueue(content.trim(), characterId ?? selectedCharacterId.value, thisTtsSessionId, true)
+          } else if (type === 'done') {
+            if (msgRef && content) msgRef.content = content
+            scrollToBottom()
+          } else if (type === 'error' && content) {
+            ElMessage.error(content)
+          }
+        } catch (e) {
+          // 忽略单条解析错误
+        }
+      }
+    }
+    if (buffer.trim()) {
+      const line = buffer.replace(/^data: /, '')
+      try {
+        const data = JSON.parse(line)
+        if (data.type === 'text' && data.content && msgRef) msgRef.content = (msgRef.content || '') + data.content
+        if (data.type === 'tts' && data.content && data.content.trim()) {
+          synthesizeAndQueue(data.content.trim(), characterId ?? selectedCharacterId.value, thisTtsSessionId, true)
+        }
+      } catch (_) {}
+    }
+    scrollToBottom()
+  } catch (err) {
+    if (msgRef) msgRef.content = (msgRef.content || '') + '\n[ 生成出错：' + (err.message || '未知错误') + ' ]'
+    scrollToBottom()
+    throw err
+  }
+}
+
+// “流式打字 + 分段提前合成”方式（备用，非流式接口时使用）：
 const addAssistantStreamMessage = (fullText, characterId = null) => {
   // 为当前回答创建一个独立的 TTS 会话 ID，用于废弃旧的音频
   const thisTtsSessionId = ++ttsSessionId

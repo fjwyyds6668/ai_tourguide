@@ -211,3 +211,80 @@ async def synthesize_speech(
             error_detail = "科大讯飞 TTS 未配置。请设置 XFYUN_APPID / XFYUN_API_KEY / XFYUN_API_SECRET，或启用离线本地 TTS（CosyVoice2）。"
         raise HTTPException(status_code=400, detail=f"TTS 合成失败：{error_detail}")
 
+@router.post("/synthesize-stream")
+async def synthesize_speech_stream(
+    req: SynthesizeRequest
+):
+    """流式语音合成（用于与流式文本同步）：接收文本片段，快速返回音频"""
+    try:
+        text = _normalize_tts_text(req.text)
+        if not text:
+            logger.debug("TTS 流式请求文本规范化后为空，返回静音 WAV")
+            return Response(
+                content=_minimal_silent_wav_bytes(),
+                media_type="audio/wav",
+                headers={"Content-Disposition": "inline; filename=speech.wav"},
+            )
+        
+        voice = req.voice
+        voice_from_request = bool(req.voice)
+        
+        # 如果提供了角色ID但没有提供语音，尝试从角色配置获取
+        if not voice and req.character_id:
+            try:
+                prisma = await get_prisma()
+                character = await prisma.character.find_unique(where={"id": req.character_id})
+                if character and character.voice:
+                    voice = character.voice
+                    voice_from_request = False
+            except Exception as e:
+                logger.warning(f"获取角色语音配置失败: {e}")
+        
+        if voice and voice not in XFYUN_VOICE_VALUES:
+            if voice_from_request:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"不支持的语音音色：{voice}",
+                )
+            voice = None
+        
+        audio_path = None
+        last_error = None
+
+        if not settings.LOCAL_TTS_FORCE:
+            try:
+                # 流式 TTS：使用更短的超时，快速返回
+                audio_path = await voice_service.synthesize_xfyun(text, voice=voice)
+            except Exception as e:
+                last_error = e
+                logger.warning(f"科大讯飞流式 TTS 合成失败: {e}")
+
+        if (audio_path is None) and settings.LOCAL_TTS_ENABLED:
+            try:
+                audio_path = await voice_service.synthesize_local_cosyvoice2(text, voice=voice)
+                last_error = None
+            except Exception as e:
+                last_error = e
+                logger.warning(f"CosyVoice2 流式 TTS 合成失败: {e}")
+
+        if audio_path is None:
+            raise HTTPException(status_code=400, detail=f"流式 TTS 合成失败：{str(last_error) if last_error else 'unknown error'}")
+        
+        if not os.path.exists(audio_path):
+            raise HTTPException(status_code=500, detail="音频文件生成失败")
+        
+        ext = os.path.splitext(audio_path)[1].lower()
+        if ext == ".wav":
+            media_type = "audio/wav"
+            filename = "speech.wav"
+        else:
+            media_type = "audio/mpeg"
+            filename = "speech.mp3"
+
+        return FileResponse(audio_path, media_type=media_type, filename=filename)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"流式 TTS synthesize failed: {e}")
+        raise HTTPException(status_code=400, detail=f"流式 TTS 合成失败：{str(e)}")
+

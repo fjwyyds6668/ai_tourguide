@@ -181,14 +181,21 @@ class VoiceService:
                 "或启用本地 TTS（LOCAL_TTS_ENABLED=true）作为备用。"
             )
         
+        if not output_path:
+            # 使用临时目录（通常在内存文件系统或SSD上，比默认位置更快）
+            temp_dir = tempfile.gettempdir()
+            output_path = tempfile.mktemp(suffix=".wav", dir=temp_dir)
+        
         try:
             text = text.encode('utf-8', errors='ignore').decode('utf-8')
         except Exception as e:
             logger.warning(f"文本清理失败: {e}")
             text = ''.join(char for char in text if ord(char) < 0x110000 and not (0xD800 <= ord(char) <= 0xDFFF))
         
-        text = re.sub(r"[^\u4e00-\u9fff0-9\s]", "", text)
-        text = re.sub(r"\s+", " ", text)
+        # 简化文本清理：只移除明显无效字符，保留更多内容以提升合成质量
+        # 移除控制字符和特殊符号，但保留常见标点
+        text = re.sub(r"[\x00-\x1F\x7F-\x9F]", "", text)  # 移除控制字符
+        text = re.sub(r"\s{2,}", " ", text)  # 合并多个空格
         text = text.strip()
         
         if not text:
@@ -312,9 +319,11 @@ class VoiceService:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, run_websocket)
                 
-                # 等待 WebSocket 关闭（最多 60 秒，长文本合成可能较慢）
-                if not ws_closed.wait(timeout=60.0):
-                    raise Exception("科大讯飞 TTS 请求超时（60秒）")
+                # 等待 WebSocket 关闭（根据文本长度动态调整超时：每100字约5秒，最少15秒，最多30秒）
+                text_len = len(text)
+                timeout_seconds = max(15.0, min(30.0, (text_len / 100) * 5))
+                if not ws_closed.wait(timeout=timeout_seconds):
+                    raise Exception(f"科大讯飞 TTS 请求超时（{timeout_seconds:.1f}秒）")
                 
                 if error_occurred[0]:
                     raise Exception(error_message[0] or "科大讯飞 TTS 未知错误")
@@ -356,10 +365,12 @@ class VoiceService:
             
             if attempt < max_retries - 1:
                 if is_connection_error:
-                    wait_time = 2.0 * (2 ** attempt)
+                    # 连接错误时快速重试：0.5秒、1秒、2秒
+                    wait_time = 0.5 * (2 ** attempt)
                     logger.info(f"检测到连接错误，等待 {wait_time:.1f} 秒后重试...")
                 else:
-                    wait_time = 0.5 * (2 ** attempt)
+                    # 其他错误快速重试：0.2秒、0.4秒、0.8秒
+                    wait_time = 0.2 * (2 ** attempt)
                 
                 await asyncio.sleep(wait_time)
             else:

@@ -62,6 +62,27 @@ def _strip_emoji(text: str) -> str:
         s = s.rstrip("，、；：") + "。"
     return s
 
+def _clean_special_symbols(text: str) -> str:
+    """清理特殊符号和 Markdown 格式，确保输出为纯文本"""
+    if not text or not isinstance(text, str):
+        return text or ""
+    s = text
+    # 移除 Markdown 粗体、斜体符号
+    s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)  # **粗体** -> 粗体
+    s = re.sub(r"\*([^*]+)\*", r"\1", s)  # *斜体* -> 斜体
+    s = re.sub(r"#+\s*", "", s)  # Markdown 标题符号
+    # 移除列表符号（保留内容）
+    s = re.sub(r"^[\s]*[-•▪▫]\s+", "", s, flags=re.MULTILINE)
+    s = re.sub(r"^[\s]*[1-9]\d*[\.、]\s+", "", s, flags=re.MULTILINE)  # 数字列表
+    # 移除装饰性符号
+    s = re.sub(r"[～~——…•▪▫]+", "", s)
+    # 移除 emoji 数字（如 1️⃣、2️⃣）
+    s = re.sub(r"[\u0030-\u0039]\uFE0F\u20E3", "", s)
+    # 移除多余的装饰性标点
+    s = re.sub(r"[。]{2,}", "。", s)
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    return s
+
 
 try:
     import jieba
@@ -1649,6 +1670,7 @@ class RAGService:
                 answer = re.sub(r"\s{2,}", " ", answer).strip()
             if answer:
                 answer = _strip_emoji(answer)
+                answer = _clean_special_symbols(answer)
             try:
                 log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
                 os.makedirs(log_root, exist_ok=True)
