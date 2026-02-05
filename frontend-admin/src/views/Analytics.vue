@@ -29,24 +29,10 @@
       </el-table>
     </el-card>
 
-    <el-card title="最近交互记录" style="margin-bottom: 24px">
-      <template #header>最近交互记录</template>
-      <el-table
-        :data="interactionData?.recent_interactions || []"
-        v-loading="loading"
-        row-key="id"
-        max-height="400"
-      >
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="session_id" label="会话ID" width="120" />
-        <el-table-column prop="query_text" label="查询内容" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="interaction_type" label="交互类型" width="120" />
-        <el-table-column prop="created_at" label="时间" width="180" />
-      </el-table>
-    </el-card>
-
-    <el-card title="RAG 检索上下文日志（传给 LLM 的信息）">
-      <template #header>RAG 检索上下文日志（传给 LLM 的信息）</template>
+    <el-card>
+      <template #header>
+        <span>RAG 检索上下文日志（显示最近 5 条）</span>
+      </template>
       <el-table :data="ragLogs" v-loading="ragLogsLoading" class="rag-logs-table">
         <el-table-column prop="timestamp" label="时间" width="180" />
         <el-table-column prop="use_rag" label="是否使用RAG" width="100">
@@ -101,6 +87,23 @@ const interactionData = ref(null)
 const popularData = ref(null)
 const ragLogs = ref([])
 
+const formatTime = (val) => {
+  if (!val) return '—'
+  const d = new Date(val)
+  if (Number.isNaN(d.getTime())) return val
+  const fmt = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Shanghai',
+  })
+  return fmt.format(d).replace(/\//g, '/')
+}
+
 function nodeName(n) {
   if (!n) return '节点'
   const p = n.properties || n
@@ -121,21 +124,35 @@ const fetchRagLogs = async () => {
   }
 }
 
-const fetchAnalytics = async () => {
+const fetchInteractions = async () => {
   loading.value = true
   try {
-    const [interactionsRes, popularRes] = await Promise.all([
-      api.get('/admin/analytics/interactions'),
-      api.get('/admin/analytics/popular-attractions'),
-    ])
-    interactionData.value = interactionsRes.data
-    popularData.value = popularRes.data
-    await fetchRagLogs()
+    const res = await api.get('/admin/analytics/interactions', {
+      params: {
+        skip: 0,
+        limit: 5,
+      },
+    })
+    const data = res.data || {}
+    interactionData.value = data
   } catch (e) {
     console.error(e)
   } finally {
     loading.value = false
   }
+}
+
+const fetchPopular = async () => {
+  try {
+    const popularRes = await api.get('/admin/analytics/popular-attractions')
+    popularData.value = popularRes.data
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+const fetchAnalytics = async () => {
+  await Promise.all([fetchPopular(), fetchInteractions(), fetchRagLogs()])
 }
 
 onMounted(() => {
@@ -175,6 +192,11 @@ onMounted(() => {
   font-size: 13px;
   white-space: normal;
   word-wrap: break-word;
+  color: #2c3e50;
+}
+.rag-context strong {
+  color: #303133;
+  font-weight: 600;
 }
 .rag-context > div {
   margin-bottom: 8px;
@@ -189,11 +211,13 @@ onMounted(() => {
   font-size: 12px;
   max-width: 100%;
   overflow: visible;
+  color: #2c3e50;
 }
 .answer-preview {
   white-space: pre-wrap;
   word-break: break-word;
   margin-top: 4px;
+  color: #2c3e50;
 }
 .page-wrap {
   min-height: 200px;
@@ -203,5 +227,31 @@ onMounted(() => {
 }
 .page-wrap .el-card:last-child {
   margin-bottom: 0;
+}
+
+/* 最近交互表格样式优化 */
+.recent-table :deep(.el-table__header-wrapper th) {
+  font-size: 13px;
+  color: #303133;
+  font-weight: 600;
+}
+.recent-table :deep(.el-table__row) {
+  height: auto;
+}
+.recent-table :deep(.el-table__cell) {
+  padding: 6px 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  vertical-align: top;
+}
+.recent-table :deep(.el-table__cell .cell) {
+  white-space: normal;
+  word-break: break-word;
+}
+.sub-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin: 8px 0;
 }
 </style>

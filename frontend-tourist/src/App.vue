@@ -71,9 +71,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Microphone, Location, Document, Fold, Expand } from '@element-plus/icons-vue'
 
-onMounted(() => {
-  console.log('AI 数字人导游系统 - 游客端')
-})
+onMounted(() => {})
 
 const collapsed = ref(false)
 const route = useRoute()

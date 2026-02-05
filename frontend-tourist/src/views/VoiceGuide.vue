@@ -128,6 +128,8 @@ const characters = ref([])
 const MAX_HISTORY_LENGTH = 50
 const conversationHistory = ref([])
 const textInput = ref('')
+const conversationListRef = ref(null)
+let scrollRaf = 0
 
 let mediaRecorder = null
 let audioChunks = []
@@ -384,6 +386,7 @@ const addMessage = (role, content) => {
 let audioContext = null
 let analyser = null
 let audioSource = null
+let lipDataArray = null
 
 const initAudioAnalyzer = async () => {
   if (!audioContext) {
@@ -407,14 +410,16 @@ const updateLipSync = () => {
     return
   }
   
-  const dataArray = new Uint8Array(analyser.frequencyBinCount)
-  analyser.getByteFrequencyData(dataArray)
+  if (!lipDataArray || lipDataArray.length !== analyser.frequencyBinCount) {
+    lipDataArray = new Uint8Array(analyser.frequencyBinCount)
+  }
+  analyser.getByteFrequencyData(lipDataArray)
   
   let sum = 0
-  for (let i = 0; i < dataArray.length; i++) {
-    sum += dataArray[i] * dataArray[i]
+  for (let i = 0; i < lipDataArray.length; i++) {
+    sum += lipDataArray[i] * lipDataArray[i]
   }
-  const rms = Math.sqrt(sum / dataArray.length) / 255
+  const rms = Math.sqrt(sum / lipDataArray.length) / 255
   
   try {
     const manager = Live2dManager.getInstance()
@@ -477,7 +482,6 @@ const playAudioQueue = async () => {
                   clearTimeout(timeout)
                   URL.revokeObjectURL(audioUrl)
                   if (isLastChunk) {
-                    console.log('最后一段音频播放完成，等待额外延迟确保完整')
                     setTimeout(() => {
                       resolve()
                     }, 300)
@@ -565,7 +569,6 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
         console.warn('TTS 返回空音频数据，文本:', cleanedText.substring(0, 50))
         return
       }
-      console.log('TTS 合成成功，音频大小:', synthesizeRes.data.size, '字节')
       const audioUrl = URL.createObjectURL(synthesizeRes.data)
       audioQueue.push(audioUrl)
       playAudioQueue()
@@ -599,6 +602,21 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
   })
 
   const msgRef = conversationHistory.value[msgIndex]
+  // 降低“每个 SSE token 都触发一次 Vue 更新 + 滚动”的开销：合并到每帧刷新一次
+  let pendingText = ''
+  let flushRaf = 0
+  const scheduleFlush = () => {
+    if (flushRaf) return
+    flushRaf = requestAnimationFrame(() => {
+      flushRaf = 0
+      if (!msgRef) return
+      if (pendingText) {
+        msgRef.content = (msgRef.content || '') + pendingText
+        pendingText = ''
+      }
+      scrollToBottom()
+    })
+  }
   try {
     const resp = await fetch(url, {
       method: 'POST',
@@ -628,11 +646,16 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
           if (type === 'session_id' && content) {
             sessionId.value = content
           } else if (type === 'text' && content && msgRef) {
-            msgRef.content = (msgRef.content || '') + content
-            scrollToBottom()
+            pendingText += content
+            scheduleFlush()
           } else if (type === 'tts' && content && content.trim()) {
             synthesizeAndQueue(content.trim(), characterId ?? selectedCharacterId.value, thisTtsSessionId, true)
           } else if (type === 'done') {
+            // flush 未落盘的 token
+            if (pendingText) {
+              msgRef.content = (msgRef.content || '') + pendingText
+              pendingText = ''
+            }
             if (msgRef && content) msgRef.content = content
             scrollToBottom()
           } else if (type === 'error' && content) {
@@ -647,11 +670,18 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
       const line = buffer.replace(/^data: /, '')
       try {
         const data = JSON.parse(line)
-        if (data.type === 'text' && data.content && msgRef) msgRef.content = (msgRef.content || '') + data.content
+        if (data.type === 'text' && data.content && msgRef) {
+          pendingText += data.content
+        }
         if (data.type === 'tts' && data.content && data.content.trim()) {
           synthesizeAndQueue(data.content.trim(), characterId ?? selectedCharacterId.value, thisTtsSessionId, true)
         }
       } catch (_) {}
+    }
+    // 最后再 flush 一次
+    if (pendingText && msgRef) {
+      msgRef.content = (msgRef.content || '') + pendingText
+      pendingText = ''
     }
     scrollToBottom()
   } catch (err) {
@@ -737,11 +767,14 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
 }
 
 const scrollToBottom = () => {
-  requestAnimationFrame(() => {
-    const listRef = document.querySelector('.conversation-list')
-    if (listRef) {
-      listRef.scrollTop = listRef.scrollHeight
-    }
+  if (!conversationListRef.value) return
+  // 合并多次滚动调用到同一帧，避免抖动与频繁读写布局
+  if (scrollRaf) return
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0
+    const el = conversationListRef.value
+    if (!el) return
+    el.scrollTop = el.scrollHeight
   })
 }
 

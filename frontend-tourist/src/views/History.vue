@@ -15,7 +15,6 @@
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="query_text" label="问题" min-width="200" />
         <el-table-column prop="response_text" label="回答" min-width="300" />
-        <el-table-column prop="interaction_type" label="类型" width="120" />
         <el-table-column prop="created_at" label="时间" width="180">
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
