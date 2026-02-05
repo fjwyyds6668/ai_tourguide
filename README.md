@@ -1,25 +1,77 @@
 # 景区 AI 数字人导游系统
 
-一个基于前后端分离架构的智能景区导览系统，集成语音识别、语音合成、GraphRAG 检索和多种数据库技术。
+> 对应毕设：第1章 绪论
 
-## 技术栈
+一个基于前后端分离架构的智能景区导览系统，集成语音识别、语音合成、GraphRAG 检索和多种数据库技术，为游客提供沉浸式数字人语音导览服务。
 
-### 后端
-- **框架**: Python FastAPI
-- **数据库**: 
-  - PostgreSQL (关系型数据)
-  - Neo4j (图数据库)
-  - Milvus (向量数据库)
-- **AI 能力**:
-  - 语音识别: Whisper / Vosk
-  - 语音合成: openai-edge-tts（本地在线网关）/ 本地 CosyVoice2（备用/强制）
-  - GraphRAG 检索
+---
 
-### 前端
-- **游客端**: Vue3
-- **管理员端**: React
+## 1. 相关技术（第2章）
 
-## 项目结构
+### 1.1 数字人技术
+
+- **建模与渲染**：Live2D 数字人形象，支持多角色配置
+- **语音识别**：Whisper / Vosk
+- **语音合成**：科大讯飞 TTS（在线）/ CosyVoice2（本地备用）
+- **多模态交互**：语音输入 → 文本检索 → 语音输出，流式文本与 TTS 同步
+
+### 1.2 知识库与检索技术
+
+- **增强型检索生成（RAG）**：向量检索 + 图检索混合，结合 LLM 生成
+- **向量数据库**：Milvus 语义相似度搜索
+- **图数据库**：Neo4j 实体关系查询、景点推荐路径
+
+### 1.3 系统开发关键技术
+
+- **多数据库协同**：PostgreSQL（结构化）、Neo4j（图）、Milvus（向量）、MinIO（对象存储）
+- **前后端实时交互**：REST API、SSE 流式输出、WebSocket 语音流
+
+---
+
+## 2. 功能模块（第3章 需求分析）
+
+### 2.1 游客端功能
+
+- 沉浸式语音导览
+- 个性化景点推荐
+- 实时语音交互
+- 景点信息查询
+
+### 2.2 管理端功能
+
+- 知识库维护
+- 数据分析支持
+- 内容管理（景点、角色等）
+- 用户数据统计
+
+### 2.3 知识库与数据分析功能
+
+- 知识文档导入、向量化与图构建
+- 访问量、交互类型等统计与可视化
+
+---
+
+## 3. 系统架构与运行环境（第3章 3.4、第4章 4.2）
+
+### 3.1 系统运行环境
+
+| 类别 | 要求 |
+|------|------|
+| **操作系统** | Windows 10+ / Linux / macOS |
+| **Python** | 3.9+（推荐 3.10~3.12） |
+| **Node.js** | 16+（推荐 18+） |
+| **PostgreSQL** | 12+ |
+| **Docker** | 20+（Neo4j、Milvus、MinIO） |
+| **内存** | 建议 8GB+（本地 TTS 需 16GB+） |
+| **磁盘** | 建议 10GB+（含模型与数据） |
+
+### 3.2 核心依赖版本
+
+- **后端**：FastAPI 0.115+、Prisma、Neo4j 5.x、Milvus 2.6+、sentence-transformers
+- **游客端**：Vue 3、Vite 5、Element Plus
+- **管理端**：React 18、Ant Design 5
+
+### 3.3 项目结构
 
 ```
 ai_tourguide/
@@ -33,356 +85,124 @@ ai_tourguide/
 │   ├── requirements.txt
 │   └── main.py
 ├── frontend-tourist/     # Vue3 游客端
-├── frontend-admin/       # React 管理员端
+├── frontend-admin/       # React 管理端
 └── README.md
 ```
 
-## 功能模块
+---
 
-### 游客端
-- 沉浸式语音导览
-- 个性化景点推荐
-- 实时语音交互
-- 景点信息查询
+## 4. 数据库与检索设计（第4章 4.4、4.5）
 
-### 管理员端
-- 知识库维护
-- 数据分析支持
-- 内容管理
-- 用户数据统计
+### 4.1 数据存储职责
 
-## 快速开始
+| 数据库 | 职责 |
+|--------|------|
+| **PostgreSQL** | 用户、景点、角色、交互记录等结构化数据 |
+| **Neo4j** | 景点关系、推荐路径等图数据 |
+| **Milvus** | 知识库向量嵌入与语义搜索 |
+| **MinIO** | 知识文档、图片等对象存储 |
 
-### 环境要求
+### 4.2 检索生成流程
 
-- Python 3.9+
-- Node.js 16+
-- PostgreSQL 12+
-- Docker（用于 Neo4j、Milvus、MinIO）
+1. 用户语音/文本输入 → 语音识别（若为语音）
+2. 向量检索（Milvus）获取语义相关片段
+3. 图检索（Neo4j）补充实体关系与上下文
+4. 混合结果送入 LLM 生成回复
+5. TTS 合成语音返回前端播放
 
-### 1. 启动数据库服务（Docker）
+---
+
+## 5. 快速开始（第5章 系统实现）
+
+### 5.1 启动数据库服务
 
 ```bash
-# 启动所有数据库服务
 docker-compose up -d neo4j standalone minio etcd
-
-# 或单独启动
-docker-compose up -d neo4j      # Neo4j 图数据库
-docker-compose up -d standalone  # Milvus 向量数据库
-docker-compose up -d minio       # MinIO 对象存储
 ```
 
-### 2. 后端设置
-
-#### 安装 Python 依赖
+### 5.2 后端设置
 
 ```bash
 cd backend
 pip install -r requirements.txt
-```
-
-#### 配置环境变量
-
-复制 `.env.example` 为 `.env` 并填写配置：
-
-```bash
-cp .env.example .env
-```
-
-编辑 `backend/.env` 文件：
-
-```env
-# PostgreSQL 数据库
-DATABASE_URL=postgresql://postgres:123456@localhost:5432/ai_tourguide
-
-# Neo4j 图数据库
-NEO4J_URI=bolt://localhost:30001
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=12345678
-
-# Milvus 向量数据库
-MILVUS_HOST=localhost
-MILVUS_PORT=30002
-
-# OpenAI API（兼容硅基流动）
-OPENAI_API_KEY=your-api-key
-OPENAI_API_BASE=https://api.siliconflow.cn/v1
-OPENAI_MODEL=Pro/deepseek-ai/DeepSeek-R1
-
-# JWT 密钥
-SECRET_KEY=your-secret-key-change-in-production
-```
-
-#### 初始化数据库
-
-**使用 Prisma（推荐）**：
-
-```bash
-cd backend
-# 生成 Prisma 客户端
+cp .env.example .env   # 填写 DATABASE_URL、NEO4J_*、MILVUS_*、OPENAI_API_KEY、SECRET_KEY 等
 prisma generate
-
-# 创建数据库表（开发环境）
 prisma db push
-
-# 或使用迁移（生产环境）
-prisma migrate dev --name init
-```
-
-#### 启动后端服务
-
-```bash
-cd backend
 uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 ```
 
-后端服务默认监听在 `http://localhost:18000`
+### 5.3 前端启动
 
-### 3. 前端启动
+| 端 | 命令 | 访问地址 |
+|----|------|----------|
+| 游客端 | `cd frontend-tourist && npm install && npm run dev` | http://localhost:5173 |
+| 管理端 | `cd frontend-admin && npm install && npm start` | http://localhost:3000 |
 
-**游客端 (Vue3)**
-```bash
-cd frontend-tourist
-npm install
-npm run dev
-```
-访问: http://localhost:5173
+---
 
-**管理员端 (React)**
-```bash
-cd frontend-admin
-npm install
-npm start
-```
-访问: http://localhost:3000
+## 6. 语音与数字人配置
 
-## 服务端口总览
+- **Whisper**：自动下载模型，首次使用需联网
+- **Vosk**：需下载 [中文模型](https://alphacephei.com/vosk/models/vosk-model-cn-0.22.zip)
+- **科大讯飞 TTS**：在 [开放平台](https://www.xfyun.cn/) 注册，配置 `XFYUN_*` 变量
+- **CosyVoice2（本地备用）**：克隆 CosyVoice 到项目根目录，设置 `LOCAL_TTS_ENABLED=true` 等，详见 `.env.example`
+- **数字人角色**：见 [数字人角色配置说明](数字人角色配置说明.md)
 
-| 服务名称 | IP | 端口 | 访问地址 | 说明 |
-|---------|----|----|---------|------|
-| **后端 API** | 0.0.0.0 | 18000 | http://localhost:18000 | FastAPI 后端服务 |
-| **前端管理端** | localhost | 3000 | http://localhost:3000 | React 管理后台 |
-| **前端游客端** | localhost | 5173 | http://localhost:5173 | Vue3 游客端 |
-| **PostgreSQL** | localhost | 5432 | localhost:5432 | 主数据库 |
-| **Neo4j HTTP** | localhost | 30000 | http://localhost:30000 | Neo4j Browser |
-| **Neo4j Bolt** | localhost | 30001 | bolt://localhost:30001 | Neo4j 数据库连接 |
-| **Milvus API** | localhost | 30002 | localhost:30002 | Milvus 向量数据库 |
-| **Milvus 健康检查** | localhost | 30003 | http://localhost:30003/healthz | Milvus 健康检查 |
-| **Milvus Insight** | localhost | 30006 | http://localhost:30006 | Milvus Web 管理界面 |
-| **MinIO API** | localhost | 30004 | http://localhost:30004 | MinIO 对象存储 |
-| **MinIO 控制台** | localhost | 30005 | http://localhost:30005 | MinIO Web 管理界面 |
+---
 
-## API 文档
+## 7. API 文档与端口
 
-启动后端服务后，访问以下地址查看 API 文档：
+| 服务 | 端口 | 地址 |
+|------|------|------|
+| 后端 API | 18000 | http://localhost:18000 |
+| Swagger UI | 18000 | http://localhost:18000/docs |
+| ReDoc | 18000 | http://localhost:18000/redoc |
+| PostgreSQL | 5432 | localhost:5432 |
+| Neo4j Browser | 30000 | http://localhost:30000 |
+| Neo4j Bolt | 30001 | bolt://localhost:30001 |
+| Milvus | 30002 | localhost:30002 |
+| MinIO 控制台 | 30005 | http://localhost:30005 |
 
-- Swagger UI: http://localhost:18000/docs
-- ReDoc: http://localhost:18000/redoc
-- 健康检查: http://localhost:18000/health
+---
 
-## 主要功能
+## 8. 系统测试说明（第6章）
 
-### 语音交互流程
+- **功能测试**：游客端语音导览、景点查询、管理端知识库与数据统计
+- **性能测试**：检索准确率、响应时间、并发能力
+- 详细测试用例与结果见论文第6章
 
-1. 用户通过前端录音
-2. 音频上传到后端进行语音识别（Whisper/Vosk）
-3. 识别文本通过 GraphRAG 检索相关知识
-4. 生成回复文本
-5. 使用 TTS 合成语音（openai-edge-tts / 本地 CosyVoice2）
-6. 返回音频给前端播放
+---
 
-### GraphRAG 检索与数据存储
+## 9. 常见问题
 
-- **向量检索**: 使用 Milvus 进行语义相似度搜索
-- **图检索**: 使用 Neo4j 进行实体关系查询
-- **混合检索**: 结合向量和图数据库结果，提供更准确的答案
-- **数据存储职责**:
-  - PostgreSQL: 用户、景点、交互记录等结构化数据
-  - Neo4j: 景点关系、推荐路径等图数据
-  - Milvus: 知识库向量嵌入与语义搜索
+1. **数据库连接失败**：检查 `.env` 配置，确认 PostgreSQL、Neo4j、Milvus 已启动
+2. **Prisma 客户端未生成**：执行 `cd backend && prisma generate`
+3. **CORS 错误**：在 `config.py` 的 `CORS_ORIGINS` 中添加新源
+4. **TTS/语音识别失败**：Whisper 需约 1.5GB 磁盘；科大讯飞失败时可启用 CosyVoice2 备用
 
-## 详细文档
+---
 
-- [项目结构说明](PROJECT_STRUCTURE.md) - 详细的目录结构和模块说明
-- [GraphRAG 技术指南](GRAPH_RAG_GUIDE.md) - GraphRAG 实现和数据导入指南
-- [数字人角色配置](数字人角色配置说明.md) - Live2D 数字人角色配置说明
+## 10. 开发计划与展望（第7章）
 
-## 语音服务配置
+**系统优化亮点**：RAG 检索优化（参数配置化、向量缓存、批量 Neo4j、并行簇构建）；错误可观测性（`errors` 字段、结构化日志）；配置与安全（上传白名单、路径约束）；可维护性（RAG 模块拆分、统一分页）。
 
-### Whisper（语音识别）
-
-Whisper 会自动下载模型，首次使用需要网络连接。
-
-### Vosk（语音识别）
-
-需要下载中文模型：
-```bash
-wget https://alphacephei.com/vosk/models/vosk-model-cn-0.22.zip
-unzip vosk-model-cn-0.22.zip
-```
-
-### 科大讯飞 TTS（在线 TTS）
-
-本项目使用科大讯飞 WebSocket TTS API 作为在线语音合成服务。
-
-#### 1. 获取 API 凭证
-
-1. 访问 [科大讯飞开放平台](https://www.xfyun.cn/)
-2. 注册账号并创建应用
-3. 获取以下信息：
-   - **APPID**：应用 ID
-   - **APIKey**：API 密钥
-   - **APISecret**：API 密钥对应的密钥
-
-#### 2. 配置 `.env`
-
-在 `backend/.env` 中添加以下配置：
-
-```env
-# 科大讯飞 TTS 配置
-XFYUN_APPID=your_app_id
-XFYUN_API_KEY=your_api_key
-XFYUN_API_SECRET=your_api_secret
-# 可选：默认音色（如 x4_yezi、aisjiuxu、aisxping 等）
-XFYUN_VOICE=x4_yezi
-```
-
-#### 3. 音色选择
-
-科大讯飞支持多种音色，可在配置中通过 `XFYUN_VOICE` 设置默认音色，或在 API 请求中通过 `voice` 参数指定。
-
-### 离线本地 TTS（CosyVoice2，备用/强制）
-
-当你遇到科大讯飞 TTS 网络问题/鉴权失败时，可以启用 **CosyVoice2** 作为本地备用合成（也可强制始终使用本地 TTS）。
-
-#### 1. 准备 CosyVoice 代码
-
-将 CosyVoice 官方仓库克隆到项目根目录 `CosyVoice/`（或通过环境变量 `COSYVOICE_REPO_PATH` 指定路径）：
-
-```bash
-git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git
-```
-
-#### 2. 配置 `.env`
-
-在 `backend/.env` 中添加以下配置：
-
-```env
-# 启用本地 TTS（科大讯飞 TTS 失败时自动降级到 CosyVoice2）
-LOCAL_TTS_ENABLED=true
-
-# 可选：强制始终使用本地 TTS（不走科大讯飞 TTS）
-# LOCAL_TTS_FORCE=false
-
-# 本地 TTS 引擎（目前仅支持 cosyvoice2）
-LOCAL_TTS_ENGINE=cosyvoice2
-
-# 可选：CosyVoice2 模型缓存/目录（留空则由 ModelScope 自动下载/使用缓存）
-# COSYVOICE2_MODEL_PATH=
-
-# CosyVoice2 设备（cpu/cuda，如果有 GPU 建议使用 cuda）
-COSYVOICE2_DEVICE=cpu
-
-# CosyVoice2 语言（zh/en/ja 等）
-COSYVOICE2_LANGUAGE=zh
-```
-
-#### 3. 使用方法
-
-**API 调用：**
-```bash
-curl -X POST http://localhost:18000/api/v1/voice/synthesize \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "你好，这是测试",
-    "voice": "zh-CN-XiaoxiaoNeural"
-  }' \
-  --output speech.wav
-```
-
-## 常见问题
-
-### 1. 数据库连接失败
-
-- 检查 `.env` 中的数据库配置是否正确
-- 确保数据库服务已启动
-- PostgreSQL: 检查端口 5432 是否被占用
-- Neo4j: 检查 Docker 容器是否运行 `docker ps | grep neo4j`
-- Milvus: 检查端口 30002 是否可访问
-
-### 2. Prisma 客户端未生成
-
-```bash
-cd backend
-prisma generate
-```
-
-### 3. 端口冲突
-
-如果端口被占用：
-- 修改配置文件中的端口
-- 或停止占用端口的进程
-
-### 4. CORS 错误
-
-后端已配置允许的源：
-- `http://localhost:3000`（管理端）
-- `http://localhost:5173`（游客端）
-
-如需添加其他源，修改 `backend/app/core/config.py` 中的 `CORS_ORIGINS`
-
-### 5. 语音识别失败
-
-- **Whisper**: 确保有足够的磁盘空间（模型约 1.5GB）
-- **Vosk**: 确保模型文件路径正确
-
-### 6. openai-edge-tts 连接失败/鉴权失败
-
-如果 openai-edge-tts 持续失败：
-- 检查 openai-edge-tts 容器/服务是否启动
-- 检查 `OPENAI_EDGE_TTS_BASE_URL` / `OPENAI_EDGE_TTS_API_KEY` 是否正确
-- 检查网络连接与防火墙
-- 或启用本地 TTS（CosyVoice2）作为备用
-
-## 系统优化亮点（毕业设计展示用）
-
-1. **RAG 检索性能与稳定性优化**
-   - 将向量模型名称、Milvus 集合名、相似度阈值、`top_k` 等全部配置化，集中在 `config.py`/`rag_settings.py` 管理，支持通过 `.env` 快速调参。
-   - 为 embedding 和向量检索增加内存缓存（带 TTL 与命中率统计日志），显著减少重复向量化与重复检索开销。
-   - 向量检索统一增加耗时与命中条数日志，便于排查性能瓶颈与线上问题。
-
-2. **GraphRAG + Neo4j 查询优化**
-   - 将原来针对多个实体逐个调用 Neo4j 的查询，改为基于 `UNWIND` 的批量查询接口，减少多次往返带来的延迟。
-   - 对景区/景点簇信息构建做了并行与批量优化，降低复杂问答时的响应时间。
-
-3. **错误可观测性与降级策略**
-   - RAG 主流程在返回结构中新增 `errors` 字段，可以区分“知识库没有命中”和“Milvus/Neo4j 等服务异常”，方便前端与运维做有针对性的提示或降级。
-   - LLM、Milvus、Neo4j 相关异常统一通过结构化日志记录，保证即使底层服务短暂不可用，系统仍能优雅降级而不是直接报错。
-
-4. **后端配置与安全性提升**
-   - 将图片上传大小、扩展名白名单等硬编码常量抽到配置中，方便不同部署环境按需调整。
-   - 加强文件上传校验与路径约束，避免不合法文件类型与潜在路径遍历风险。
-
-5. **代码结构与可维护性**
-   - 将超大 RAG 服务文件中的硬编码参数、缓存逻辑拆分到独立配置模块，降低耦合度，便于后续替换模型或存储引擎。
-   - 管理端热门景点统计等接口统一了分页与排序策略，并限制只返回 Top N，兼顾性能与展示需求。
-
-## 开发建议
-
-1. 使用虚拟环境管理 Python 依赖
-2. 定期备份数据库
-3. 生产环境使用 HTTPS
-4. 配置适当的 CORS 策略
-5. 使用 Prisma 进行数据库操作（避免编码问题）
-
-## 开发计划
-
+**后续计划**：
 - [ ] 完善用户认证系统
 - [ ] 实现个性化推荐算法
 - [ ] 添加实时位置服务
 - [ ] 优化语音识别准确率
 - [ ] 增强 GraphRAG 检索效果
 - [ ] 添加多语言支持
+
+---
+
+## 11. 详细文档
+
+- [项目结构说明](PROJECT_STRUCTURE.md)
+- [GraphRAG 技术指南](GRAPH_RAG_GUIDE.md)
+- [数字人角色配置](数字人角色配置说明.md)
+
+---
 
 ## 许可证
 
