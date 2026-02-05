@@ -109,7 +109,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document, ChatDotRound } from '@element-plus/icons-vue'
 import Live2DCanvas from '../components/Live2DCanvas.vue'
@@ -136,11 +136,20 @@ const audioQueue = []
 let isPlayingQueue = false
 let currentAudio = null
 let ttsRequestQueue = Promise.resolve()
+// 用于“失效”旧的 TTS，会话 ID 每次新回答或停止播报时自增
+let ttsSessionId = 0
 
 const currentScenic = ref(null)
 const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
 
+// 仅在本页面时禁止整体页面滚动，离开时恢复，保证只有对话区域可滚动
+let previousBodyOverflow = ''
+
 onMounted(async () => {
+  if (typeof document !== 'undefined') {
+    previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+  }
   await loadCharacters()
   if (characters.value.length > 0) {
     selectedCharacterId.value = characters.value[0].id
@@ -155,6 +164,12 @@ onMounted(async () => {
     currentScenic.value = spots.find((s) => s.id === idNum) || null
   } catch (e) {
     console.error('加载当前景区信息失败:', e)
+  }
+})
+
+onUnmounted(() => {
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = previousBodyOverflow || ''
   }
 })
 
@@ -356,6 +371,8 @@ const stopSpeaking = () => {
   audioQueue.length = 0
   isPlayingQueue = false
   isSpeaking.value = false
+  // 使当前及之前回答的 TTS 全部失效，避免新对话继续播旧内容
+  ttsSessionId += 1
   
   try {
     const manager = Live2dManager.getInstance()
@@ -541,7 +558,7 @@ const playAudioQueue = async () => {
   isSpeaking.value = false
 }
 
-const synthesizeAndQueue = async (text, characterId) => {
+const synthesizeAndQueue = async (text, characterId, sessionId) => {
   if (!text || typeof text !== 'string' || text.length === 0) {
     console.warn('TTS 合成跳过：文本为空或无效', text)
     return
@@ -554,6 +571,10 @@ const synthesizeAndQueue = async (text, characterId) => {
   }
 
   ttsRequestQueue = ttsRequestQueue.then(async () => {
+    // 如果在真正发请求前 session 已经变化，直接跳过
+    if (sessionId !== ttsSessionId) {
+      return
+    }
     try {
       console.log('开始 TTS 合成，文本长度:', cleanedText.length, '预览:', cleanedText.substring(0, 30))
       const synthesizeRes = await api.post(
@@ -564,6 +585,12 @@ const synthesizeAndQueue = async (text, characterId) => {
         },
         { responseType: 'blob', timeout: 30000 }
       )
+      // 请求返回时再次检查，会话是否已经失效（例如用户点了“停止播报”或者开始新对话）
+      if (sessionId !== ttsSessionId) {
+        console.warn('TTS 结果已过期，丢弃本次音频')
+        return
+      }
+
       if (!synthesizeRes.data || synthesizeRes.data.size === 0) {
         console.warn('TTS 返回空音频数据，文本:', cleanedText.substring(0, 50))
         return
@@ -581,8 +608,12 @@ const synthesizeAndQueue = async (text, characterId) => {
   })
 }
 
-// “流式打字”方式添加助手消息（流式显示文本的同时按顺序合成和播放 TTS）
+// “流式打字 + 分段提前合成”方式：
+// 目标：尽量快地让语音开始播放，同时每一段尽量长一些，减少“断句感”
 const addAssistantStreamMessage = (fullText, characterId = null) => {
+  // 为当前回答创建一个独立的 TTS 会话 ID，用于废弃旧的音频
+  const thisTtsSessionId = ++ttsSessionId
+
   const index = conversationHistory.value.length
   conversationHistory.value.push({
     role: 'assistant',
@@ -594,53 +625,30 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
     return
   }
 
-  ttsRequestQueue = Promise.resolve()
-
   const textLength = fullText.length
   let i = 0
   const interval = 10
-  const TTS_CHUNK_SIZE = 25
+  // 每段送给 TTS 的文本长度（比原来的 25 大很多，减少停顿次数）
+  const TTS_CHUNK_SIZE = 80
+  // 提前量：当“打字位置”离上一段 TTS 文本结尾不足这么多字符时，就开始合成下一段
+  const TTS_AHEAD_THRESHOLD = 20
   let ttsSynthesizedLength = 0
 
-  const startFirstTTS = () => {
-    const initialText = fullText.substring(0, Math.min(TTS_CHUNK_SIZE, fullText.length))
-    if (initialText.trim()) {
-      synthesizeAndQueue(initialText, characterId || selectedCharacterId.value)
-      ttsSynthesizedLength = initialText.length
-    }
+  // 重置队列，保证本轮回答的 TTS 顺序播放
+  ttsRequestQueue = Promise.resolve()
+
+  // 先用首段文本触发第一次 TTS，让语音尽快开始
+  const initialChunkEnd = Math.min(TTS_CHUNK_SIZE, textLength)
+  const initialText = fullText.substring(0, initialChunkEnd)
+  if (initialText.trim()) {
+    synthesizeAndQueue(initialText, characterId || selectedCharacterId.value, thisTtsSessionId)
+    ttsSynthesizedLength = initialChunkEnd
   }
 
-  startFirstTTS()
-
+  // 打字机效果：逐步把完整回答打印出来
   const timer = setInterval(() => {
     if (i >= textLength) {
       clearInterval(timer)
-      // 确保最后剩余的文本也被合成，避免“最后几个字没读出来”
-      if (ttsSynthesizedLength < fullText.length) {
-        let remainingText = fullText.substring(ttsSynthesizedLength)
-        if (remainingText && remainingText.length > 0) {
-          const lastChar = remainingText[remainingText.length - 1]
-          const hasPunctuation = ['。', '！', '？', '.', '!', '?', '，', ',', '；', ';'].includes(lastChar)
-          if (!hasPunctuation) {
-            remainingText = remainingText + '。'
-          }
-          
-          if (remainingText.trim().length < 5 && ttsSynthesizedLength > 0) {
-            const extendedStart = Math.max(0, ttsSynthesizedLength - 15)
-            remainingText = fullText.substring(extendedStart)
-            const newLastChar = remainingText[remainingText.length - 1]
-            if (!['。', '！', '？', '.', '!', '?'].includes(newLastChar)) {
-              remainingText = remainingText + '。'
-            }
-            console.log('最后一段太短，扩展文本范围，新长度:', remainingText.length)
-          }
-          
-          console.log('合成最后一段文本，长度:', remainingText.length, '预览:', remainingText.substring(0, 50))
-          synthesizeAndQueue(remainingText, characterId || selectedCharacterId.value)
-        } else {
-          console.warn('最后一段文本为空，已合成长度:', ttsSynthesizedLength, '总长度:', fullText.length)
-        }
-      }
       return
     }
     const msg = conversationHistory.value[index]
@@ -648,18 +656,30 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
       clearInterval(timer)
       return
     }
+
     const chunkSize = Math.min(3, textLength - i)
     msg.content += fullText.substring(i, i + chunkSize)
     i += chunkSize
 
-    if (i >= ttsSynthesizedLength + TTS_CHUNK_SIZE - 5 && i < fullText.length) {
+    // 根据“打字进度”提前触发下一段 TTS，减少下一句开头的空白
+    if (i >= ttsSynthesizedLength - TTS_AHEAD_THRESHOLD && ttsSynthesizedLength < textLength) {
       const nextChunkStart = ttsSynthesizedLength
-      const nextChunkEnd = Math.min(ttsSynthesizedLength + TTS_CHUNK_SIZE, fullText.length)
-      const nextChunk = fullText.substring(nextChunkStart, nextChunkEnd)
-      if (nextChunk.trim()) {
-        synthesizeAndQueue(nextChunk, characterId || selectedCharacterId.value)
-        ttsSynthesizedLength = nextChunkEnd
+      const nextChunkEnd = Math.min(ttsSynthesizedLength + TTS_CHUNK_SIZE, textLength)
+      let nextChunk = fullText.substring(nextChunkStart, nextChunkEnd)
+      if (nextChunk.trim().length === 0) {
+        return
       }
+
+      // 如果是最后一段但结尾没有句号/问号/感叹号，自动补一个，让 TTS 更自然收尾
+      if (nextChunkEnd === textLength) {
+        const lastChar = nextChunk[nextChunk.length - 1]
+        if (!['。', '！', '？', '.', '!', '?'].includes(lastChar)) {
+          nextChunk = nextChunk + '。'
+        }
+      }
+
+      synthesizeAndQueue(nextChunk, characterId || selectedCharacterId.value, thisTtsSessionId)
+      ttsSynthesizedLength = nextChunkEnd
     }
   }, interval)
 }
@@ -726,9 +746,11 @@ const triggerSpeakingMotion = () => {
   max-width: 1400px;
   margin: 0 auto;
   padding: 12px;
-  min-height: calc(100vh - 24px);
+  /* 占满一屏高度，避免页面整体滚动 */
+  height: calc(100vh - 24px);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .section-card {
@@ -794,18 +816,13 @@ const triggerSpeakingMotion = () => {
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-
-.avatar-card {
   height: 100%;
-  display: flex;
-  flex-direction: column;
 }
 
 .avatar-wrapper {
   width: 100%;
-  flex: 1;
-  min-height: 0;
+  /* 固定一个视觉高度，让数字人大小稳定 */
+  flex: 0 0 460px;
   margin-bottom: 12px;
   border-radius: 12px;
   overflow: hidden;
@@ -875,8 +892,8 @@ const triggerSpeakingMotion = () => {
 }
 
 .conversation-list {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  /* 只在对话列表内部滚动 */
   overflow-y: auto;
   padding: 10px;
 }

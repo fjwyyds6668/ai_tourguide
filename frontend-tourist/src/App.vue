@@ -47,7 +47,10 @@
       </el-aside>
 
       <el-container class="content" :style="{ marginLeft: collapsed ? '64px' : '220px' }">
-        <el-main class="main main-no-header">
+        <el-main
+          class="main main-no-header"
+          :class="{ 'main-no-scroll': route.path === '/voice-guide' }"
+        >
           <router-view :key="route.fullPath" />
         </el-main>
       </el-container>
@@ -204,6 +207,11 @@ html, body {
 .main.main-no-header {
   height: 100vh;
   margin-top: 0;
+}
+
+/* 只有语音导览页面关闭主区域滚动，其它页面正常滚动 */
+.main-no-header.main-no-scroll {
+  overflow: hidden;
 }
 </style>
 
