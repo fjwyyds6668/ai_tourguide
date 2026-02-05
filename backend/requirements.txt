@@ -43,6 +43,9 @@ huggingface-hub>=0.16.0,<0.20.0
 jieba==0.42.1
 # pkuseg==0.0.25  # 已移除：代码中未使用，且与 Python 3.13 不兼容
 
+# 会话持久化（可选：配置 REDIS_URL 时需安装，否则会话用内存）
+redis>=5.0.0
+
 # 工具库
 python-multipart==0.0.6
 python-jose[cryptography]==3.3.0

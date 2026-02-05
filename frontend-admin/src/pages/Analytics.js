@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Table, Row, Col, Statistic, Tag } from 'antd';
-import { MessageOutlined, EnvironmentOutlined } from '@ant-design/icons';
+import { MessageOutlined } from '@ant-design/icons';
 import api from '../api';
 
 const Analytics = () => {
@@ -223,28 +223,22 @@ const Analytics = () => {
               />
             </Card>
           </Col>
-          <Col span={12}>
-            <Card>
-              <Statistic
-                title="热门景点数"
-                value={popularData?.popular_attractions?.length || 0}
-                prefix={<EnvironmentOutlined />}
-              />
-            </Card>
-          </Col>
         </Row>
       )}
 
-      <Card title="交互类型统计" style={{ marginBottom: 24 }}>
-        {interactionData?.by_type && (
-          <Row gutter={16}>
-            {Object.entries(interactionData.by_type).map(([type, count]) => (
-              <Col span={6} key={type}>
-                <Statistic title={type} value={count} />
-              </Col>
-            ))}
-          </Row>
-        )}
+      <Card
+        title="热门景点"
+        extra={popularData?.visit_count_note ? (
+          <span style={{ fontSize: 12, color: '#666' }}>{popularData.visit_count_note}</span>
+        ) : null}
+        style={{ marginBottom: 24 }}
+      >
+        <Table
+          columns={popularColumns}
+          dataSource={popularData?.popular_attractions || []}
+          loading={loading}
+          rowKey="id"
+        />
       </Card>
 
       <Card title="最近交互记录" style={{ marginBottom: 24 }}>
@@ -254,15 +248,6 @@ const Analytics = () => {
           loading={loading}
           rowKey="id"
           pagination={{ pageSize: 10 }}
-        />
-      </Card>
-
-      <Card title="热门景点">
-        <Table
-          columns={popularColumns}
-          dataSource={popularData?.popular_attractions || []}
-          loading={loading}
-          rowKey="id"
         />
       </Card>
 

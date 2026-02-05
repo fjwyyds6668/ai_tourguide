@@ -1,13 +1,11 @@
 """GraphRAG 检索 API"""
 import logging
 import asyncio
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from sqlalchemy.orm import Session
 from app.services.rag_service import rag_service
 from app.services.session_service import session_service
-from app.core.database import get_db
 from app.core.prisma_client import get_prisma
 from app.models.interaction import Interaction
 
@@ -64,7 +62,7 @@ async def graph_search(entity_name: str, relation_type: str = None, limit: int =
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/generate", response_model=GenerateResponse)
-async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None):
+async def generate_answer(request: GenerateRequest, background_tasks: BackgroundTasks):
     """生成回答（RAG + 多轮对话）。"""
     try:
         session_id = request.session_id
@@ -114,15 +112,31 @@ async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db
         def save_interaction():
             try:
                 from app.core.database import SessionLocal
+                from app.models.attraction import Attraction as AttractionModel
                 db_local = SessionLocal()
                 try:
+                    aid = primary_attraction_id
+                    # 若 RAG 未返回景点 ID，根据问题文本尝试按景点名称匹配（便于服务次数统计）
+                    if aid is None and request.query and request.query.strip():
+                        q = (request.query or "").strip()
+                        rows = (
+                            db_local.query(AttractionModel.id, AttractionModel.name)
+                            .filter(AttractionModel.name.isnot(None), AttractionModel.name != "")
+                            .limit(200)
+                            .all()
+                        )
+                        for row in rows:
+                            name = row[1] if len(row) > 1 else None
+                            if name and name in q:
+                                aid = row[0]
+                                break
                     interaction = Interaction(
                         session_id=session_id,
                         character_id=request.character_id,
                         query_text=request.query,
                         response_text=answer,
                         interaction_type="voice_query",
-                        attraction_id=primary_attraction_id,
+                        attraction_id=aid,
                     )
                     db_local.add(interaction)
                     db_local.commit()
@@ -131,11 +145,7 @@ async def generate_answer(request: GenerateRequest, db: Session = Depends(get_db
             except Exception as e:
                 logger.error(f"Failed to save interaction: {e}")
         
-        if background_tasks:
-            background_tasks.add_task(save_interaction)
-        else:
-            # 如果没有 background_tasks，使用 asyncio 后台执行
-            asyncio.create_task(asyncio.to_thread(save_interaction))
+        background_tasks.add_task(save_interaction)
         
         return GenerateResponse(
             answer=answer,

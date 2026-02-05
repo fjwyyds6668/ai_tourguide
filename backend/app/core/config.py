@@ -68,7 +68,10 @@ class Settings(BaseSettings):
     # 管理端 / 上传等配置
     ADMIN_MAX_IMAGE_SIZE_MB: int = 10
     ADMIN_ALLOWED_IMAGE_EXTS: List[str] = [".png", ".jpg", ".jpeg", ".webp", ".gif"]
-    
+
+    # 会话存储：配置后使用 Redis 持久化，多进程/重启不丢；不配置则使用内存
+    REDIS_URL: Optional[str] = None  # 例如 redis://localhost:6379/0
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

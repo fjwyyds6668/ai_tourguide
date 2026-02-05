@@ -1563,10 +1563,10 @@ async def get_interaction_analytics(
 
 @router.get("/analytics/popular-attractions")
 async def get_popular_attractions(db: Session = Depends(get_db)):
-    """获取热门景点统计"""
+    """获取热门景点统计。访问次数 = 该景点关联的 Interaction 数量（含语音查询 voice_query 与详情页访问 detail_view）。"""
     from sqlalchemy import func
     from app.models.attraction import Attraction
-    
+
     popular = db.query(
         Attraction.id,
         Attraction.name,
@@ -1576,7 +1576,7 @@ async def get_popular_attractions(db: Session = Depends(get_db)):
     ).group_by(Attraction.id, Attraction.name).order_by(
         func.count(Interaction.id).desc()
     ).limit(5).all()
-    
+
     popular_list = [
         {
             "id": row[0],
@@ -1585,8 +1585,11 @@ async def get_popular_attractions(db: Session = Depends(get_db)):
         }
         for row in popular
     ]
-    
-    return {"popular_attractions": popular_list}
+
+    return {
+        "popular_attractions": popular_list,
+        "visit_count_note": "访问次数统计自语音查询与景点详情页访问",
+    }
 
 @router.get("/stats", response_model=DashboardStatsResponse)
 async def get_dashboard_stats(db: Session = Depends(get_db)):

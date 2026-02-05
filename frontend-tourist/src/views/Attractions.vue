@@ -32,6 +32,7 @@
                 :src="imageSrc(attraction.image_url)"
                 class="attraction-image"
                 alt="景点图片"
+                loading="lazy"
               />
               <div v-else class="placeholder-image">
                 <el-icon :size="48"><Picture /></el-icon>
@@ -123,9 +124,15 @@ const fetchAttractions = async () => {
 
 const onScenicChange = () => {}
 
-const viewDetails = (attraction) => {
+const viewDetails = async (attraction) => {
   selectedAttraction.value = attraction
   detailVisible.value = true
+  // 请求详情接口以记录一次访问（用于热门景点统计）
+  try {
+    await api.get(`/attractions/${attraction.id}`)
+  } catch (e) {
+    // 忽略错误，详情已用列表数据展示
+  }
 }
 
 onMounted(async () => {

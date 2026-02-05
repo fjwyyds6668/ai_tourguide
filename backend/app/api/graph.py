@@ -1,6 +1,7 @@
 """
 图数据库相关 API（GraphRAG 专用）
 """
+import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
@@ -8,6 +9,11 @@ from app.services.graph_builder import graph_builder
 from app.core.neo4j_client import neo4j_client
 
 router = APIRouter()
+
+
+def _run_neo4j_sync(query: str, params: dict):
+    """在线程池中执行同步 Neo4j 查询，避免阻塞事件循环。"""
+    return neo4j_client.execute_query(query, params)
 
 class CreateNodeRequest(BaseModel):
     name: str
@@ -30,10 +36,14 @@ async def create_node(request: CreateNodeRequest):
         SET n += $properties
         RETURN n
         """
-        results = neo4j_client.execute_query(query, {
-            "name": request.name,
-            "properties": request.properties
-        })
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            None,
+            lambda: neo4j_client.execute_query(query, {
+                "name": request.name,
+                "properties": request.properties
+            }),
+        )
         return {"message": "Node created", "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -72,22 +82,23 @@ async def get_subgraph(entities: str, depth: int = 2):
 
 @router.get("/stats")
 async def get_graph_stats():
-    """获取图数据库统计信息"""
+    """获取图数据库统计信息（Neo4j 调用在线程池执行，不阻塞事件循环）"""
     try:
-        query = """
+        loop = asyncio.get_event_loop()
+        query_nodes = """
         MATCH (n)
         RETURN labels(n) as label, count(n) as count
         ORDER BY count DESC
         """
-        node_stats = neo4j_client.execute_query(query)
-        
-        query = """
+        query_rels = """
         MATCH ()-[r]->()
         RETURN type(r) as type, count(r) as count
         ORDER BY count DESC
         """
-        rel_stats = neo4j_client.execute_query(query)
-        
+        node_stats, rel_stats = await asyncio.gather(
+            loop.run_in_executor(None, lambda: neo4j_client.execute_query(query_nodes)),
+            loop.run_in_executor(None, lambda: neo4j_client.execute_query(query_rels)),
+        )
         return {
             "nodes": node_stats,
             "relationships": rel_stats

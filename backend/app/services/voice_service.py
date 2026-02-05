@@ -300,15 +300,21 @@ class VoiceService:
                         on_close=on_close
                     )
                     ws.on_open = on_open
-                    ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+                    # ping_interval/ping_timeout 保活，避免科大讯飞服务端因 "server read msg timeout" 关闭连接
+                    # 注意：ping_interval 必须大于 ping_timeout
+                    ws.run_forever(
+                        sslopt={"cert_reqs": ssl.CERT_NONE},
+                        ping_interval=20,
+                        ping_timeout=10,
+                    )
                 
                 # 在线程中运行 WebSocket（同步阻塞）
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, run_websocket)
                 
-                # 等待 WebSocket 关闭（最多 30 秒）
-                if not ws_closed.wait(timeout=30.0):
-                    raise Exception("科大讯飞 TTS 请求超时（30秒）")
+                # 等待 WebSocket 关闭（最多 60 秒，长文本合成可能较慢）
+                if not ws_closed.wait(timeout=60.0):
+                    raise Exception("科大讯飞 TTS 请求超时（60秒）")
                 
                 if error_occurred[0]:
                     raise Exception(error_message[0] or "科大讯飞 TTS 未知错误")

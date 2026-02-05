@@ -1,16 +1,24 @@
 """
 景点相关 API
 """
-from fastapi import APIRouter, Depends, HTTPException
+import time
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from typing import List, Optional
 from pydantic import BaseModel
 import logging
 from app.core.prisma_client import get_prisma
+from app.core.database import SessionLocal
+from app.models.interaction import Interaction
 from app.api.admin import _sync_attraction_to_graphrag, _get_prisma_model
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 景区列表短期缓存（变更少，减少数据库查询）
+_scenic_spots_cache: Optional[list] = None
+_scenic_spots_cache_time: float = 0
+SCENIC_SPOTS_CACHE_TTL = 60  # 秒
 
 class AttractionResponse(BaseModel):
     id: int
@@ -92,12 +100,17 @@ async def get_attractions(
 @router.get("/scenic-spots", response_model=List[ScenicSpotPublic])
 async def list_scenic_spots_public():
     """
-    游客端使用的景区列表（只返回 id + name，用于按景区筛选景点）
+    游客端使用的景区列表（只返回 id + name，用于按景区筛选景点）。
+    使用短期内存缓存减少数据库查询。
     """
+    global _scenic_spots_cache, _scenic_spots_cache_time
+    now = time.monotonic()
+    if _scenic_spots_cache is not None and (now - _scenic_spots_cache_time) < SCENIC_SPOTS_CACHE_TTL:
+        return _scenic_spots_cache
     prisma = await get_prisma()
     scenic_model = _get_prisma_model(prisma, "scenicspot", "scenicSpot")
     rows = await scenic_model.find_many(order={"id": "asc"}, take=1000)
-    return [
+    result = [
         ScenicSpotPublic(
             id=s.id,
             name=s.name,
@@ -105,6 +118,9 @@ async def list_scenic_spots_public():
         )
         for s in rows
     ]
+    _scenic_spots_cache = result
+    _scenic_spots_cache_time = now
+    return result
 
 
 @router.get("/recommendations/{user_id}")
@@ -132,13 +148,38 @@ async def get_recommendations(user_id: int, limit: int = 5):
     }
 
 
+def _record_attraction_visit(attraction_id: int, session_id: Optional[str] = None) -> None:
+    """在后台线程中记录一次景点详情页访问（用于热门景点统计）。"""
+    try:
+        db = SessionLocal()
+        try:
+            db.add(Interaction(
+                session_id=session_id,
+                attraction_id=attraction_id,
+                interaction_type="detail_view",
+            ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("记录景点访问失败 attraction_id=%s: %s", attraction_id, e)
+
+
 @router.get("/{attraction_id}", response_model=AttractionResponse)
-async def get_attraction(attraction_id: int):
-    """获取单个景点详情"""
+async def get_attraction(
+    attraction_id: int,
+    background_tasks: BackgroundTasks,
+    session_id: Optional[str] = None,
+):
+    """获取单个景点详情。可选传 session_id 以关联会话；会记录一次详情页访问用于热门统计。"""
     prisma = await get_prisma()
     r = await prisma.attraction.find_unique(where={"id": attraction_id})
     if not r:
         raise HTTPException(status_code=404, detail="Attraction not found")
+
+    # 记录一次访问（用于热门景点统计），不阻塞响应
+    background_tasks.add_task(_record_attraction_visit, attraction_id, session_id)
+
     return AttractionResponse(
         id=r.id,
         name=r.name,

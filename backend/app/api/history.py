@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from app.core.database import get_db
 from app.models.interaction import Interaction
 from pydantic import BaseModel
@@ -38,16 +38,24 @@ async def get_interaction_history(
     
     - 如果提供 session_id，返回该会话的所有交互记录
     - 如果不提供 session_id，返回最近的交互记录
+    - 使用窗口函数一次查询同时返回 total 与当前页，减少 DB 往返
     """
     try:
-        query = db.query(Interaction)
-        
+        base = db.query(Interaction)
         if session_id:
-            query = query.filter(Interaction.session_id == session_id)
-        
-        total = query.count()
-        interactions = query.order_by(desc(Interaction.created_at)).offset(skip).limit(limit).all()
-        
+            base = base.filter(Interaction.session_id == session_id)
+        # COUNT(*) OVER() 在过滤集上计算，ORDER BY/OFFSET/LIMIT 之后每行仍带完整总数
+        total_col = func.count(Interaction.id).over().label("_total")
+        rows = (
+            base.add_columns(total_col)
+            .order_by(desc(Interaction.created_at))
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+        total = int(rows[0][1]) if rows else 0
+        interactions = [row[0] for row in rows]
+
         data = [
             InteractionHistory(
                 id=interaction.id,
@@ -69,11 +77,11 @@ async def get_session_history(
     limit: int = Query(5, ge=1, le=200, description="返回数量限制，默认最近5条"),
     db: Session = Depends(get_db)
 ):
-    """获取指定会话的所有交互记录"""
+    """获取指定会话的交互记录（按时间倒序，最近在前）"""
     try:
         interactions = db.query(Interaction).filter(
             Interaction.session_id == session_id
-        ).order_by(Interaction.created_at).limit(limit).all()
+        ).order_by(desc(Interaction.created_at)).limit(limit).all()
         
         return [
             InteractionHistory(

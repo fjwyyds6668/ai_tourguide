@@ -13,6 +13,7 @@ warnings.filterwarnings("ignore", message=".*resume_download is deprecated.*")
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 # 在导入其他模块之前设置编码环境变量（从 .env 读取）
 # 这些变量需要在 Python 启动时设置，对 Prisma 生成器也有效
@@ -38,6 +39,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 响应 GZip 压缩，减少 JSON/文本传输体积
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # 注册路由
 app.include_router(router, prefix="/api/v1")
