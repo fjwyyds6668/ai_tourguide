@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -6,36 +6,32 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-});
+})
 
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('token')
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      config.headers.Authorization = `Bearer ${token}`
     }
-    return config;
+    return config
   },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
+  (error) => Promise.reject(error)
+)
+
 api.interceptors.response.use(
-  (response) => {
-    return response;
-  },
+  (response) => response,
   (error) => {
-    console.error('API Error:', error);
+    console.error('API Error:', error)
     if (error.response?.status === 401 && !error.config?.url?.includes('/auth/login')) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
       if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+        window.location.href = '/login'
       }
     }
-    return Promise.reject(error);
+    return Promise.reject(error)
   }
-);
+)
 
-export default api;
-
+export default api

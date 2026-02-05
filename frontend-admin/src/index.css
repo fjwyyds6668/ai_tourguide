@@ -1,14 +1,52 @@
-body {
+* {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  padding: 0;
+  box-sizing: border-box;
+}
+html, body, #app {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+/* 管理端全局：页面标题 */
+.admin-page-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
 }
 
+/* 卡片悬停 */
+.el-card {
+  border-radius: 8px;
+  transition: box-shadow 0.2s ease;
+}
+.el-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* 表格行悬停 */
+.el-table .el-table__row:hover > td {
+  background-color: #f8fafc !important;
+}
+
+/* 主内容区背景 */
+.admin-main-wrap {
+  background: #f1f5f9;
+  min-height: 100vh;
+  padding: 20px;
+}
+.admin-main-content {
+  background: #fff;
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+/* 页面标题内图标间距 */
+.admin-page-title .el-icon {
+  margin-right: 8px;
+  vertical-align: middle;
+}

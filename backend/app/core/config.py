@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # JWT 密钥：生产环境必须通过环境变量设置，默认值仅供本地开发调试使用
     SECRET_KEY: str = "dev-change-me"
     ALGORITHM: str = "HS256"
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5522"]
     AUTO_UPDATE_GRAPH_RAG: bool = True
     # GraphRAG / 检索相关配置
     GRAPHRAG_COLLECTION_NAME: str = "tour_knowledge"

@@ -62,14 +62,13 @@
 | **Node.js** | 16+（推荐 18+） |
 | **PostgreSQL** | 12+ |
 | **Docker** | 20+（Neo4j、Milvus、MinIO） |
-| **内存** | 建议 8GB+（本地 TTS 需 16GB+） |
-| **磁盘** | 建议 10GB+（含模型与数据） |
+| **内存** | 建议 8GB+（仅接口调用 LLM/TTS 时；本地 CosyVoice2 需 16GB+） |
+| **磁盘** | 建议 5GB+（应用与数据）；本地嵌入模型、Whisper/Vosk、CosyVoice2 会额外占数 GB，若 LLM/TTS 全走接口则无需为模型预留） |
 
 ### 3.2 核心依赖版本
 
 - **后端**：FastAPI 0.115+、Prisma、Neo4j 5.x、Milvus 2.6+、sentence-transformers
-- **游客端**：Vue 3、Vite 5、Element Plus
-- **管理端**：React 18、Ant Design 5
+- **前端**：Vue 3、Vite 5、Element Plus
 
 ### 3.3 项目结构
 
@@ -97,10 +96,10 @@ ai_tourguide/
 
 | 数据库 | 职责 |
 |--------|------|
-| **PostgreSQL** | 用户、景点、角色、交互记录等结构化数据 |
+| **PostgreSQL** | 用户、景点、角色、交互记录、知识条目等结构化数据 |
 | **Neo4j** | 景点关系、推荐路径等图数据 |
-| **Milvus** | 知识库向量嵌入与语义搜索 |
-| **MinIO** | 知识文档、图片等对象存储 |
+| **Milvus** | 知识库向量嵌入与语义搜索（底层依赖 MinIO 存储） |
+| **MinIO** | Milvus 底层对象存储；图片当前存于后端本地 uploads 目录 |
 
 ### 4.2 检索生成流程
 
@@ -136,7 +135,7 @@ uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 | 端 | 命令 | 访问地址 |
 |----|------|----------|
 | 游客端 | `cd frontend-tourist && npm install && npm run dev` | http://localhost:5173 |
-| 管理端 | `cd frontend-admin && npm install && npm start` | http://localhost:3000 |
+| 管理端 | `cd frontend-admin && npm install && npm run dev` | http://localhost:5522 |
 
 ---
 
@@ -146,7 +145,7 @@ uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 - **Vosk**：需下载 [中文模型](https://alphacephei.com/vosk/models/vosk-model-cn-0.22.zip)
 - **科大讯飞 TTS**：在 [开放平台](https://www.xfyun.cn/) 注册，配置 `XFYUN_*` 变量
 - **CosyVoice2（本地备用）**：克隆 CosyVoice 到项目根目录，设置 `LOCAL_TTS_ENABLED=true` 等，详见 `.env.example`
-- **数字人角色**：见 [数字人角色配置说明](数字人角色配置说明.md)
+- **数字人角色**：在管理端「角色管理」中配置 Live2D 形象与音色
 
 ---
 
@@ -157,10 +156,13 @@ uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 | 后端 API | 18000 | http://localhost:18000 |
 | Swagger UI | 18000 | http://localhost:18000/docs |
 | ReDoc | 18000 | http://localhost:18000/redoc |
+| 游客端 | 5173 | http://localhost:5173 |
+| 管理端 | 5522 | http://localhost:5522 |
 | PostgreSQL | 5432 | localhost:5432 |
 | Neo4j Browser | 30000 | http://localhost:30000 |
 | Neo4j Bolt | 30001 | bolt://localhost:30001 |
 | Milvus | 30002 | localhost:30002 |
+| MinIO API | 30004 | http://localhost:30004 |
 | MinIO 控制台 | 30005 | http://localhost:30005 |
 
 ---
@@ -177,7 +179,7 @@ uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 
 1. **数据库连接失败**：检查 `.env` 配置，确认 PostgreSQL、Neo4j、Milvus 已启动
 2. **Prisma 客户端未生成**：执行 `cd backend && prisma generate`
-3. **CORS 错误**：在 `config.py` 的 `CORS_ORIGINS` 中添加新源
+3. **CORS 错误**：后端默认允许 5173（游客端）、3000（管理端）；若管理端使用 5522 端口，需在 `config.py` 的 `CORS_ORIGINS` 中添加 `http://localhost:5522`
 4. **TTS/语音识别失败**：Whisper 需约 1.5GB 磁盘；科大讯飞失败时可启用 CosyVoice2 备用
 
 ---
@@ -198,9 +200,7 @@ uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 
 ## 11. 详细文档
 
-- [项目结构说明](PROJECT_STRUCTURE.md)
 - [GraphRAG 技术指南](GRAPH_RAG_GUIDE.md)
-- [数字人角色配置](数字人角色配置说明.md)
 
 ---
 
