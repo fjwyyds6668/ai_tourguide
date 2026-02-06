@@ -31,6 +31,7 @@ class GenerateRequest(BaseModel):
     session_id: Optional[str] = None
     character_id: Optional[int] = None
     use_rag: bool = True
+    scenic_name: Optional[str] = None  # 用户选择的景区名称，用于指代消解（如「这个景区」）
 
 class GenerateResponse(BaseModel):
     answer: str
@@ -102,7 +103,8 @@ async def generate_answer(request: GenerateRequest, background_tasks: Background
             context=None,
             use_rag=request.use_rag,
             conversation_history=conversation_history,
-            character_prompt=character_prompt
+            character_prompt=character_prompt,
+            scenic_name=request.scenic_name,
         )
         answer = result["answer"]
         context = result.get("context", "")
@@ -198,7 +200,12 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
         context = ""
         if request.use_rag:
             try:
-                rag_results = await rag_service.hybrid_search(request.query, top_k=5)
+                rag_results = await rag_service.hybrid_search(
+                    request.query,
+                    top_k=5,
+                    conversation_history=conversation_history,
+                    scenic_name=request.scenic_name,
+                )
                 primary_attraction_id = rag_results.get("primary_attraction_id")
                 context = rag_results.get("enhanced_context", "") or ""
             except Exception as e:

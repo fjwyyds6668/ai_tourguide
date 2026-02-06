@@ -598,7 +598,8 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
     query: queryText,
     session_id: sessionId.value || undefined,
     character_id: characterId ?? selectedCharacterId.value,
-    use_rag: true
+    use_rag: true,
+    scenic_name: currentScenic.value?.name || undefined
   })
 
   const msgRef = conversationHistory.value[msgIndex]

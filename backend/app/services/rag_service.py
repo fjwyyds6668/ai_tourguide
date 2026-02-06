@@ -725,6 +725,46 @@ class RAGService:
         )
         return bool(re.search(pattern, q))
 
+    def _has_pronoun_reference(self, query: str) -> bool:
+        """判断查询是否包含指代词（这个景区、这个景点、这里等），需要从对话历史解析。"""
+        if not query or not isinstance(query, str):
+            return False
+        q = query.strip()
+        patterns = [
+            r"这个景区|这个景点|那个景区|那个景点",
+            r"这里(怎么样|有什么|有哪些|介绍|好玩)",
+            r"那里(怎么样|有什么|有哪些|介绍|好玩)",
+            r"介绍一下这个|介绍一下那个",
+            r"这个(地方|景区|景点).*(介绍|怎么样|有什么)",
+            r"那个(地方|景区|景点).*(介绍|怎么样|有什么)",
+        ]
+        return any(re.search(p, q) for p in patterns)
+
+    def _extract_entities_from_history(
+        self, conversation_history: Optional[List[Dict[str, str]]]
+    ) -> List[str]:
+        """从对话历史中提取景区/景点名称，用于指代消解。"""
+        if not conversation_history or not isinstance(conversation_history, list):
+            return []
+        recent_texts: List[str] = []
+        for msg in conversation_history[-8:]:
+            role = msg.get("role")
+            content = msg.get("content")
+            if content and isinstance(content, str) and role in ("user", "assistant"):
+                recent_texts.append(content)
+        if not recent_texts:
+            return []
+        combined = " ".join(recent_texts)
+        entities = self.extract_entities(combined)
+        generic = {"介绍", "详情", "位置", "路线", "怎么", "好玩", "推荐", "谢谢", "好的", "可以"}
+        names = []
+        for e in entities:
+            t = (e.get("text") or "").strip()
+            if not t or len(t) < 2 or len(t) > 10 or t in generic:
+                continue
+            names.append(t)
+        return names[:5]
+
     def _is_route_query(self, query: str) -> bool:
         """判断是否为“路线/行程/推荐路线”类问题，需要多景点串联回答。"""
         if not query or not isinstance(query, str):
@@ -754,9 +794,16 @@ class RAGService:
         ):
             return QueryIntent.ROUTE
         
+        # 特色/功能类（在列表类之前，避免「有什么好玩的」被误判为列表）
+        if re.search(
+            r"特色|特点|好玩|有什么好玩的|玩什么|功能|亮点|推荐理由|为什么|值得|推荐什么",
+            q
+        ):
+            return QueryIntent.FEATURE
+        
         # 列表/数量类
         if re.search(
-            r"有哪些|都有(什么|哪些)|情况|分布|有什么|.*有哪些"
+            r"有哪些|都有(什么|哪些)|情况|分布|有什么(景点|地方)|.*有哪些"
             r"|有多少个?|多少个|有多少|几个|列举|列出",
             q
         ):
@@ -776,16 +823,9 @@ class RAGService:
         ):
             return QueryIntent.LOCATION
         
-        # 特色/功能类
+        # 详情/介绍类（含门票、开放时间等实用信息）
         if re.search(
-            r"特色|特点|好玩|有什么好玩的|有什么|功能|亮点|推荐理由|为什么|值得",
-            q
-        ):
-            return QueryIntent.FEATURE
-        
-        # 详情/介绍类（包含具体景点名或"介绍"）
-        if re.search(
-            r"介绍|详情|详细|是什么|什么样|描述|说说|讲讲|了解",
+            r"介绍|详情|详细|是什么|什么样|描述|说说|讲讲|了解|门票|票价|开放时间|营业时间",
             q
         ):
             return QueryIntent.DETAIL
@@ -924,10 +964,18 @@ class RAGService:
         joined = "、".join(attraction_names)
         return f"根据图数据库，景区「{scenic_name}」下的相关景点共有 {count} 个，包括：{joined}。"
 
-    async def hybrid_search(self, query: str, top_k: int = 5) -> Dict[str, Any]:
+    async def hybrid_search(
+        self,
+        query: str,
+        top_k: int = 5,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        scenic_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         意图驱动的混合检索：向量检索 + 实体识别 + 图检索 + 结果融合。
         根据查询意图自动选择最优检索策略（top_k、阈值、图查询深度等）。
+        当查询含指代词（如「这个景区」）时，优先用 scenic_name（用户选择的景区），
+        否则从 conversation_history 解析实体并补充检索。
         """
         # 1. 意图分类
         intent = self._classify_query_intent(query)
@@ -940,9 +988,23 @@ class RAGService:
         
         logger.debug(f"查询意图: {intent.value}, top_k={effective_top_k}, threshold={effective_threshold}, graph_depth={graph_depth}")
         
+        # 指代消解 / 景区上下文：优先用用户选择的景区名，其次从对话历史提取；有景区时始终用于增强检索
+        resolved_entities: List[str] = []
+        scenic_name_str = (scenic_name or "").strip()
+        if scenic_name_str:
+            resolved_entities = [scenic_name_str]
+            logger.debug(f"使用用户选择景区: {scenic_name_str}")
+        elif self._has_pronoun_reference(query) and conversation_history:
+            resolved_entities = self._extract_entities_from_history(conversation_history)
+            if resolved_entities:
+                logger.debug(f"指代消解: 从历史解析实体 {resolved_entities}")
+        
         errors: Dict[str, str] = {}
+        effective_query = query
+        if resolved_entities:
+            effective_query = f"{' '.join(resolved_entities[:2])} {query}"
         try:
-            vector_results = await self.vector_search(query, top_k=effective_top_k)
+            vector_results = await self.vector_search(effective_query, top_k=effective_top_k)
         except Exception as e:
             errors["milvus"] = str(e)
             logger.warning("hybrid_search vector_search failed (fallback to empty): %s", e)
@@ -988,6 +1050,12 @@ class RAGService:
                 unique_entities[text] = entity
         
         entity_names = [e["text"] for e in unique_entities.values()]
+        # 指代消解：将历史解析的实体补充进来（用于图检索），优先使用
+        seen_set = set(entity_names)
+        for name in resolved_entities:
+            if name and name not in seen_set:
+                entity_names = [name] + entity_names
+                seen_set.add(name)
         
         text_ids_to_fetch = [
             (r.get("text_id") or "").strip()
@@ -1114,10 +1182,15 @@ class RAGService:
             except Exception as e:
                 logger.warning(f"扩展景区景点失败 (intent={intent.value}): {e}")
         # 列举类问题（如「这个景区有多少景点」）若向量未命中 attraction_XX，则无 primary_attraction_id，
-        # 此处兜底：从图库查所有景区，补充至少一个景区的景点数量，避免「查不到」。
+        # 此处兜底：优先用用户选择的景区名，否则从图库查任意景区，补充景点数量。
         if intent == QueryIntent.LISTING and "根据图数据库，景区「" not in (enhanced_results or ""):
             try:
                 async def fetch_first_scenic_listing():
+                    # 优先使用用户选择的景区
+                    if scenic_name_str:
+                        sentence = await self._get_scenic_attractions_sentence_by_name(scenic_name_str)
+                        if sentence:
+                            return sentence
                     all_scenic_q = """
                     MATCH (s:ScenicSpot) RETURN s.name AS name LIMIT 5
                     """
@@ -1238,12 +1311,16 @@ class RAGService:
         query: str,
         rag_results: Dict[str, Any],
         conversation_history: Optional[List[Dict[str, str]]] = None,
+        scenic_name: Optional[str] = None,
     ) -> str:
         """列举景点类问题时，补充“某景区下有哪些景点”的结构化信息。"""
         if not self._is_listing_query(query):
             return ""
 
         scenic_names: set[str] = set()
+        # 优先使用用户选择的景区
+        if (scenic_name or "").strip():
+            scenic_names.add((scenic_name or "").strip())
         subgraph = rag_results.get("subgraph") or {}
         for node in subgraph.get("nodes", []):
             labels = set(node.get("labels") or [])
@@ -1554,7 +1631,8 @@ class RAGService:
         context: Optional[str] = None, 
         use_rag: bool = True,
         conversation_history: Optional[List[Dict[str, str]]] = None,
-        character_prompt: Optional[str] = None
+        character_prompt: Optional[str] = None,
+        scenic_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """生成回答；RAG 仅在内部执行一次。返回 {answer, primary_attraction_id, context}。"""
         if not self.llm_client:
@@ -1576,7 +1654,12 @@ class RAGService:
                 "skip_rag_reason": "问题为寒暄/通用问答，无需检索",
             }
         elif use_rag:
-            rag_results = await self.hybrid_search(query, top_k=5)
+            rag_results = await self.hybrid_search(
+                query,
+                top_k=5,
+                conversation_history=conversation_history,
+                scenic_name=scenic_name,
+            )
             primary_attraction_id = rag_results.get("primary_attraction_id")
             out_context = rag_results.get("enhanced_context", "") or ""
             # 如果 hybrid_search 已经扩展了景区信息（通过策略），这里不再重复查询
@@ -1588,6 +1671,7 @@ class RAGService:
                     query=query,
                     rag_results=rag_results,
                     conversation_history=conversation_history,
+                    scenic_name=scenic_name,
                 )
                 if scenic_ctx:
                     out_context = f"{out_context}\n\n{scenic_ctx}" if out_context else scenic_ctx

@@ -1029,9 +1029,22 @@ async def _upload_items_to_graphrag(
                     1
                 )
             else:
-                extracted = rag_service.extract_entities(item.text)
-                total_entities += len(extracted)
-                await graph_builder.extract_and_store_entities(item.text, item.text_id, extracted)
+                # 必须有景区上下文才创建图，避免离散节点脱离景区簇
+                if item.scenic_spot_id or scenic_name_override:
+                    extracted = rag_service.extract_entities(item.text)
+                    total_entities += len(extracted)
+                    await graph_builder.extract_and_store_entities(
+                        item.text,
+                        item.text_id,
+                        extracted,
+                        scenic_spot_id=item.scenic_spot_id,
+                        scenic_name=scenic_name_override or None,
+                    )
+                else:
+                    logger.debug(
+                        "跳过图构建(无景区上下文): text_id=%s，避免离散节点",
+                        item.text_id,
+                    )
 
     return {
         "message": f"Uploaded {len(items)} items successfully",

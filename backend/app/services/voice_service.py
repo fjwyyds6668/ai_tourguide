@@ -307,21 +307,22 @@ class VoiceService:
                         on_close=on_close
                     )
                     ws.on_open = on_open
-                    # ping_interval/ping_timeout 保活，避免科大讯飞服务端因 "server read msg timeout" 关闭连接
+                    # ping_interval/ping_timeout 保活；ping_timeout 需足够大，否则合成期间服务端忙时无法及时 pong 会触发 "ping/pong timed out"
                     # 注意：ping_interval 必须大于 ping_timeout
                     ws.run_forever(
                         sslopt={"cert_reqs": ssl.CERT_NONE},
-                        ping_interval=20,
-                        ping_timeout=10,
+                        ping_interval=30,
+                        ping_timeout=25,
+                        skip_utf8_validation=True,
                     )
                 
                 # 在线程中运行 WebSocket（同步阻塞）
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, run_websocket)
                 
-                # 等待 WebSocket 关闭（根据文本长度动态调整超时：每100字约5秒，最少15秒，最多30秒）
+                # 等待 WebSocket 关闭（根据文本长度动态调整超时：每100字约6秒，最少20秒，最多90秒，避免长文本合成未完成就超时）
                 text_len = len(text)
-                timeout_seconds = max(15.0, min(30.0, (text_len / 100) * 5))
+                timeout_seconds = max(20.0, min(90.0, (text_len / 100) * 6))
                 if not ws_closed.wait(timeout=timeout_seconds):
                     raise Exception(f"科大讯飞 TTS 请求超时（{timeout_seconds:.1f}秒）")
                 
@@ -343,7 +344,7 @@ class VoiceService:
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
                     logger.info(f"科大讯飞 TTS 合成成功 (尝试 {attempt + 1}/{max_retries})")
                     return output_path
-                    raise Exception("生成的音频文件为空")
+                raise Exception("生成的音频文件为空")
                     
             except asyncio.TimeoutError:
                 last_error = Exception("科大讯飞 TTS 请求超时")
@@ -360,13 +361,15 @@ class VoiceService:
                 "Connection" in error_msg or
                 "timeout" in error_msg.lower() or
                 "timed out" in error_msg.lower() or
-                "WebSocket" in error_msg
+                "WebSocket" in error_msg or
+                "SSL" in error_msg or
+                "EOF" in error_msg
             )
             
             if attempt < max_retries - 1:
                 if is_connection_error:
-                    # 连接错误时快速重试：0.5秒、1秒、2秒
-                    wait_time = 0.5 * (2 ** attempt)
+                    # 连接/SSL 错误时稍长等待，给网络恢复时间：1秒、2秒、4秒
+                    wait_time = 1.0 * (2 ** attempt)
                     logger.info(f"检测到连接错误，等待 {wait_time:.1f} 秒后重试...")
                 else:
                     # 其他错误快速重试：0.2秒、0.4秒、0.8秒

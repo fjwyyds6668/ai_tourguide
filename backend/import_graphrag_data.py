@@ -21,7 +21,8 @@ from app.utils.attraction_utils import attraction_to_text
 
 async def upload_texts_to_graphrag(items: List[Dict[str, Any]], collection_name: str, build_graph: bool):
     """
-    items: [{"text_id": "...", "text": "..."}]
+    items: [{"text_id": "...", "text": "...", "scenic_spot_id": int|None, "scenic_name": str|None}]
+    必须有景区上下文才创建图，避免离散节点脱离景区簇。
     """
     collection = milvus_client.create_collection_if_not_exists(collection_name, dimension=384)
     texts = [it["text"] for it in items]
@@ -37,9 +38,19 @@ async def upload_texts_to_graphrag(items: List[Dict[str, Any]], collection_name:
     total_entities = 0
     if build_graph:
         for it in items:
+            scenic_spot_id = it.get("scenic_spot_id")
+            scenic_name = it.get("scenic_name")
+            if scenic_spot_id is None and not (scenic_name and str(scenic_name).strip()):
+                continue  # 无景区上下文，跳过图构建
             extracted = rag_service.extract_entities(it["text"])
             total_entities += len(extracted)
-            await graph_builder.extract_and_store_entities(it["text"], it["text_id"], extracted)
+            await graph_builder.extract_and_store_entities(
+                it["text"],
+                it["text_id"],
+                extracted,
+                scenic_spot_id=scenic_spot_id,
+                scenic_name=scenic_name,
+            )
 
     return {"uploaded": len(items), "total_entities": total_entities}
 
@@ -59,18 +70,31 @@ async def import_attractions(collection_name: str, build_graph: bool, build_attr
                 "latitude": a.latitude,
                 "longitude": a.longitude,
                 "category": a.category,
+                "scenic_spot_id": a.scenic_spot_id,
             }
         )
 
     if build_attraction_graph:
         await graph_builder.build_attraction_graph(att_dicts)
 
+    scenic_name_map: Dict[int, str] = {}
+    if build_graph:
+        scenic_spots = await prisma.scenicspot.find_many()
+        scenic_name_map = {s.id: s.name for s in scenic_spots if s.name}
+
     items = []
     for att in att_dicts:
         text = attraction_to_text(att)
         if not text:
             continue
-        items.append({"text_id": f"attraction_{att['id']}", "text": text})
+        sid = att.get("scenic_spot_id")
+        scenic_name = scenic_name_map.get(sid) if sid and build_graph else None
+        items.append({
+            "text_id": f"attraction_{att['id']}",
+            "text": text,
+            "scenic_spot_id": sid,
+            "scenic_name": scenic_name,
+        })
 
     result = await upload_texts_to_graphrag(items, collection_name, build_graph)
     result.update({"attractions": len(items), "build_attraction_graph": build_attraction_graph})

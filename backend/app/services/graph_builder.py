@@ -275,38 +275,91 @@ class GraphBuilder:
                         {'category': att1.get('category')}
                     )
     
-    async def extract_and_store_entities(self, text: str, text_id: str, 
-                                        entities: List[Dict[str, Any]]):
+    async def extract_and_store_entities(
+        self,
+        text: str,
+        text_id: str,
+        entities: List[Dict[str, Any]],
+        scenic_spot_id: int | None = None,
+        scenic_name: str | None = None,
+    ):
         """
-        从文本中提取实体并存储到图数据库
-        
-        这是 GraphRAG 知识构建的核心功能
+        从文本中提取实体并存储到图数据库。
+        必须围绕景区簇添加关系：所有节点（Text、Entity）均连接到 ScenicSpot，不得出现离散节点。
+        若未提供 scenic_spot_id 或 scenic_name，则不创建图（避免孤儿节点）。
         """
-        # 创建文本节点
-        query = """
-        MERGE (t:Text {id: $text_id})
-        SET t.content = $text
-        RETURN t
-        """
-        self.client.execute_query(query, {"text_id": text_id, "text": text})
-        
-        # 创建实体节点并建立关系
+        # 必须有景区上下文，否则不创建图，避免离散节点
+        use_id = scenic_spot_id is not None
+        scenic_name_str = (scenic_name or "").strip() if scenic_name else None
+        if not use_id and not scenic_name_str:
+            logger.warning("extract_and_store_entities: 缺少景区上下文(scenic_spot_id/scenic_name)，跳过图构建，避免离散节点")
+            return
+
+        # 先确保 ScenicSpot 存在
+        if use_id:
+            q_ensure_scenic = """
+            MERGE (s:ScenicSpot {scenic_spot_id: $sid})
+            ON CREATE SET s.name = coalesce($name, '景区')
+            RETURN s
+            """
+            self.client.execute_query(q_ensure_scenic, {
+                "sid": int(scenic_spot_id),
+                "name": scenic_name_str or "景区",
+            })
+        else:
+            q_ensure_scenic_legacy = """
+            MERGE (s:ScenicSpot {name: $name})
+            RETURN s
+            """
+            self.client.execute_query(q_ensure_scenic_legacy, {"name": scenic_name_str})
+
+        # 创建文本节点，并立即连接到景区簇
+        if use_id:
+            q_text = """
+            MERGE (t:Text {id: $text_id})
+            SET t.content = $text
+            WITH t
+            MATCH (s:ScenicSpot {scenic_spot_id: $sid})
+            MERGE (t)-[:DESCRIBES]->(s)
+            RETURN t
+            """
+            self.client.execute_query(q_text, {
+                "text_id": text_id,
+                "text": text,
+                "sid": int(scenic_spot_id),
+            })
+        else:
+            q_text_legacy = """
+            MERGE (t:Text {id: $text_id})
+            SET t.content = $text
+            WITH t
+            MATCH (s:ScenicSpot {name: $name})
+            MERGE (t)-[:DESCRIBES]->(s)
+            RETURN t
+            """
+            self.client.execute_query(q_text_legacy, {
+                "text_id": text_id,
+                "text": text,
+                "name": scenic_name_str,
+            })
+
+        # 创建实体节点并建立关系（Text -[:MENTIONS]-> Entity，Text 已连到 ScenicSpot）
         for entity in entities:
             entity_name = entity.get("text")
-            entity_type = entity.get("type", "ENTITY")
+            if not entity_name:
+                continue
+            entity_type = entity.get("type", "KEYWORD")
+            if entity_type not in ("LOCATION", "PERSON", "ORG", "OTHER", "KEYWORD", "ENTITY"):
+                entity_type = "KEYWORD"
             create_entity_query = f"""
+            MATCH (t:Text {{id: $text_id}})
             MERGE (e:{entity_type} {{name: $name}})
+            MERGE (t)-[:MENTIONS]->(e)
             RETURN e
             """
-            self.client.execute_query(create_entity_query, {"name": entity_name})
-            create_rel_query = """
-            MATCH (t:Text {id: $text_id}), (e {name: $entity_name})
-            MERGE (t)-[:MENTIONS]->(e)
-            RETURN t, e
-            """
-            self.client.execute_query(create_rel_query, {
+            self.client.execute_query(create_entity_query, {
                 "text_id": text_id,
-                "entity_name": entity_name
+                "name": str(entity_name).strip(),
             })
 
     async def build_scenic_cluster(
