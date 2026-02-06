@@ -1,8 +1,10 @@
 """GraphRAG 检索 API"""
+import base64
 import logging
 import asyncio
 import json
 import os
+import time
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -10,7 +12,10 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from app.services.rag_service import rag_service, _clean_special_symbols
 from app.services.session_service import session_service
+from app.services.voice_service import voice_service
+from app.api.voice import _normalize_tts_text
 from app.core.prisma_client import get_prisma
+from app.core.config import settings
 from app.models.interaction import Interaction
 
 logger = logging.getLogger(__name__)
@@ -232,6 +237,22 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
         else:
             system_prompt = base_system_prompt
         
+        # 获取角色音色，用于流式 TTS
+        voice = None
+        if request.character_id:
+            try:
+                prisma = await get_prisma()
+                character = await prisma.character.find_unique(where={"id": request.character_id})
+                if character and character.voice:
+                    voice = character.voice
+            except Exception:
+                pass
+        if not voice:
+            voice = settings.XFYUN_VOICE
+        
+        # 是否在后端做 TTS（科大讯飞或本地 CosyVoice2），边生成边合成
+        backend_tts_enabled = bool(settings.XFYUN_APPID and settings.XFYUN_API_KEY) or settings.LOCAL_TTS_ENABLED
+        
         messages = [{"role": "system", "content": system_prompt}]
         if conversation_history:
             messages.extend(conversation_history)
@@ -250,7 +271,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 return
             
             # 使用流式 API
-            from app.core.config import settings
             stream = rag_service.llm_client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
                 messages=messages,
@@ -261,6 +281,70 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             
             full_answer = ""
             accumulated_text = ""
+            completed_audio: Dict[int, str] = {}
+            fallback_tts: Dict[int, str] = {}  # 后端 TTS 失败时，按句回退为 tts 文本给前端合成
+            next_audio_idx = 0
+            tts_chunk_index = [0]
+            MIN_TTS_CHARS = 12
+            TTS_SENTENCE_TIMEOUT = 25  # 单句合成超时（秒），避免某句卡住拖死整段
+            
+            async def synthesize_and_store(idx: int, original_txt: str) -> None:
+                txt = _normalize_tts_text(original_txt)
+                if not txt:
+                    completed_audio[idx] = ""
+                    return
+                path = None
+                try:
+                    if not settings.LOCAL_TTS_FORCE:
+                        try:
+                            path = await asyncio.wait_for(
+                                voice_service.synthesize_xfyun(txt, voice=voice),
+                                timeout=TTS_SENTENCE_TIMEOUT,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.debug("科大讯飞 TTS 单句超时(%ds)", TTS_SENTENCE_TIMEOUT)
+                        except Exception as e:
+                            logger.debug("科大讯飞 TTS 失败: %s", e)
+                    if path is None and settings.LOCAL_TTS_ENABLED:
+                        try:
+                            path = await asyncio.wait_for(
+                                voice_service.synthesize_local_cosyvoice2(txt, voice=voice),
+                                timeout=TTS_SENTENCE_TIMEOUT,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.debug("CosyVoice2 TTS 单句超时")
+                        except Exception as e:
+                            logger.debug("CosyVoice2 TTS 失败: %s", e)
+                    if path and os.path.exists(path):
+                        with open(path, "rb") as f:
+                            b64 = base64.b64encode(f.read()).decode("utf-8")
+                        completed_audio[idx] = b64
+                        try:
+                            os.unlink(path)
+                        except OSError:
+                            pass
+                    else:
+                        fallback_tts[idx] = original_txt.strip()
+                        completed_audio[idx] = ""
+                except Exception as e:
+                    logger.debug("流式 TTS 合成失败: %s", e)
+                    fallback_tts[idx] = original_txt.strip()
+                    completed_audio[idx] = ""
+            
+            def drain_audio():
+                nonlocal next_audio_idx
+                while next_audio_idx in completed_audio:
+                    idx = next_audio_idx
+                    b64 = completed_audio.pop(idx)
+                    next_audio_idx += 1
+                    if b64:
+                        yield f"data: {json.dumps({'type': 'audio', 'content': b64}, ensure_ascii=False)}\n\n"
+                    else:
+                        # 后端合成失败，按句回退：发 tts 文本让前端 POST 合成
+                        if idx in fallback_tts:
+                            text = fallback_tts.pop(idx)
+                            if text:
+                                yield f"data: {json.dumps({'type': 'tts', 'content': text}, ensure_ascii=False)}\n\n"
             
             # 发送 session_id
             yield f"data: {json.dumps({'type': 'session_id', 'content': session_id}, ensure_ascii=False)}\n\n"
@@ -268,22 +352,42 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             # 发送 primary_attraction_id（用于后续保存交互）
             yield f"data: {json.dumps({'type': 'attraction_id', 'content': primary_attraction_id}, ensure_ascii=False)}\n\n"
             
-            # 流式接收并转发文本
-            for chunk in stream:
+            # 用队列 + 后台消费 stream，主循环每 50ms 检查一次：有 chunk 就处理并 yield 文本，无 chunk 就 drain 已就绪的音频并 yield，实现「边出字边出声音」
+            chunk_queue: asyncio.Queue = asyncio.Queue()
+            loop = asyncio.get_event_loop()
+            stream_sentinel = object()
+            
+            def put_stream_in_queue():
+                try:
+                    for c in stream:
+                        loop.call_soon_threadsafe(chunk_queue.put_nowait, c)
+                finally:
+                    loop.call_soon_threadsafe(chunk_queue.put_nowait, stream_sentinel)
+            
+            loop.run_in_executor(None, put_stream_in_queue)
+            DRAIN_INTERVAL = 0.05
+            
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(chunk_queue.get(), timeout=DRAIN_INTERVAL)
+                except asyncio.TimeoutError:
+                    for ev in drain_audio():
+                        yield ev
+                    continue
+                if chunk is stream_sentinel:
+                    break
                 if chunk.choices and len(chunk.choices) > 0:
                     delta = chunk.choices[0].delta
                     if hasattr(delta, 'content') and delta.content:
                         content = delta.content
-                        # 清理特殊符号
                         content = _clean_special_symbols(content)
                         if not content:
                             continue
                         full_answer += content
                         accumulated_text += content
                         
-                        # 当累积文本达到一定长度（如遇到句号、问号、感叹号）时，发送一段用于 TTS
+                        tts_chunk = None
                         if any(punct in accumulated_text for punct in ['。', '！', '？', '.', '!', '?']):
-                            # 找到最后一个标点
                             last_punct_idx = max(
                                 accumulated_text.rfind('。'),
                                 accumulated_text.rfind('！'),
@@ -295,14 +399,42 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                             if last_punct_idx >= 0:
                                 tts_chunk = accumulated_text[:last_punct_idx + 1]
                                 accumulated_text = accumulated_text[last_punct_idx + 1:]
+                        elif len(accumulated_text) >= MIN_TTS_CHARS:
+                            tts_chunk = accumulated_text
+                            accumulated_text = ""
+                        
+                        if tts_chunk:
+                            if backend_tts_enabled:
+                                idx = tts_chunk_index[0]
+                                tts_chunk_index[0] += 1
+                                asyncio.create_task(synthesize_and_store(idx, tts_chunk))
+                            else:
                                 yield f"data: {json.dumps({'type': 'tts', 'content': tts_chunk}, ensure_ascii=False)}\n\n"
                         
-                        # 发送文本增量
                         yield f"data: {json.dumps({'type': 'text', 'content': content}, ensure_ascii=False)}\n\n"
+                
+                # 每处理完一个 chunk 或超时都 drain 已就绪的音频，实现边出字边播放
+                for ev in drain_audio():
+                    yield ev
             
-            # 发送剩余的累积文本（如果有）
+            # 剩余累积文本
             if accumulated_text.strip():
-                yield f"data: {json.dumps({'type': 'tts', 'content': accumulated_text.strip()}, ensure_ascii=False)}\n\n"
+                if backend_tts_enabled:
+                    idx = tts_chunk_index[0]
+                    tts_chunk_index[0] += 1
+                    asyncio.create_task(synthesize_and_store(idx, accumulated_text.strip()))
+                else:
+                    yield f"data: {json.dumps({'type': 'tts', 'content': accumulated_text.strip()}, ensure_ascii=False)}\n\n"
+            
+            # 等待所有 TTS 完成并持续 drain 音频（边等边 yield，用户能边听）
+            wait_start = time.monotonic()
+            while next_audio_idx < tts_chunk_index[0] or completed_audio:
+                if time.monotonic() - wait_start > 60:
+                    logger.debug("流式 TTS 等待超时")
+                    break
+                await asyncio.sleep(DRAIN_INTERVAL)
+                for ev in drain_audio():
+                    yield ev
             
             # 发送完成信号
             yield f"data: {json.dumps({'type': 'done', 'content': full_answer}, ensure_ascii=False)}\n\n"

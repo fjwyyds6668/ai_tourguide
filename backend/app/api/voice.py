@@ -257,7 +257,7 @@ async def synthesize_speech_stream(
                 audio_path = await voice_service.synthesize_xfyun(text, voice=voice)
             except Exception as e:
                 last_error = e
-                logger.warning(f"科大讯飞流式 TTS 合成失败: {e}")
+                logger.debug("科大讯飞流式 TTS 失败: %s", e)
 
         if (audio_path is None) and settings.LOCAL_TTS_ENABLED:
             try:
@@ -265,7 +265,7 @@ async def synthesize_speech_stream(
                 last_error = None
             except Exception as e:
                 last_error = e
-                logger.warning(f"CosyVoice2 流式 TTS 合成失败: {e}")
+                logger.debug("CosyVoice2 流式 TTS 失败: %s", e)
 
         if audio_path is None:
             raise HTTPException(status_code=400, detail=f"流式 TTS 合成失败：{str(last_error) if last_error else 'unknown error'}")
@@ -285,6 +285,6 @@ async def synthesize_speech_stream(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"流式 TTS synthesize failed: {e}")
+        logger.debug("流式 TTS 失败: %s", e)
         raise HTTPException(status_code=400, detail=f"流式 TTS 合成失败：{str(e)}")
 

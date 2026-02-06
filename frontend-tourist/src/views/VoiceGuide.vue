@@ -573,8 +573,7 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
       audioQueue.push(audioUrl)
       playAudioQueue()
     } catch (error) {
-      console.error('TTS 合成失败:', error, '文本:', cleanedText.substring(0, 50))
-      ElMessage.error('语音合成失败，请检查网络连接')
+      console.warn('TTS 合成失败，已静默跳过:', error?.message || error, '文本:', cleanedText.substring(0, 50))
     }
   }).catch(error => {
     console.error('TTS 队列执行失败:', error)
@@ -649,7 +648,22 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
           } else if (type === 'text' && content && msgRef) {
             pendingText += content
             scheduleFlush()
+          } else if (type === 'audio' && content) {
+            // 后端边生成边合成，直接推送 base64 音频，无需 POST
+            if (ttsSessionId !== thisTtsSessionId) return
+            try {
+              const binary = atob(content)
+              const bytes = new Uint8Array(binary.length)
+              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+              const blob = new Blob([bytes], { type: 'audio/wav' })
+              const audioUrl = URL.createObjectURL(blob)
+              audioQueue.push(audioUrl)
+              playAudioQueue()
+            } catch (e) {
+              console.warn('解析流式音频失败:', e)
+            }
           } else if (type === 'tts' && content && content.trim()) {
+            // 后端未做 TTS 时，前端 POST 合成
             synthesizeAndQueue(content.trim(), characterId ?? selectedCharacterId.value, thisTtsSessionId, true)
           } else if (type === 'done') {
             // flush 未落盘的 token
@@ -673,6 +687,17 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
         const data = JSON.parse(line)
         if (data.type === 'text' && data.content && msgRef) {
           pendingText += data.content
+        }
+        if (data.type === 'audio' && data.content && ttsSessionId === thisTtsSessionId) {
+          try {
+            const binary = atob(data.content)
+            const bytes = new Uint8Array(binary.length)
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+            const blob = new Blob([bytes], { type: 'audio/wav' })
+            const audioUrl = URL.createObjectURL(blob)
+            audioQueue.push(audioUrl)
+            playAudioQueue()
+          } catch (_) {}
         }
         if (data.type === 'tts' && data.content && data.content.trim()) {
           synthesizeAndQueue(data.content.trim(), characterId ?? selectedCharacterId.value, thisTtsSessionId, true)

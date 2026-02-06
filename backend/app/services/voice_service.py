@@ -267,7 +267,7 @@ class VoiceService:
                             err_msg = msg.get("message", "未知错误")
                             error_occurred[0] = True
                             error_message[0] = f"科大讯飞 TTS 错误: code={code}, message={err_msg}"
-                            logger.error(error_message[0])
+                            logger.debug("TTS 科大讯飞错误: code=%s, %s", code, err_msg)
                             ws.close()
                             return
                         
@@ -283,13 +283,13 @@ class VoiceService:
                     except Exception as e:
                         error_occurred[0] = True
                         error_message[0] = f"解析消息失败: {e}"
-                        logger.error(error_message[0])
+                        logger.debug("TTS 解析消息失败: %s", e)
                         ws.close()
                 
                 def on_error(ws, error):
                     error_occurred[0] = True
                     error_message[0] = f"WebSocket 错误: {error}"
-                    logger.error(error_message[0])
+                    logger.debug("TTS WebSocket 错误: %s", error)
                     ws_closed.set()
                 
                 def on_close(ws, close_status_code, close_msg):
@@ -297,7 +297,7 @@ class VoiceService:
                 
                 def on_open(ws):
                     ws.send(json.dumps(request_data))
-                    logger.info(f"科大讯飞 TTS 发送请求: {text[:50]}... (音色: {voice})")
+                    logger.debug("科大讯飞 TTS 发送: %s...", text[:40])
                 
                 def run_websocket():
                     ws = websocket.WebSocketApp(
@@ -342,18 +342,18 @@ class VoiceService:
                 sf.write(output_path, audio_array, 16000)
                 
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    logger.info(f"科大讯飞 TTS 合成成功 (尝试 {attempt + 1}/{max_retries})")
+                    logger.debug("科大讯飞 TTS 合成成功 (尝试 %d/%d)", attempt + 1, max_retries)
                     return output_path
                 raise Exception("生成的音频文件为空")
                     
             except asyncio.TimeoutError:
                 last_error = Exception("科大讯飞 TTS 请求超时")
                 error_msg = "请求超时 (timeout)"
-                logger.warning(f"科大讯飞 TTS 尝试 {attempt + 1}/{max_retries} 超时")
+                logger.debug("科大讯飞 TTS 尝试 %d/%d 超时", attempt + 1, max_retries)
             except Exception as e:
                 last_error = e
                 error_msg = str(e)
-                logger.warning(f"科大讯飞 TTS 尝试 {attempt + 1}/{max_retries} 失败: {e}")
+                logger.debug("科大讯飞 TTS 尝试 %d/%d 失败: %s", attempt + 1, max_retries, e)
             
             is_connection_error = (
                 "Cannot connect" in error_msg or 
@@ -368,9 +368,8 @@ class VoiceService:
             
             if attempt < max_retries - 1:
                 if is_connection_error:
-                    # 连接/SSL 错误时稍长等待，给网络恢复时间：1秒、2秒、4秒
                     wait_time = 1.0 * (2 ** attempt)
-                    logger.info(f"检测到连接错误，等待 {wait_time:.1f} 秒后重试...")
+                    logger.debug("TTS 连接错误，%.1fs 后重试", wait_time)
                 else:
                     # 其他错误快速重试：0.2秒、0.4秒、0.8秒
                     wait_time = 0.2 * (2 ** attempt)

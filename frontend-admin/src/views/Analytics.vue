@@ -41,9 +41,14 @@
             <el-tag v-else>Direct</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="query" label="用户问题" width="260" show-overflow-tooltip />
+        <el-table-column prop="query" label="用户问题" min-width="200" class-name="user-query-cell">
+          <template #default="{ row }">
+            <span class="user-query-text">{{ row.query || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="RAG 检索&上下文" min-width="400" align="left">
           <template #default="{ row }">
+            <div class="rag-context-wrap">
             <div class="rag-context">
               <div><strong>① 向量数据库命中（Milvus）</strong></div>
               <div v-if="!(row.rag_debug?.vector_results?.length)">
@@ -68,6 +73,7 @@
               <pre v-else class="context-pre">{{ row.rag_debug?.final_sent_to_llm || row.rag_debug?.enhanced_context }}</pre>
               <div><strong>④ 大模型回复</strong></div>
               <div class="answer-preview">{{ row.final_answer_preview || '（本次未记录回复预览）' }}</div>
+            </div>
             </div>
           </template>
         </el-table-column>
@@ -188,14 +194,39 @@ onMounted(() => {
   padding: 12px 0;
   vertical-align: top;
 }
+/* 用户问题列完整显示，自动换行 */
+.rag-logs-table :deep(.user-query-cell .cell) {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.4;
+}
+.user-query-text {
+  display: block;
+  white-space: normal;
+  word-break: break-word;
+}
+/* RAG 检索&上下文：可滑动区域，内容过多时出现纵向滚动条 */
+.rag-context-wrap {
+  max-height: 360px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+.rag-context-wrap::-webkit-scrollbar {
+  width: 6px;
+}
+.rag-context-wrap::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
 .rag-context {
   font-size: 13px;
   white-space: normal;
   word-wrap: break-word;
-  color: #2c3e50;
+  color: #000000;
 }
 .rag-context strong {
-  color: #303133;
+  color: #000000;
   font-weight: 600;
 }
 .rag-context > div {
@@ -205,19 +236,17 @@ onMounted(() => {
   white-space: pre-wrap;
   word-break: break-word;
   margin-top: 4px;
-  padding: 8px;
-  background: #fafafa;
-  border-radius: 4px;
-  font-size: 12px;
-  max-width: 100%;
-  overflow: visible;
-  color: #2c3e50;
+  color: #000000;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  font-weight: inherit;
 }
 .answer-preview {
   white-space: pre-wrap;
   word-break: break-word;
   margin-top: 4px;
-  color: #2c3e50;
+  color: #000000;
 }
 .page-wrap {
   min-height: 200px;
