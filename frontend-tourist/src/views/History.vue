@@ -79,9 +79,28 @@ onMounted(() => {
 
 <style scoped>
 .history-page {
+  /* 统一游客端历史记录页“黑色字”颜色（与管理端 RAG 板块一致） */
+  --rag-black: #000000;
+  color: var(--rag-black);
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
+}
+
+/* Element Plus 默认文本色覆盖：表格/分页/卡片标题等统一为 rag-black */
+.history-page :deep(.el-table),
+.history-page :deep(.el-table__header-wrapper th),
+.history-page :deep(.el-table__header-wrapper th .cell),
+.history-page :deep(.el-table__body-wrapper),
+.history-page :deep(.el-table__cell),
+.history-page :deep(.el-table__cell .cell),
+.history-page :deep(.el-card__header),
+.history-page :deep(.el-card__body),
+.history-page :deep(.el-pagination),
+.history-page :deep(.el-pagination__total),
+.history-page :deep(.el-pagination__sizes),
+.history-page :deep(.el-pagination__jump) {
+  color: var(--rag-black);
 }
 
 .page-card {
@@ -106,7 +125,7 @@ onMounted(() => {
 
 .card-title {
   font-size: 16px;
-  color: #303133;
+  color: var(--rag-black);
 }
 
 .pagination-wrap {

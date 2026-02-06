@@ -34,7 +34,11 @@
         <span>RAG 检索上下文日志（显示最近 5 条）</span>
       </template>
       <el-table :data="ragLogs" v-loading="ragLogsLoading" class="rag-logs-table">
-        <el-table-column prop="timestamp" label="时间" width="180" />
+        <el-table-column prop="timestamp" label="时间" width="180">
+          <template #default="{ row }">
+            {{ formatTime(row.timestamp) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="use_rag" label="是否使用RAG" width="100">
           <template #default="{ row }">
             <el-tag v-if="row.use_rag" type="success">RAG</el-tag>
@@ -97,17 +101,25 @@ const formatTime = (val) => {
   if (!val) return '—'
   const d = new Date(val)
   if (Number.isNaN(d.getTime())) return val
-  const fmt = new Intl.DateTimeFormat('zh-CN', {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
     year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
+    month: 'numeric',
+    day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
     timeZone: 'Asia/Shanghai',
-  })
-  return fmt.format(d).replace(/\//g, '/')
+  }).formatToParts(d)
+  const get = (type) => parts.find(p => p.type === type)?.value || ''
+  const y = get('year')
+  const m = get('month')
+  const day = get('day')
+  const hh = get('hour')
+  const mm = get('minute')
+  const ss = get('second')
+  if (!y || !m || !day || !hh || !mm || !ss) return val
+  return `${y}/${m}/${day} ${hh}:${mm}:${ss}`
 }
 
 function nodeName(n) {
@@ -168,6 +180,26 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.page-wrap {
+  /* 统一全页“黑色字”的基准色：与 RAG 检索&上下文板块一致 */
+  --rag-black: #000000;
+  color: var(--rag-black);
+}
+
+/* Element Plus 默认文本色覆盖（表格/统计等），让“黑色字”统一为 rag-black */
+.page-wrap :deep(.el-table),
+.page-wrap :deep(.el-table__header-wrapper th),
+.page-wrap :deep(.el-table__header-wrapper th .cell),
+.page-wrap :deep(.el-table__body-wrapper),
+.page-wrap :deep(.el-table__cell),
+.page-wrap :deep(.el-table__cell .cell),
+.page-wrap :deep(.el-statistic__head),
+.page-wrap :deep(.el-statistic__number),
+.page-wrap :deep(.el-card__header),
+.page-wrap :deep(.el-card__body) {
+  color: var(--rag-black);
+}
+
 /* 确保 RAG 日志表格完全展开，无滚动限制 */
 .rag-logs-table {
   overflow: visible;
@@ -224,10 +256,10 @@ onUnmounted(() => {
   font-size: 13px;
   white-space: normal;
   word-wrap: break-word;
-  color: #000000;
+  color: var(--rag-black);
 }
 .rag-context strong {
-  color: #000000;
+  color: var(--rag-black);
   font-weight: 600;
 }
 .rag-context > div {
@@ -237,7 +269,7 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: break-word;
   margin-top: 4px;
-  color: #000000;
+  color: var(--rag-black);
   font-family: inherit;
   font-size: inherit;
   line-height: inherit;
@@ -247,7 +279,7 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: break-word;
   margin-top: 4px;
-  color: #000000;
+  color: var(--rag-black);
 }
 .page-wrap {
   min-height: 200px;
