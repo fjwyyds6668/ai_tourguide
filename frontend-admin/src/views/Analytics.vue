@@ -1,11 +1,6 @@
 <template>
   <div class="page-wrap">
-    <div class="page-header">
-      <h1 class="admin-page-title">数据分析</h1>
-      <el-button type="primary" :loading="refreshing" @click="handleRefresh" circle title="刷新数据">
-        <el-icon><Refresh /></el-icon>
-      </el-button>
-    </div>
+    <h1 class="admin-page-title">数据分析</h1>
     <el-row v-if="interactionData" :gutter="16" style="margin: 24px 0">
       <el-col :span="12">
         <el-card>
@@ -89,7 +84,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { ChatDotRound, Refresh } from '@element-plus/icons-vue'
+import { ChatDotRound } from '@element-plus/icons-vue'
 import api from '../api'
 
 const loading = ref(false)
@@ -162,19 +157,8 @@ const fetchPopular = async () => {
   }
 }
 
-const refreshing = ref(false)
-
 const fetchAnalytics = async () => {
   await Promise.all([fetchPopular(), fetchInteractions(), fetchRagLogs()])
-}
-
-const handleRefresh = async () => {
-  refreshing.value = true
-  try {
-    await fetchAnalytics()
-  } finally {
-    refreshing.value = false
-  }
 }
 
 let refreshTimer = null
@@ -286,11 +270,6 @@ onUnmounted(() => {
   word-break: break-word;
   margin-top: 4px;
   color: #000000;
-}
-.page-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 .page-wrap {
   min-height: 200px;
