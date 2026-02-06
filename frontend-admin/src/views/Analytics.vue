@@ -116,8 +116,8 @@ function nodeName(n) {
   return p.name || '节点'
 }
 
-const fetchRagLogs = async () => {
-  ragLogsLoading.value = true
+const fetchRagLogs = async (silent = false) => {
+  if (!silent) ragLogsLoading.value = true
   try {
     const ragRes = await api.get('/admin/analytics/rag-logs', {
       params: { limit: 5 }
@@ -126,12 +126,12 @@ const fetchRagLogs = async () => {
   } catch (e) {
     console.error('获取 RAG 日志失败:', e)
   } finally {
-    ragLogsLoading.value = false
+    if (!silent) ragLogsLoading.value = false
   }
 }
 
-const fetchInteractions = async () => {
-  loading.value = true
+const fetchInteractions = async (silent = false) => {
+  if (!silent) loading.value = true
   try {
     const res = await api.get('/admin/analytics/interactions', {
       params: {
@@ -144,7 +144,7 @@ const fetchInteractions = async () => {
   } catch (e) {
     console.error(e)
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -157,21 +157,24 @@ const fetchPopular = async () => {
   }
 }
 
-const fetchAnalytics = async () => {
-  await Promise.all([fetchPopular(), fetchInteractions(), fetchRagLogs()])
+const fetchAnalytics = async (silent = false) => {
+  await Promise.all([
+    fetchPopular(),
+    fetchInteractions(silent),
+    fetchRagLogs(silent),
+  ])
 }
 
 let refreshTimer = null
 let visibilityHandler = null
 
 onMounted(() => {
-  fetchAnalytics()
-  // 每5秒自动刷新，新对话后很快能看到更新
-  refreshTimer = setInterval(() => fetchAnalytics(), 5000)
-  // 切回本页时立即刷新，发起新对话后一打开数据分析就更新
+  fetchAnalytics(false) // 首次加载显示 loading
+  // 每1秒静默刷新，不触发 loading，避免页面闪烁
+  refreshTimer = setInterval(() => fetchAnalytics(true), 1000)
   visibilityHandler = () => {
     if (document.visibilityState === 'visible') {
-      fetchAnalytics()
+      fetchAnalytics(true)
     }
   }
   document.addEventListener('visibilitychange', visibilityHandler)

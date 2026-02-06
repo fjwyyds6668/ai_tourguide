@@ -922,6 +922,71 @@ class RAGService:
             logger.warning(f"_get_scenic_spot_by_attraction_id failed attraction_id={attraction_id}: {e}")
         return None
 
+    def _extract_attraction_candidates_from_query(self, query: str) -> List[str]:
+        """从「介绍/详情/说说 + 景点名」类问句中显式抽取景点名，避免 jieba 未切出时漏检。"""
+        if not query or not isinstance(query, str):
+            return []
+        q = query.strip()
+        if len(q) < 2:
+            return []
+        candidates: List[str] = []
+        # 介绍(一下)? XXX、说说 XXX、讲讲 XXX、了解 XXX、XXX 怎么样、XXX 在哪
+        patterns = [
+            r"(?:介绍|详情|说说|讲讲|了解)(?:一下|下)?\s*([\u4e00-\u9fa5]{2,10})",
+            r"([\u4e00-\u9fa5]{2,10})\s*(?:怎么样|如何|在哪|有什么|好玩吗)",
+        ]
+        stop = {"介绍", "详情", "说说", "讲讲", "了解", "怎么样", "如何", "有什么", "好玩", "地方", "景区", "景点"}
+        for pat in patterns:
+            for m in re.finditer(pat, q):
+                name = (m.group(1) or "").strip()
+                if name and name not in stop and name not in candidates:
+                    candidates.append(name)
+        return candidates[:5]
+
+    async def _get_attraction_id_by_name(self, attraction_name: str) -> Optional[int]:
+        """按景点名称在图里查 Attraction，返回 id；先精确匹配，再 CONTAINS 模糊匹配。"""
+        if not (attraction_name or attraction_name.strip()):
+            return None
+        name = attraction_name.strip()
+        try:
+            loop = asyncio.get_event_loop()
+            # 1) 精确匹配
+            rows = await loop.run_in_executor(
+                None,
+                neo4j_client.execute_query,
+                "MATCH (a:Attraction) WHERE a.name = $name RETURN a.id AS id LIMIT 1",
+                {"name": name},
+            )
+            if rows and len(rows) > 0 and rows[0].get("id") is not None:
+                return int(rows[0]["id"])
+            # 2) CONTAINS 模糊匹配（如「忘忧」匹配「忘忧谷」）
+            rows = await loop.run_in_executor(
+                None,
+                neo4j_client.execute_query,
+                "MATCH (a:Attraction) WHERE a.name CONTAINS $name RETURN a.id AS id, a.name AS aname ORDER BY size(a.name) LIMIT 1",
+                {"name": name},
+            )
+            if rows and len(rows) > 0 and rows[0].get("id") is not None:
+                return int(rows[0]["id"])
+        except Exception as e:
+            logger.debug("_get_attraction_id_by_name %s: %s", name, e)
+        return None
+
+    async def _fetch_scenic_spot_names(self, limit: int = 5) -> List[str]:
+        """从图库查询景区名称列表（用于兜底列举等），避免多处重复相同 Cypher。"""
+        try:
+            loop = asyncio.get_event_loop()
+            rows = await loop.run_in_executor(
+                None,
+                neo4j_client.execute_query,
+                "MATCH (s:ScenicSpot) RETURN s.name AS name LIMIT $limit",
+                {"limit": max(1, min(limit, 20))},
+            ) or []
+            return [str(r["name"]).strip() for r in rows if r.get("name")]
+        except Exception as e:
+            logger.debug("_fetch_scenic_spot_names: %s", e)
+            return []
+
     async def _get_scenic_attractions_sentence_by_name(self, scenic_name: str) -> str:
         """根据景区名称查询其下相关景点，并格式化为一句话描述（带数量信息，异步）。"""
         scenic_name = (scenic_name or "").strip()
@@ -1186,25 +1251,11 @@ class RAGService:
         if intent == QueryIntent.LISTING and "根据图数据库，景区「" not in (enhanced_results or ""):
             try:
                 async def fetch_first_scenic_listing():
-                    # 优先使用用户选择的景区
                     if scenic_name_str:
                         sentence = await self._get_scenic_attractions_sentence_by_name(scenic_name_str)
                         if sentence:
                             return sentence
-                    all_scenic_q = """
-                    MATCH (s:ScenicSpot) RETURN s.name AS name LIMIT 5
-                    """
-                    loop = asyncio.get_event_loop()
-                    rows = await loop.run_in_executor(
-                        None,
-                        neo4j_client.execute_query,
-                        all_scenic_q,
-                        {}
-                    ) or []
-                    for row in rows:
-                        nm = (row.get("name") or "").strip() if row else ""
-                        if not nm:
-                            continue
+                    for nm in await self._fetch_scenic_spot_names(5):
                         sentence = await self._get_scenic_attractions_sentence_by_name(nm)
                         if sentence:
                             return sentence
@@ -1223,46 +1274,20 @@ class RAGService:
                 async def get_scenic_from_attraction():
                     try:
                         parent_info = await self._get_scenic_spot_by_attraction_id(primary_attraction_id)
-                        if parent_info:
-                            sid = parent_info.get("sid")
-                            s_name = parent_info.get("s_name")
-                            if sid is not None:
-                                return await self._get_scenic_spot_cluster_context(int(sid))
-                            if s_name:
-                                return await self._get_scenic_spot_cluster_context_by_name(str(s_name).strip())
+                        if not parent_info:
+                            return ""
+                        sid, s_name = parent_info.get("sid"), parent_info.get("s_name")
+                        if sid is not None:
+                            return await self._get_scenic_spot_cluster_context_impl(scenic_spot_id=int(sid))
+                        if s_name:
+                            return await self._get_scenic_spot_cluster_context_impl(scenic_name=str(s_name).strip())
                     except Exception as e:
-                        logger.warning(f"查询景点所属景区失败: {e}")
+                        logger.warning("查询景点所属景区失败: %s", e)
                     return ""
                 scenic_tasks.append(get_scenic_from_attraction())
-            
             if entity_names:
-                async def get_scenic_from_entity(name):
-                    try:
-                        scenic_check_q = """
-                        MATCH (s:ScenicSpot {name: $name})
-                        RETURN s.scenic_spot_id AS sid, s.name AS s_name
-                        LIMIT 1
-                        """
-                        loop = asyncio.get_event_loop()
-                        scenic_rows = await loop.run_in_executor(
-                            None,
-                            neo4j_client.execute_query,
-                            scenic_check_q,
-                            {"name": name}
-                        )
-                        if scenic_rows:
-                            row0 = scenic_rows[0]
-                            sid = row0.get("sid")
-                            s_name = row0.get("s_name")
-                            if sid is not None:
-                                return await self._get_scenic_spot_cluster_context(int(sid))
-                            if s_name:
-                                return await self._get_scenic_spot_cluster_context_by_name(str(s_name).strip())
-                    except Exception as e:
-                        logger.warning(f"从实体名称查找景区失败: {e}")
-                    return ""
                 for entity_name in entity_names[:3]:
-                    scenic_tasks.append(get_scenic_from_entity(entity_name))
+                    scenic_tasks.append(self._get_scenic_spot_cluster_by_entity_name(entity_name))
             
             if subgraph_data:
                 async def get_scenic_from_subgraph():
@@ -1291,6 +1316,23 @@ class RAGService:
             cluster_ctx = await self._get_attraction_cluster_context([primary_attraction_id], max_items=1)
             if cluster_ctx:
                 enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
+        # 向量未命中景点 ID 时，用实体名或从问句显式抽取的景点名在图里查 Attraction，补上景点一簇（如「介绍一下忘忧谷」）
+        if (not should_expand) and primary_attraction_id is None and not (query_about_scenic and scenic_ctx_found):
+            # 优先用「介绍/详情/说说 + 景点名」显式抽取的候选，再试实体名，避免 jieba 未切出忘忧谷
+            intro_candidates = self._extract_attraction_candidates_from_query(query)
+            names_to_try = list(dict.fromkeys([n.strip() for n in intro_candidates if n and n.strip()]))
+            for n in entity_names[:5]:
+                if n and n.strip() and n.strip() not in names_to_try:
+                    names_to_try.append(n.strip())
+            for name in names_to_try[:8]:
+                if not name:
+                    continue
+                aid = await self._get_attraction_id_by_name(name)
+                if aid is not None:
+                    cluster_ctx = await self._get_attraction_cluster_context([aid], max_items=1)
+                    if cluster_ctx:
+                        enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
+                    break
         
         return {
             "vector_results": vector_results,
@@ -1357,24 +1399,8 @@ class RAGService:
                         continue
         if not scenic_names:
             try:
-                async def fetch_scenic_names():
-                    all_scenic_q = """
-                    MATCH (s:ScenicSpot) RETURN s.name AS name LIMIT 5
-                    """
-                    loop = asyncio.get_event_loop()
-                    rows = await loop.run_in_executor(
-                        None,
-                        neo4j_client.execute_query,
-                        all_scenic_q,
-                        {}
-                    ) or []
-                    names = set()
-                    for row in rows:
-                        nm = row.get("name")
-                        if nm and isinstance(nm, str):
-                            names.add(nm)
-                    return names
-                scenic_names = await fetch_scenic_names()
+                names_list = await self._fetch_scenic_spot_names(5)
+                scenic_names = set(n for n in names_list if n)
             except Exception as e:
                 logger.warning(f"query all ScenicSpot names failed: {e}")
 
@@ -1533,47 +1559,59 @@ class RAGService:
             lines.append("荣誉：" + "、".join(honor_names[:10]))
         return "【景区一簇信息】\n" + "\n".join(lines)
 
-    async def _get_scenic_spot_cluster_context(self, scenic_spot_id: int) -> str:
-        """按 scenic_spot_id 拉取景区一簇（异步）。"""
+    async def _get_scenic_spot_cluster_context_impl(
+        self, *, scenic_spot_id: Optional[int] = None, scenic_name: Optional[str] = None
+    ) -> str:
+        """按 id 或 name 拉取景区一簇（内部共用，避免重复 Cypher/executor 逻辑）。"""
+        if scenic_spot_id is not None:
+            query = "MATCH (s:ScenicSpot {scenic_spot_id: $sid}) OPTIONAL MATCH (s)-[r]->(n) RETURN s, type(r) as rel_type, n"
+            params: Dict[str, Any] = {"sid": int(scenic_spot_id)}
+        elif scenic_name and str(scenic_name).strip():
+            query = "MATCH (s:ScenicSpot {name: $name}) OPTIONAL MATCH (s)-[r]->(n) RETURN s, type(r) as rel_type, n"
+            params = {"name": str(scenic_name).strip()}
+        else:
+            return ""
         try:
-            query = """
-            MATCH (s:ScenicSpot {scenic_spot_id: $sid})
-            OPTIONAL MATCH (s)-[r]->(n)
-            RETURN s, type(r) as rel_type, n
-            """
             loop = asyncio.get_event_loop()
             rows = await loop.run_in_executor(
-                None,
-                neo4j_client.execute_query,
-                query,
-                {"sid": int(scenic_spot_id)}
+                None, neo4j_client.execute_query, query, params
             )
             return self._parse_scenic_spot_rows(rows or [])
         except Exception as e:
-            logger.warning(f"拉取景区簇失败 scenic_spot_id={scenic_spot_id}: {e}")
+            logger.warning("拉取景区簇失败 %s: %s", "sid=%s" % scenic_spot_id if scenic_spot_id is not None else "name=%s" % scenic_name, e)
             return ""
+
+    async def _get_scenic_spot_cluster_context(self, scenic_spot_id: int) -> str:
+        """按 scenic_spot_id 拉取景区一簇（异步）。"""
+        return await self._get_scenic_spot_cluster_context_impl(scenic_spot_id=scenic_spot_id)
 
     async def _get_scenic_spot_cluster_context_by_name(self, scenic_name: str) -> str:
         """按景区名称拉取景区一簇（兼容无 scenic_spot_id 的旧节点，异步）。"""
-        if not (scenic_name or "").strip():
+        return await self._get_scenic_spot_cluster_context_impl(scenic_name=(scenic_name or "").strip() or None)
+
+    async def _get_scenic_spot_cluster_by_entity_name(self, entity_name: str) -> str:
+        """按实体名在图库中查 ScenicSpot（name 匹配），再拉取景区一簇；未找到返回空串。用于指代/实体名补全。"""
+        if not (entity_name or "").strip():
             return ""
         try:
-            query = """
-            MATCH (s:ScenicSpot {name: $name})
-            OPTIONAL MATCH (s)-[r]->(n)
-            RETURN s, type(r) as rel_type, n
-            """
             loop = asyncio.get_event_loop()
             rows = await loop.run_in_executor(
                 None,
                 neo4j_client.execute_query,
-                query,
-                {"name": (scenic_name or "").strip()}
+                "MATCH (s:ScenicSpot {name: $name}) RETURN s.scenic_spot_id AS sid, s.name AS s_name LIMIT 1",
+                {"name": (entity_name or "").strip()},
             )
-            return self._parse_scenic_spot_rows(rows or [])
+            if not rows:
+                return ""
+            r0 = rows[0]
+            sid, s_name = r0.get("sid"), r0.get("s_name")
+            if sid is not None:
+                return await self._get_scenic_spot_cluster_context_impl(scenic_spot_id=int(sid))
+            if s_name:
+                return await self._get_scenic_spot_cluster_context_impl(scenic_name=str(s_name).strip())
         except Exception as e:
-            logger.warning(f"拉取景区簇失败（按名称） scenic_name={scenic_name}: {e}")
-            return ""
+            logger.warning("从实体名称查找景区失败: %s", e)
+        return ""
 
     def _get_text_contents_from_neo4j(self, text_ids: List[str]) -> Dict[str, str]:
         """按 text_id 从 Neo4j Text 节点拉取正文（同步方法，由调用方用 run_in_executor 包装）。"""

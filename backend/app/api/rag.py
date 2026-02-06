@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Tuple
 from app.services.rag_service import rag_service, _clean_special_symbols
 from app.services.session_service import session_service
 from app.services.voice_service import voice_service
@@ -44,6 +44,76 @@ class GenerateResponse(BaseModel):
     context: str = ""
     session_id: str
 
+
+def _resolve_session_id(request: GenerateRequest) -> str:
+    """根据请求解析或创建 session_id，供 /generate 与 /generate-stream 共用。"""
+    if request.session_id:
+        session = session_service.get_session(request.session_id)
+        if session:
+            return request.session_id
+    return session_service.create_session(request.character_id)
+
+
+async def _load_character_prompt_and_voice(character_id: Optional[int]) -> Tuple[Optional[str], Optional[str]]:
+    """一次查询角色，返回 (prompt, voice)，供 /generate 与 /generate-stream 共用，避免重复查库。"""
+    if not character_id:
+        return None, None
+    try:
+        prisma = await get_prisma()
+        character = await prisma.character.find_unique(where={"id": character_id})
+        if not character:
+            return None, None
+        prompt = character.prompt if character.prompt else None
+        voice = character.voice if character.voice else settings.XFYUN_VOICE
+        return prompt, voice
+    except Exception as e:
+        logger.error("Failed to load character: %s", e)
+        return None, None
+
+
+def _save_interaction(
+    session_id: str,
+    character_id: Optional[int],
+    query_text: str,
+    response_text: str,
+    primary_attraction_id: Optional[int],
+) -> None:
+    """保存交互记录到数据库；未返回景点 ID 时按问题文本尝试匹配景点名。供 /generate 与 /generate-stream 共用。"""
+    try:
+        from app.core.database import SessionLocal
+        from app.models.attraction import Attraction as AttractionModel
+        db_local = SessionLocal()
+        try:
+            aid = primary_attraction_id
+            if aid is None and query_text and query_text.strip():
+                q = query_text.strip()
+                rows = (
+                    db_local.query(AttractionModel.id, AttractionModel.name)
+                    .filter(AttractionModel.name.isnot(None), AttractionModel.name != "")
+                    .limit(200)
+                    .all()
+                )
+                for row in rows:
+                    name = row[1] if len(row) > 1 else None
+                    if name and name in q:
+                        aid = row[0]
+                        break
+            interaction = Interaction(
+                session_id=session_id,
+                character_id=character_id,
+                query_text=query_text,
+                response_text=response_text,
+                interaction_type="voice_query",
+                attraction_id=aid,
+            )
+            db_local.add(interaction)
+            db_local.commit()
+        finally:
+            db_local.close()
+    except Exception as e:
+        logger.error("Failed to save interaction: %s", e)
+
+
 @router.post("/search", response_model=QueryResponse)
 async def hybrid_search(request: QueryRequest):
     """混合检索"""
@@ -75,34 +145,12 @@ async def graph_search(entity_name: str, relation_type: str = None, limit: int =
 async def generate_answer(request: GenerateRequest, background_tasks: BackgroundTasks):
     """生成回答（RAG + 多轮对话）。"""
     try:
-        session_id = request.session_id
-        if not session_id:
-            session_id = session_service.create_session(request.character_id)
-        else:
-            session = session_service.get_session(session_id)
-            if not session:
-                session_id = session_service.create_session(request.character_id)
-        # 并行加载角色提示词和对话历史
-        async def load_character_prompt():
-            if request.character_id:
-                try:
-                    prisma = await get_prisma()
-                    character = await prisma.character.find_unique(where={"id": request.character_id})
-                    if character and character.prompt:
-                        return character.prompt
-                except Exception as e:
-                    logger.error(f"Failed to load character prompt: {e}")
-            return None
-        
-        def load_conversation_history():
-            return session_service.get_conversation_history(session_id)
-        
-        # 并行加载角色提示词和对话历史
-        character_prompt, conversation_history = await asyncio.gather(
-            load_character_prompt(),
-            asyncio.to_thread(load_conversation_history)
+        session_id = _resolve_session_id(request)
+        (character_prompt, _), conversation_history = await asyncio.gather(
+            _load_character_prompt_and_voice(request.character_id),
+            asyncio.to_thread(session_service.get_conversation_history, session_id),
         )
-        
+
         result = await rag_service.generate_answer(
             query=request.query,
             context=None,
@@ -114,55 +162,24 @@ async def generate_answer(request: GenerateRequest, background_tasks: Background
         answer = result["answer"]
         context = result.get("context", "")
         primary_attraction_id = result.get("primary_attraction_id")
-        
-        # 立即更新会话历史（同步操作，很快）
+
         session_service.add_message(session_id, "user", request.query)
         session_service.add_message(session_id, "assistant", answer)
-        
-        # 数据库保存使用后台任务，不阻塞响应
-        def save_interaction():
-            try:
-                from app.core.database import SessionLocal
-                from app.models.attraction import Attraction as AttractionModel
-                db_local = SessionLocal()
-                try:
-                    aid = primary_attraction_id
-                    # 若 RAG 未返回景点 ID，根据问题文本尝试按景点名称匹配（便于服务次数统计）
-                    if aid is None and request.query and request.query.strip():
-                        q = (request.query or "").strip()
-                        rows = (
-                            db_local.query(AttractionModel.id, AttractionModel.name)
-                            .filter(AttractionModel.name.isnot(None), AttractionModel.name != "")
-                            .limit(200)
-                            .all()
-                        )
-                        for row in rows:
-                            name = row[1] if len(row) > 1 else None
-                            if name and name in q:
-                                aid = row[0]
-                                break
-                    interaction = Interaction(
-                        session_id=session_id,
-                        character_id=request.character_id,
-                        query_text=request.query,
-                        response_text=answer,
-                        interaction_type="voice_query",
-                        attraction_id=aid,
-                    )
-                    db_local.add(interaction)
-                    db_local.commit()
-                finally:
-                    db_local.close()
-            except Exception as e:
-                logger.error(f"Failed to save interaction: {e}")
-        
-        background_tasks.add_task(save_interaction)
-        
+
+        background_tasks.add_task(
+            _save_interaction,
+            session_id,
+            request.character_id,
+            request.query,
+            answer,
+            primary_attraction_id,
+        )
+
         return GenerateResponse(
             answer=answer,
             query=request.query,
             context=context,
-            session_id=session_id
+            session_id=session_id,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -171,33 +188,13 @@ async def generate_answer(request: GenerateRequest, background_tasks: Background
 async def generate_answer_stream(request: GenerateRequest, background_tasks: BackgroundTasks):
     """流式生成回答（SSE），文本与 TTS 同步输出"""
     async def generate_stream() -> AsyncGenerator[str, None]:
-        session_id = request.session_id
-        if not session_id:
-            session_id = session_service.create_session(request.character_id)
-        else:
-            session = session_service.get_session(session_id)
-            if not session:
-                session_id = session_service.create_session(request.character_id)
-        
-        # 并行加载角色提示词和对话历史
-        async def load_character_prompt():
-            if request.character_id:
-                try:
-                    prisma = await get_prisma()
-                    character = await prisma.character.find_unique(where={"id": request.character_id})
-                    if character and character.prompt:
-                        return character.prompt
-                except Exception as e:
-                    logger.error(f"Failed to load character prompt: {e}")
-            return None
-        
-        def load_conversation_history():
-            return session_service.get_conversation_history(session_id)
-        
-        character_prompt, conversation_history = await asyncio.gather(
-            load_character_prompt(),
-            asyncio.to_thread(load_conversation_history)
+        session_id = _resolve_session_id(request)
+        (character_prompt, voice), conversation_history = await asyncio.gather(
+            _load_character_prompt_and_voice(request.character_id),
+            asyncio.to_thread(session_service.get_conversation_history, session_id),
         )
+        if not voice:
+            voice = settings.XFYUN_VOICE
         
         # 执行 RAG 检索（非流式，一次性获取上下文）
         rag_results = None
@@ -236,20 +233,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             system_prompt = f"{base_system_prompt}\n\n角色设定：{character_prompt}"
         else:
             system_prompt = base_system_prompt
-        
-        # 获取角色音色，用于流式 TTS
-        voice = None
-        if request.character_id:
-            try:
-                prisma = await get_prisma()
-                character = await prisma.character.find_unique(where={"id": request.character_id})
-                if character and character.voice:
-                    voice = character.voice
-            except Exception:
-                pass
-        if not voice:
-            voice = settings.XFYUN_VOICE
-        
+
         # 是否在后端做 TTS（科大讯飞或本地 CosyVoice2），边生成边合成
         backend_tts_enabled = bool(settings.XFYUN_APPID and settings.XFYUN_API_KEY) or settings.LOCAL_TTS_ENABLED
         
@@ -426,20 +410,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 else:
                     yield f"data: {json.dumps({'type': 'tts', 'content': accumulated_text.strip()}, ensure_ascii=False)}\n\n"
             
-            # 等待所有 TTS 完成并持续 drain 音频（边等边 yield，用户能边听）
-            wait_start = time.monotonic()
-            while next_audio_idx < tts_chunk_index[0] or completed_audio:
-                if time.monotonic() - wait_start > 60:
-                    logger.debug("流式 TTS 等待超时")
-                    break
-                await asyncio.sleep(DRAIN_INTERVAL)
-                for ev in drain_audio():
-                    yield ev
-            
-            # 发送完成信号
-            yield f"data: {json.dumps({'type': 'done', 'content': full_answer}, ensure_ascii=False)}\n\n"
-
-            # 写入 RAG 上下文日志（与非流式接口保持一致）
+            # 先写入 RAG 日志并保存交互，管理端可立即看到更新（不必等 TTS 全部播完）
             try:
                 rag_debug: Optional[Dict[str, Any]] = None
                 if request.use_rag:
@@ -466,7 +437,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                         "skip_rag_reason": "未使用 RAG",
                         "final_sent_to_llm": user_prompt,
                     }
-
                 log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
                 os.makedirs(log_root, exist_ok=True)
                 log_path = os.path.join(log_root, "rag_context.log")
@@ -480,8 +450,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 }
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-                # 控制文件大小：仅保留最后 5 条
                 try:
                     with open(log_path, "r", encoding="utf-8") as f:
                         lines = [ln for ln in f.readlines() if ln.strip()]
@@ -493,47 +461,32 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             except Exception as e:
                 logger.warning(f"Failed to write RAG context log (stream): {e}")
             
-            # 更新会话历史
             session_service.add_message(session_id, "user", request.query)
             session_service.add_message(session_id, "assistant", full_answer)
+
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _save_interaction(
+                    session_id,
+                    request.character_id,
+                    request.query,
+                    full_answer,
+                    primary_attraction_id,
+                ),
+            )
             
-            # 后台保存交互记录
-            def save_interaction():
-                try:
-                    from app.core.database import SessionLocal
-                    from app.models.attraction import Attraction as AttractionModel
-                    db_local = SessionLocal()
-                    try:
-                        aid = primary_attraction_id
-                        if aid is None and request.query and request.query.strip():
-                            q = (request.query or "").strip()
-                            rows = (
-                                db_local.query(AttractionModel.id, AttractionModel.name)
-                                .filter(AttractionModel.name.isnot(None), AttractionModel.name != "")
-                                .limit(200)
-                                .all()
-                            )
-                            for row in rows:
-                                name = row[1] if len(row) > 1 else None
-                                if name and name in q:
-                                    aid = row[0]
-                                    break
-                        interaction = Interaction(
-                            session_id=session_id,
-                            character_id=request.character_id,
-                            query_text=request.query,
-                            response_text=full_answer,
-                            interaction_type="voice_query",
-                            attraction_id=aid,
-                        )
-                        db_local.add(interaction)
-                        db_local.commit()
-                    finally:
-                        db_local.close()
-                except Exception as e:
-                    logger.error(f"Failed to save interaction: {e}")
+            # 等待所有 TTS 完成并持续 drain 音频（边等边 yield，用户能边听）
+            wait_start = time.monotonic()
+            while next_audio_idx < tts_chunk_index[0] or completed_audio:
+                if time.monotonic() - wait_start > 60:
+                    logger.debug("流式 TTS 等待超时")
+                    break
+                await asyncio.sleep(DRAIN_INTERVAL)
+                for ev in drain_audio():
+                    yield ev
             
-            background_tasks.add_task(save_interaction)
+            # 发送完成信号
+            yield f"data: {json.dumps({'type': 'done', 'content': full_answer}, ensure_ascii=False)}\n\n"
             
         except Exception as e:
             logger.error(f"Stream generation failed: {e}")
