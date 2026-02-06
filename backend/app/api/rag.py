@@ -196,23 +196,27 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
         if not voice:
             voice = settings.XFYUN_VOICE
         
-        # 执行 RAG 检索（非流式，一次性获取上下文）
+        # 执行 RAG 检索（与 generate_answer 一致：寒暄/你是谁等不检索，直接简短回复）
         rag_results = None
         primary_attraction_id = None
         context = ""
         if request.use_rag:
-            try:
-                rag_results = await rag_service.hybrid_search(
-                    request.query,
-                    top_k=5,
-                    conversation_history=conversation_history,
-                    scenic_name=request.scenic_name,
-                )
-                primary_attraction_id = rag_results.get("primary_attraction_id")
-                context = rag_results.get("enhanced_context", "") or ""
-            except Exception as e:
-                logger.error(f"RAG search failed: {e}")
-                rag_results = {"errors": {"rag_search": str(e)}}
+            needs_context = rag_service._query_needs_context(request.query)
+            if not needs_context:
+                context = "当前问题无需知识库上下文，请自然、简短回复。"
+            else:
+                try:
+                    rag_results = await rag_service.hybrid_search(
+                        request.query,
+                        top_k=5,
+                        conversation_history=conversation_history,
+                        scenic_name=request.scenic_name,
+                    )
+                    primary_attraction_id = rag_results.get("primary_attraction_id")
+                    context = rag_results.get("enhanced_context", "") or ""
+                except Exception as e:
+                    logger.error(f"RAG search failed: {e}")
+                    rag_results = {"errors": {"rag_search": str(e)}}
         
         # 准备 LLM 消息（与 rag_service.generate_answer 共用系统提示）
         if character_prompt:
