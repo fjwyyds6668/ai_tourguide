@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, AsyncGenerator, Tuple
-from app.services.rag_service import rag_service, _clean_special_symbols
+from app.services.rag_service import rag_service, _clean_special_symbols, RAG_BASE_SYSTEM_PROMPT
 from app.services.session_service import session_service
 from app.services.voice_service import voice_service
 from app.api.voice import _normalize_tts_text
@@ -214,25 +214,11 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 logger.error(f"RAG search failed: {e}")
                 rag_results = {"errors": {"rag_search": str(e)}}
         
-        # 准备 LLM 消息
-        base_system_prompt = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
-回答要求：
-1. 基于提供的上下文信息回答
-2. 语言简洁明了，适合口语化表达
-3. 如果信息不足，诚实说明
-4. 不要编造信息
-5. 不要透露任何内部标识符/编号/ID（例如 kb_***、text_id、session_id 等）；自我介绍时也不要输出任何"编号"
-6. 输出内容必须为"干净的纯文本"：
-   - 禁止使用任何表情符号、emoji、颜文字（如 🌟、✨、❤️、😊、1️⃣、2️⃣ 等）
-   - 禁止使用 Markdown 格式符号（如 **粗体**、*斜体*、# 标题、- 列表符号等）
-   - 禁止使用装饰性符号（如 ～、~、——、…、•、▪、▫ 等）
-   - 只使用正常中文标点（，。！？：；）与必要的数字、单位
-   - 如需列举，使用"第一"、"第二"或"1."、"2."等纯文本格式，不要用特殊符号"""
-        
+        # 准备 LLM 消息（与 rag_service.generate_answer 共用系统提示）
         if character_prompt:
-            system_prompt = f"{base_system_prompt}\n\n角色设定：{character_prompt}"
+            system_prompt = f"{RAG_BASE_SYSTEM_PROMPT}\n\n角色设定：{character_prompt}"
         else:
-            system_prompt = base_system_prompt
+            system_prompt = RAG_BASE_SYSTEM_PROMPT
 
         # 是否在后端做 TTS（科大讯飞或本地 CosyVoice2），边生成边合成
         backend_tts_enabled = bool(settings.XFYUN_APPID and settings.XFYUN_API_KEY) or settings.LOCAL_TTS_ENABLED

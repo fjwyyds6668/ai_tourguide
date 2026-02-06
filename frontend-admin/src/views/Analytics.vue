@@ -170,8 +170,8 @@ let visibilityHandler = null
 
 onMounted(() => {
   fetchAnalytics(false) // 首次加载显示 loading
-  // 每1秒静默刷新，不触发 loading，避免页面闪烁
-  refreshTimer = setInterval(() => fetchAnalytics(true), 1000)
+  // 每5秒静默刷新，不触发 loading，避免页面闪烁、减少后端日志刷屏
+  refreshTimer = setInterval(() => fetchAnalytics(true), 5000)
   visibilityHandler = () => {
     if (document.visibilityState === 'visible') {
       fetchAnalytics(true)

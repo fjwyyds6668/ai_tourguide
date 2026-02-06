@@ -28,6 +28,21 @@ from app.services.rag_settings import (
 
 logger = logging.getLogger(__name__)
 
+# 与 rag.py 流式生成共用的系统提示，避免两处重复维护
+RAG_BASE_SYSTEM_PROMPT = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
+回答要求：
+1. 基于提供的上下文信息回答
+2. 语言简洁明了，适合口语化表达
+3. 如果信息不足，诚实说明
+4. 不要编造信息
+5. 不要透露任何内部标识符/编号/ID（例如 kb_***、text_id、session_id 等）；自我介绍时也不要输出任何"编号"
+6. 输出内容必须为"干净的纯文本"：
+   - 禁止使用任何表情符号、emoji、颜文字（如 🌟、✨、❤️、😊、1️⃣、2️⃣ 等）
+   - 禁止使用 Markdown 格式符号（如 **粗体**、*斜体*、# 标题、- 列表符号等）
+   - 禁止使用装饰性符号（如 ～、~、——、…、•、▪、▫ 等）
+   - 只使用正常中文标点（，。！？：；）与必要的数字、单位
+   - 如需列举，使用"第一"、"第二"或"1."、"2."等纯文本格式，不要用特殊符号"""
+
 
 class QueryIntent(Enum):
     """查询意图类型"""
@@ -1736,18 +1751,10 @@ class RAGService:
                 "intent": rag_results.get("intent"),  # 包含意图信息
                 "strategy": rag_results.get("strategy"),  # 包含策略信息
             }
-        base_system_prompt = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
-回答要求：
-1. 基于提供的上下文信息回答
-2. 语言简洁明了，适合口语化表达
-3. 如果信息不足，诚实说明
-4. 不要编造信息
-5. 不要透露任何内部标识符/编号/ID（例如 kb_***、text_id、session_id 等）；自我介绍时也不要输出任何“编号”
-6. 输出内容必须为“干净的纯文本”：不要使用任何表情/emoji/颜文字，也不要使用装饰性符号（例如 ～、~、🫶、✨、❤️ 等）。只使用正常中文标点（，。！？）与必要的数字/单位。"""
         if character_prompt:
-            system_prompt = f"{base_system_prompt}\n\n角色设定：{character_prompt}"
+            system_prompt = f"{RAG_BASE_SYSTEM_PROMPT}\n\n角色设定：{character_prompt}"
         else:
-            system_prompt = base_system_prompt
+            system_prompt = RAG_BASE_SYSTEM_PROMPT
         messages = [{"role": "system", "content": system_prompt}]
         if conversation_history:
             messages.extend(conversation_history)
