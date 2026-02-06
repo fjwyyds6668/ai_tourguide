@@ -1002,47 +1002,76 @@ class RAGService:
             logger.debug("_fetch_scenic_spot_names: %s", e)
             return []
 
-    async def _get_scenic_attractions_sentence_by_name(self, scenic_name: str) -> str:
-        """根据景区名称查询其下相关景点，并格式化为一句话描述（带数量信息，异步）。"""
-        scenic_name = (scenic_name or "").strip()
-        if not scenic_name:
-            return ""
+    async def _get_scenic_spot_name_if_exists(self, name: str) -> Optional[str]:
+        """图库中若存在名为 name 的 ScenicSpot 则返回该名称，否则返回 None。用于实体名是否景区判断。"""
+        if not (name or "").strip():
+            return None
         try:
-            scenic_attractions_q = """
-            MATCH (s:ScenicSpot {name: $name})
-            OPTIONAL MATCH (s)-[:HAS_SPOT]->(n)
-            OPTIONAL MATCH (s)<-[:属于]-(a:Attraction)
-            WITH s, collect(DISTINCT n) AS spot_list, collect(DISTINCT a) AS att_list
-            UNWIND spot_list + att_list AS x
-            WITH s, x WHERE x IS NOT NULL
-            WITH DISTINCT s, x, coalesce(x.name, x.text_id) AS xname
-            WHERE xname IS NOT NULL AND NOT (xname STARTS WITH 'kb_')
-            RETURN s.name AS scenic_name, xname AS attraction_name
-            ORDER BY attraction_name
-            LIMIT 50
-            """
             loop = asyncio.get_event_loop()
             rows = await loop.run_in_executor(
                 None,
                 neo4j_client.execute_query,
-                scenic_attractions_q,
-                {"name": scenic_name}
-            ) or []
-        except Exception as e:
-            logger.warning(f"_get_scenic_attractions_sentence_by_name query failed scenic_name={scenic_name}: {e}")
-            return ""
+                "MATCH (s:ScenicSpot {name: $name}) RETURN s.name AS name LIMIT 1",
+                {"name": (name or "").strip()},
+            )
+            if rows and isinstance(rows, list) and rows[0].get("name"):
+                return str(rows[0]["name"]).strip()
+        except Exception:
+            pass
+        return None
 
-        attraction_names: List[str] = []
-        for row in rows:
-            nm = row.get("attraction_name")
-            if not nm or nm in attraction_names:
-                continue
-            attraction_names.append(nm)
-        if not attraction_names:
+    async def _get_scenic_attractions_sentence_by_name(self, scenic_name: str) -> str:
+        """根据景区名称查询其下相关景点，并格式化为一句话描述（复用 _get_scenic_attraction_ids_and_names）。"""
+        name = (scenic_name or "").strip()
+        if not name:
+            return ""
+        _, names = await self._get_scenic_attraction_ids_and_names(name)
+        return self._format_scenic_attractions_sentence(name, names) if names else ""
+
+    def _format_scenic_attractions_sentence(self, scenic_name: str, attraction_names: List[str]) -> str:
+        """将景点名称列表格式化为一句描述（与 _get_scenic_attractions_sentence_by_name 共用格式）。"""
+        if not attraction_names or not (scenic_name or "").strip():
             return ""
         count = len(attraction_names)
-        joined = "、".join(attraction_names)
-        return f"根据图数据库，景区「{scenic_name}」下的相关景点共有 {count} 个，包括：{joined}。"
+        joined = "、".join(attraction_names[:20])
+        return f"根据图数据库，景区「{(scenic_name or '').strip()}」下的相关景点共有 {count} 个，包括：{joined}。"
+
+    async def _get_scenic_attraction_ids_and_names(self, scenic_name: str) -> Tuple[List[int], List[str]]:
+        """根据景区名称查询其下景点 ID 与名称，供路线/列举等一次查询复用。"""
+        name = (scenic_name or "").strip()
+        if not name:
+            return [], []
+        try:
+            q = """
+            MATCH (s:ScenicSpot {name: $name})
+            OPTIONAL MATCH (s)<-[:属于]-(a:Attraction)
+            OPTIONAL MATCH (s)-[:HAS_SPOT]->(a2:Attraction)
+            WITH collect(DISTINCT a) + collect(DISTINCT a2) AS xs
+            UNWIND xs AS x
+            WITH DISTINCT x WHERE x IS NOT NULL AND x.id IS NOT NULL
+            RETURN x.id AS aid, x.name AS name
+            ORDER BY aid
+            LIMIT 200
+            """
+            loop = asyncio.get_event_loop()
+            rows = await loop.run_in_executor(
+                None, neo4j_client.execute_query, q, {"name": name}
+            ) or []
+            aids: List[int] = []
+            names: List[str] = []
+            for r in rows:
+                if r and r.get("aid") is not None:
+                    try:
+                        aids.append(int(r["aid"]))
+                        nm = r.get("name")
+                        if nm and not str(nm).strip().startswith("kb_"):
+                            names.append(str(nm))
+                    except Exception:
+                        continue
+            return aids, names
+        except Exception as e:
+            logger.warning("_get_scenic_attraction_ids_and_names %s: %s", name, e)
+            return [], []
 
     async def hybrid_search(
         self,
@@ -1209,47 +1238,12 @@ class RAGService:
                 if parent_info:
                     s_name = parent_info.get("s_name")
                     if s_name:
-                        # 合并查询：一次获取景点列表和 ID，避免两次 Neo4j 往返
-                        async def fetch_scenic_attractions():
-                            scenic_aids_q = """
-                            MATCH (s:ScenicSpot {name: $name})
-                            OPTIONAL MATCH (s)<-[:属于]-(a:Attraction)
-                            OPTIONAL MATCH (s)-[:HAS_SPOT]->(a2:Attraction)
-                            WITH collect(DISTINCT a) + collect(DISTINCT a2) AS xs
-                            UNWIND xs AS x
-                            WITH DISTINCT x WHERE x IS NOT NULL AND x.id IS NOT NULL
-                            RETURN x.id AS aid, x.name AS name
-                            ORDER BY aid
-                            LIMIT 200
-                            """
-                            loop = asyncio.get_event_loop()
-                            rows = await loop.run_in_executor(
-                                None,
-                                neo4j_client.execute_query,
-                                scenic_aids_q,
-                                {"name": str(s_name).strip()}
-                            ) or []
-                            aids: List[int] = []
-                            names: List[str] = []
-                            for rr in rows:
-                                if rr and rr.get("aid") is not None:
-                                    try:
-                                        aids.append(int(rr["aid"]))
-                                        if rr.get("name"):
-                                            names.append(str(rr["name"]))
-                                    except Exception:
-                                        continue
-                            return aids, names
-                        
-                        scenic_aids, attraction_names = await fetch_scenic_attractions()
-                        
-                        # 生成句子描述（如果还没有）
+                        s_name_str = str(s_name).strip()
+                        scenic_aids, attraction_names = await self._get_scenic_attraction_ids_and_names(s_name_str)
                         if attraction_names and "根据图数据库，景区「" not in (enhanced_results or ""):
-                            count = len(attraction_names)
-                            joined = "、".join(attraction_names[:20])  # 最多显示20个
-                            sentence = f"根据图数据库，景区「{s_name}」下的相关景点共有 {count} 个，包括：{joined}。"
-                            enhanced_results = sentence + "\n\n" + (enhanced_results or "")
-                        
+                            sentence = self._format_scenic_attractions_sentence(s_name_str, attraction_names)
+                            if sentence:
+                                enhanced_results = sentence + "\n\n" + (enhanced_results or "")
                         if scenic_aids:
                             # 使用策略中的 max_attractions
                             clusters_ctx = await self._get_attraction_cluster_context(scenic_aids, max_items=max_attractions)
@@ -1395,23 +1389,9 @@ class RAGService:
                     cand = ent.get("text")
                     if not cand or not isinstance(cand, str):
                         continue
-                    try:
-                        check_q = """
-                        MATCH (s:ScenicSpot {name: $name})
-                        RETURN s.name AS name
-                        LIMIT 1
-                        """
-                        loop = asyncio.get_event_loop()
-                        res = await loop.run_in_executor(
-                            None,
-                            neo4j_client.execute_query,
-                            check_q,
-                            {"name": cand}
-                        )
-                        if res and isinstance(res, list) and res[0].get("name"):
-                            scenic_names.add(res[0]["name"])
-                    except Exception:
-                        continue
+                    existing = await self._get_scenic_spot_name_if_exists(cand)
+                    if existing:
+                        scenic_names.add(existing)
         if not scenic_names:
             try:
                 names_list = await self._fetch_scenic_spot_names(5)
@@ -1817,9 +1797,10 @@ class RAGService:
                 try:
                     with open(log_path, "r", encoding="utf-8") as f:
                         lines = [ln for ln in f.readlines() if ln.strip()]
-                    if len(lines) > 5:
+                    # 仅在行数较多时裁剪，减少写放大；接口仍只返回最近 5 条
+                    if len(lines) > 20:
                         with open(log_path, "w", encoding="utf-8") as f:
-                            f.writelines(lines[-5:])
+                            f.writelines(lines[-20:])
                 except Exception:
                     pass
             except Exception as e:

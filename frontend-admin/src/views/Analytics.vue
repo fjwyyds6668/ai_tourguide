@@ -116,53 +116,28 @@ function nodeName(n) {
   return p.name || '节点'
 }
 
-const fetchRagLogs = async (silent = false) => {
-  if (!silent) ragLogsLoading.value = true
-  try {
-    const ragRes = await api.get('/admin/analytics/rag-logs', {
-      params: { limit: 5 }
-    })
-    ragLogs.value = ragRes.data || []
-  } catch (e) {
-    console.error('获取 RAG 日志失败:', e)
-  } finally {
-    if (!silent) ragLogsLoading.value = false
+/** 一次请求拉取 RAG 日志、交互统计、热门景点，减少轮询请求数 */
+const fetchAnalytics = async (silent = false) => {
+  if (!silent) {
+    loading.value = true
+    ragLogsLoading.value = true
   }
-}
-
-const fetchInteractions = async (silent = false) => {
-  if (!silent) loading.value = true
   try {
-    const res = await api.get('/admin/analytics/interactions', {
-      params: {
-        skip: 0,
-        limit: 5,
-      },
+    const res = await api.get('/admin/analytics/dashboard', {
+      params: { rag_limit: 5, interactions_limit: 5 },
     })
     const data = res.data || {}
-    interactionData.value = data
+    ragLogs.value = data.rag_logs || []
+    interactionData.value = data.interactions || null
+    popularData.value = data.popular_attractions || null
   } catch (e) {
-    console.error(e)
+    console.error('获取数据分析失败:', e)
   } finally {
-    if (!silent) loading.value = false
+    if (!silent) {
+      loading.value = false
+      ragLogsLoading.value = false
+    }
   }
-}
-
-const fetchPopular = async () => {
-  try {
-    const popularRes = await api.get('/admin/analytics/popular-attractions')
-    popularData.value = popularRes.data
-  } catch (e) {
-    console.error(e)
-  }
-}
-
-const fetchAnalytics = async (silent = false) => {
-  await Promise.all([
-    fetchPopular(),
-    fetchInteractions(silent),
-    fetchRagLogs(silent),
-  ])
 }
 
 let refreshTimer = null

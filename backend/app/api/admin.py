@@ -1507,31 +1507,18 @@ async def import_attractions_to_graphrag(req: ImportAttractionsRequest):
             pass
 
 
-@router.get("/analytics/rag-logs")
-async def get_rag_logs(
-    limit: int = 5,
-    current_user: User = Depends(get_current_user),
-) -> List[Dict[str, Any]]:
-    """
-    管理员查看最近的 RAG 检索上下文日志：
-    - 每次问答时从向量库和图数据库检索出的内容（enhanced_context）
-    - 命中的向量结果 / 图结果（前若干条）
-    """
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="仅管理员可查看 RAG 日志")
-
+def _read_rag_logs_sync(limit: int = 5) -> List[Dict[str, Any]]:
+    """同步读取 RAG 日志文件最后若干条，供 dashboard 或 run_in_executor 使用。"""
     logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
     log_path = os.path.join(logs_dir, "rag_context.log")
     if not os.path.exists(log_path):
         return []
-
     try:
         with open(log_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
     except Exception as e:
-        logger.error(f"读取 RAG 日志失败: {e}")
-        raise HTTPException(status_code=500, detail="读取 RAG 日志失败")
-
+        logger.error("读取 RAG 日志失败: %s", e)
+        return []
     entries: List[Dict[str, Any]] = []
     for line in reversed(lines[-limit:]):
         line = line.strip()
@@ -1539,70 +1526,72 @@ async def get_rag_logs(
             continue
         try:
             data = json.loads(line)
-            entries.append(
-                {
-                    "timestamp": data.get("timestamp", ""),
-                    "query": data.get("query", ""),
-                    "final_answer_preview": data.get("final_answer_preview", ""),
-                    "use_rag": bool(data.get("use_rag", False)),
-                    "rag_debug": data.get("rag_debug") or {},
-                }
-            )
+            entries.append({
+                "timestamp": data.get("timestamp", ""),
+                "query": data.get("query", ""),
+                "final_answer_preview": data.get("final_answer_preview", ""),
+                "use_rag": bool(data.get("use_rag", False)),
+                "rag_debug": data.get("rag_debug") or {},
+            })
         except Exception:
             continue
-
     return entries
 
-@router.get("/analytics/interactions")
-async def get_interaction_analytics(
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db)
-):
-    """获取交互数据分析（按 ID 降序，最近的在前）"""
+
+def _fetch_interaction_analytics(db: Session, skip: int = 0, limit: int = 100) -> Dict[str, Any]:
+    """查询交互统计与最近记录，供 dashboard 使用。"""
     interactions = db.query(Interaction).order_by(desc(Interaction.id)).offset(skip).limit(limit).all()
-    
     total = db.query(Interaction).count()
     by_type = {}
     for interaction in interactions:
         itype = interaction.interaction_type or "unknown"
         by_type[itype] = by_type.get(itype, 0) + 1
-    
-    return {
-        "total": total,
-        "by_type": by_type,
-        "recent_interactions": interactions
-    }
+    return {"total": total, "by_type": by_type, "recent_interactions": interactions}
 
-@router.get("/analytics/popular-attractions")
-async def get_popular_attractions(db: Session = Depends(get_db)):
-    """获取热门景点统计。访问次数 = 该景点关联的 Interaction 数量（含语音查询 voice_query 与详情页访问 detail_view）。"""
+
+def _fetch_popular_attractions(db: Session, limit: int = 5) -> Dict[str, Any]:
+    """查询热门景点统计，供 dashboard 使用。"""
     from sqlalchemy import func
     from app.models.attraction import Attraction
-
-    popular = db.query(
-        Attraction.id,
-        Attraction.name,
-        func.count(Interaction.id).label("visit_count")
-    ).join(
-        Interaction, Attraction.id == Interaction.attraction_id, isouter=True
-    ).group_by(Attraction.id, Attraction.name).order_by(
-        func.count(Interaction.id).desc()
-    ).limit(5).all()
-
-    popular_list = [
-        {
-            "id": row[0],
-            "name": row[1],
-            "visit_count": int(row[2] or 0),
-        }
-        for row in popular
-    ]
-
+    popular = (
+        db.query(
+            Attraction.id,
+            Attraction.name,
+            func.count(Interaction.id).label("visit_count"),
+        )
+        .join(Interaction, Attraction.id == Interaction.attraction_id, isouter=True)
+        .group_by(Attraction.id, Attraction.name)
+        .order_by(func.count(Interaction.id).desc())
+        .limit(limit)
+        .all()
+    )
+    popular_list = [{"id": row[0], "name": row[1], "visit_count": int(row[2] or 0)} for row in popular]
     return {
         "popular_attractions": popular_list,
         "visit_count_note": "访问次数统计自语音查询与景点详情页访问",
     }
+
+
+@router.get("/analytics/dashboard")
+async def get_analytics_dashboard(
+    rag_limit: int = 5,
+    interactions_limit: int = 5,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """一次返回 RAG 日志、交互列表、热门景点，供数据分析页单次请求。"""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可查看")
+    loop = asyncio.get_event_loop()
+    rag_entries = await loop.run_in_executor(None, _read_rag_logs_sync, rag_limit)
+    interactions_data = _fetch_interaction_analytics(db, skip=0, limit=interactions_limit)
+    popular_data = _fetch_popular_attractions(db, limit=5)
+    return {
+        "rag_logs": rag_entries,
+        "interactions": interactions_data,
+        "popular_attractions": popular_data,
+    }
+
 
 @router.get("/stats", response_model=DashboardStatsResponse)
 async def get_dashboard_stats(db: Session = Depends(get_db)):
