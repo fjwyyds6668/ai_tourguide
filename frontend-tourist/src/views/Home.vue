@@ -102,15 +102,7 @@ onMounted(async () => {
   try {
     const res = await api.get('/attractions/scenic-spots')
     scenicSpots.value = res.data || []
-    // 从 localStorage 恢复上次选择的景区，保证刷新/返回首页时下拉框与背景图一致
-    const savedId = localStorage.getItem('current_scenic_spot_id')
-    if (savedId && scenicSpots.value.length) {
-      const idNum = Number(savedId)
-      if (!Number.isNaN(idNum)) {
-        selectedScenicId.value = idNum
-        selectedScenic.value = scenicSpots.value.find((s) => s.id === idNum) || null
-      }
-    }
+    // 不默认选中景区，由用户进入首页后自行选择
   } catch (e) {
     console.error('加载景区列表失败:', e)
   }
