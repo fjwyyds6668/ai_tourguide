@@ -84,7 +84,7 @@ ai_tourguide/
 │   ├── requirements.txt
 │   └── main.py
 ├── frontend-tourist/     # Vue3 游客端
-├── frontend-admin/       # React 管理端
+├── frontend-admin/       # Vue3 管理端
 └── README.md
 ```
 
