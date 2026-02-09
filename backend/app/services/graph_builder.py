@@ -491,6 +491,11 @@ class GraphBuilder:
         features = parsed.get("features") or []
         spots = parsed.get("spots") or []
         awards = parsed.get("awards") or []
+        # 新增：票务、开放时间、交通、服务设施等结构化字段（字符串），作为 ScenicSpot 的属性存储
+        ticket_info = parsed.get("ticket_info")
+        opening_hours = parsed.get("opening_hours")
+        transport_info = parsed.get("transport_info")
+        service_facilities = parsed.get("service_facilities")
         # clear_existing=False（默认）时，不会清空原有簇，只做增量合并；
         # 只有在“重建簇”类工具中才会传 True，触发清理逻辑。
         if clear_existing:
@@ -562,24 +567,63 @@ class GraphBuilder:
             ON CREATE SET
                 s.name = $name,
                 s.area = $area,
-                s.location = $location
+                s.location = $location,
+                s.ticket_info = $ticket_info,
+                s.opening_hours = $opening_hours,
+                s.transport_info = $transport_info,
+                s.service_facilities = $service_facilities
             ON MATCH SET
                 s.name = coalesce($name, s.name),
                 s.area = coalesce(s.area, $area),
-                s.location = coalesce(s.location, $location)
+                s.location = coalesce(s.location, $location),
+                s.ticket_info = coalesce(s.ticket_info, $ticket_info),
+                s.opening_hours = coalesce(s.opening_hours, $opening_hours),
+                s.transport_info = coalesce(s.transport_info, $transport_info),
+                s.service_facilities = coalesce(s.service_facilities, $service_facilities)
             """
-            self.client.execute_query(q_scenic, {"sid": sid, "name": scenic_name, "area": area, "location": location_str})
+            self.client.execute_query(
+                q_scenic,
+                {
+                    "sid": sid,
+                    "name": scenic_name,
+                    "area": area,
+                    "location": location_str,
+                    "ticket_info": ticket_info,
+                    "opening_hours": opening_hours,
+                    "transport_info": transport_info,
+                    "service_facilities": service_facilities,
+                },
+            )
         else:
             q_scenic_legacy = """
             MERGE (s:ScenicSpot {name: $name})
             ON CREATE SET
                 s.area = $area,
-                s.location = $location
+                s.location = $location,
+                s.ticket_info = $ticket_info,
+                s.opening_hours = $opening_hours,
+                s.transport_info = $transport_info,
+                s.service_facilities = $service_facilities
             ON MATCH SET
                 s.area = coalesce(s.area, $area),
-                s.location = coalesce(s.location, $location)
+                s.location = coalesce(s.location, $location),
+                s.ticket_info = coalesce(s.ticket_info, $ticket_info),
+                s.opening_hours = coalesce(s.opening_hours, $opening_hours),
+                s.transport_info = coalesce(s.transport_info, $transport_info),
+                s.service_facilities = coalesce(s.service_facilities, $service_facilities)
             """
-            self.client.execute_query(q_scenic_legacy, {"name": scenic_name, "area": area, "location": location_str})
+            self.client.execute_query(
+                q_scenic_legacy,
+                {
+                    "name": scenic_name,
+                    "area": area,
+                    "location": location_str,
+                    "ticket_info": ticket_info,
+                    "opening_hours": opening_hours,
+                    "transport_info": transport_info,
+                    "service_facilities": service_facilities,
+                },
+            )
         if text_id:
             if use_id:
                 q_txt = """
