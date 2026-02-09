@@ -60,7 +60,7 @@
 | **操作系统** | Windows 10+ / Linux / macOS |
 | **Python** | 3.9+（推荐 3.10~3.12） |
 | **Node.js** | 16+（推荐 18+） |
-| **PostgreSQL** | 12+ |
+| **PostgreSQL** | 12+（需单独安装运行，不在 docker-compose 中） |
 | **Docker** | 20+（Neo4j、Milvus、MinIO） |
 | **内存** | 建议 8GB+（仅接口调用 LLM/TTS 时；本地 CosyVoice2 需 16GB+） |
 | **磁盘** | 建议 5GB+（应用与数据）；本地嵌入模型、Whisper/Vosk、CosyVoice2 会额外占数 GB，若 LLM/TTS 全走接口则无需为模型预留） |
@@ -68,7 +68,7 @@
 ### 3.2 核心依赖版本
 
 - **后端**：FastAPI 0.115+、Prisma、Neo4j 5.x、Milvus 2.6+、sentence-transformers
-- **前端**：Vue 3、Vite 5、Element Plus
+- **前端**：Vue 3、Element Plus；游客端 Vite 5、管理端 Vite 7
 
 ### 3.3 项目结构
 
@@ -78,9 +78,9 @@ ai_tourguide/
 │   ├── app/
 │   │   ├── api/         # API 路由
 │   │   ├── core/        # 核心配置
-│   │   ├── models/      # 数据模型
 │   │   ├── services/    # 业务逻辑
 │   │   └── utils/       # 工具函数
+│   ├── prisma/          # 数据模型（Prisma schema）
 │   ├── requirements.txt
 │   └── main.py
 ├── frontend-tourist/     # Vue3 游客端
@@ -124,7 +124,7 @@ docker-compose up -d neo4j standalone minio etcd
 ```bash
 cd backend
 pip install -r requirements.txt
-cp .env.example .env   # 填写 DATABASE_URL、NEO4J_*、MILVUS_*、OPENAI_API_KEY、SECRET_KEY 等
+cp .env.example .env   # 填写 DATABASE_URL、NEO4J_*、MILVUS_*、OPENAI_API_KEY 等（SECRET_KEY 可选，未配置则用默认值）
 prisma generate
 prisma db push
 uvicorn main:app --host 0.0.0.0 --port 18000 --reload
@@ -191,7 +191,7 @@ uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 
 1. **数据库连接失败**：检查 `.env` 配置，确认 PostgreSQL、Neo4j、Milvus 已启动
 2. **Prisma 客户端未生成**：执行 `cd backend && prisma generate`
-3. **CORS 错误**：后端默认允许 5173（游客端）、3000（管理端）；若管理端使用 5522 端口，需在 `config.py` 的 `CORS_ORIGINS` 中添加 `http://localhost:5522`
+3. **CORS 错误**：后端已默认允许 5173（游客端）、5522（管理端）；若使用其他端口，需在 `backend/app/core/config.py` 的 `CORS_ORIGINS` 中添加对应地址
 4. **TTS/语音识别失败**：Whisper 需约 1.5GB 磁盘；科大讯飞失败时可启用 CosyVoice2 备用
 
 ---
