@@ -1594,8 +1594,8 @@ async def get_analytics_dashboard(
 
 
 @router.get("/stats", response_model=DashboardStatsResponse)
-async def get_dashboard_stats(db: Session = Depends(get_db)):
-    """仪表盘统计（来自真实数据库）"""
+async def get_dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """仪表盘统计（来自真实数据库，需登录）"""
     try:
         from app.models.attraction import Attraction
 
@@ -1609,10 +1609,8 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
             interactions_count=interactions_count,
         )
     except Exception as e:
-        import traceback
         error_detail = f"获取统计信息失败: {str(e)}"
-        print(f"Error in get_dashboard_stats: {error_detail}")
-        print(traceback.format_exc())
+        logger.exception("get_dashboard_stats failed: %s", e)
         raise HTTPException(status_code=500, detail=error_detail)
 
 

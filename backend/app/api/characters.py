@@ -1,10 +1,12 @@
 """
-角色管理 API
+角色管理 API（GET 公开供游客端；创建/更新/删除需登录）
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from app.core.prisma_client import get_prisma
+from app.api.auth import get_current_user
+from app.models.user import User
 
 router = APIRouter()
 
@@ -103,8 +105,8 @@ async def get_character(character_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/characters", response_model=CharacterResponse)
-async def create_character(character: CharacterCreate):
-    """创建新角色"""
+async def create_character(character: CharacterCreate, current_user: User = Depends(get_current_user)):
+    """创建新角色（需登录）"""
     try:
         prisma = await get_prisma()
         new_character = await prisma.character.create(
@@ -139,8 +141,8 @@ async def create_character(character: CharacterCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/characters/{character_id}", response_model=CharacterResponse)
-async def update_character(character_id: int, character: CharacterUpdate):
-    """更新角色信息"""
+async def update_character(character_id: int, character: CharacterUpdate, current_user: User = Depends(get_current_user)):
+    """更新角色信息（需登录）"""
     try:
         prisma = await get_prisma()
         
@@ -193,8 +195,8 @@ async def update_character(character_id: int, character: CharacterUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/characters/{character_id}")
-async def delete_character(character_id: int):
-    """删除角色"""
+async def delete_character(character_id: int, current_user: User = Depends(get_current_user)):
+    """删除角色（需登录）"""
     try:
         prisma = await get_prisma()
         

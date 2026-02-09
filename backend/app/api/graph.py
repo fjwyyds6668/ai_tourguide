@@ -1,12 +1,14 @@
 """
-图数据库相关 API（GraphRAG 专用）
+图数据库相关 API（GraphRAG 专用；写操作需登录）
 """
 import asyncio
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from app.services.graph_builder import graph_builder
 from app.core.neo4j_client import neo4j_client
+from app.api.auth import get_current_user
+from app.models.user import User
 
 router = APIRouter()
 
@@ -27,8 +29,8 @@ class CreateRelationshipRequest(BaseModel):
     properties: dict = {}
 
 @router.post("/nodes")
-async def create_node(request: CreateNodeRequest):
-    """创建图节点"""
+async def create_node(request: CreateNodeRequest, current_user: User = Depends(get_current_user)):
+    """创建图节点（需登录）"""
     try:
         labels_str = ":".join(request.labels) if request.labels else "Entity"
         query = f"""
@@ -49,8 +51,8 @@ async def create_node(request: CreateNodeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/relationships")
-async def create_relationship(request: CreateRelationshipRequest):
-    """创建图关系"""
+async def create_relationship(request: CreateRelationshipRequest, current_user: User = Depends(get_current_user)):
+    """创建图关系（需登录）"""
     try:
         success = await graph_builder.create_relationship(
             request.from_entity,
