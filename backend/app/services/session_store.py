@@ -3,6 +3,7 @@
 配置 REDIS_URL 时使用 Redis，多进程与重启后会话不丢失；未配置则使用内存。
 """
 import json
+import re
 import uuid
 import logging
 from typing import Dict, List, Optional, Any
@@ -143,10 +144,21 @@ class RedisSessionStore:
             return []
 
 
+def _sanitize_redis_url(url: str) -> str:
+    """去掉 REDIS_URL 末尾可能因 .env 换行丢失而拼接上的下一行变量（如 6379COSYVOICE2_MODEL_PATH=）。"""
+    u = url.strip()
+    # 合法形式: redis://host:port 或 redis://host:port/db；若 port 后拼上了下一行 env，只保留合法部分
+    m = re.match(r"^(redis://[^:]*:\d+(?:/\d+)?)([A-Z_][A-Z0-9_]*=.*)?$", u, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return u
+
+
 def make_session_store(redis_url: Optional[str], session_timeout_hours: int = 2):
     """根据配置返回内存或 Redis 存储。未配置或 redis 未安装时使用内存。"""
     if not redis_url or not redis_url.strip():
         return MemorySessionStore()
+    redis_url = _sanitize_redis_url(redis_url)
     try:
         import redis  # noqa: F401
     except ImportError:
@@ -155,4 +167,4 @@ def make_session_store(redis_url: Optional[str], session_timeout_hours: int = 2)
         )
         return MemorySessionStore()
     ttl = max(3600, int(session_timeout_hours * 3600))
-    return RedisSessionStore(redis_url.strip(), default_ttl_seconds=ttl)
+    return RedisSessionStore(redis_url, default_ttl_seconds=ttl)
