@@ -9,6 +9,8 @@ import logging
 from app.core.prisma_client import get_prisma
 from app.core.database import SessionLocal
 from app.models.interaction import Interaction
+from app.models.user import User
+from app.api.auth import get_current_user
 from app.api.admin import _sync_attraction_to_graphrag, _get_prisma_model
 
 logger = logging.getLogger(__name__)
@@ -195,8 +197,8 @@ async def get_attraction(
 
 @router.post("", response_model=AttractionResponse)
 @router.post("/", response_model=AttractionResponse)
-async def create_attraction(attraction: AttractionCreate):
-    """创建景点（自动同步到 GraphRAG）"""
+async def create_attraction(attraction: AttractionCreate, current_user: User = Depends(get_current_user)):
+    """创建景点（自动同步到 GraphRAG），需登录。"""
     prisma = await get_prisma()
     created = await prisma.attraction.create(
         data={
@@ -246,8 +248,9 @@ async def create_attraction(attraction: AttractionCreate):
 async def update_attraction(
     attraction_id: int,
     attraction: AttractionUpdate,
+    current_user: User = Depends(get_current_user),
 ):
-    """更新景点（自动同步到 GraphRAG）"""
+    """更新景点（自动同步到 GraphRAG），需登录。"""
     prisma = await get_prisma()
     existing = await prisma.attraction.find_unique(where={"id": attraction_id})
     if not existing:
@@ -305,8 +308,8 @@ async def update_attraction(
     )
 
 @router.delete("/{attraction_id}")
-async def delete_attraction(attraction_id: int):
-    """删除景点（自动从 GraphRAG 删除）"""
+async def delete_attraction(attraction_id: int, current_user: User = Depends(get_current_user)):
+    """删除景点（自动从 GraphRAG 删除），需登录。"""
     prisma = await get_prisma()
     existing = await prisma.attraction.find_unique(where={"id": attraction_id})
     if not existing:

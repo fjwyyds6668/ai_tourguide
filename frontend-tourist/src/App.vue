@@ -269,6 +269,12 @@ html, body {
 .tourist-fade-leave-to {
   opacity: 0;
 }
+@media (max-width: 768px) {
+  .tourist-fade-enter-active,
+  .tourist-fade-leave-active {
+    transition-duration: 0.05s;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .tourist-fade-enter-active,
   .tourist-fade-leave-active { transition: none; }

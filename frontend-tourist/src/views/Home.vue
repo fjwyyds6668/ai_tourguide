@@ -1,6 +1,6 @@
 <template>
   <div class="home" :class="{ 'has-background': backgroundImageUrl }" :style="backgroundImageUrl ? { '--bg-image': `url(${backgroundImageUrl})` } : {}">
-    <el-card class="home-card">
+    <el-card class="home-card" :class="{ 'home-card-selected': selectedScenicId }">
       <template #header>
         <div class="card-header">
           <span>请选择您所在的景区</span>
@@ -108,11 +108,18 @@ onMounted(async () => {
   if (mainEl && !backgroundImageUrl.value) {
     mainEl.style.background = '#f5f7fa'
   }
-  // 空闲时预取语音导览页，点击时响应更快
+  // 移动端体验：尽早预取各页 chunk，减少点击后等待；并预加载默认数字人模型
+  const prefetch = () => {
+    import(/* webpackChunkName: "voice-guide" */ './VoiceGuide.vue').catch(() => {})
+    import(/* webpackChunkName: "attractions" */ './Attractions.vue').catch(() => {})
+    import(/* webpackChunkName: "history" */ './History.vue').catch(() => {})
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    fetch(`${origin}/sentio/characters/free/Mao/Mao.model3.json`).catch(() => {})
+  }
   if (typeof requestIdleCallback !== 'undefined') {
-    requestIdleCallback(() => {
-      import(/* webpackChunkName: "voice-guide" */ './VoiceGuide.vue').catch(() => {})
-    }, { timeout: 2000 })
+    requestIdleCallback(prefetch, { timeout: 150 })
+  } else {
+    setTimeout(prefetch, 150)
   }
 })
 
@@ -185,6 +192,17 @@ const navigateIfSelected = (path) => {
   background: #ffffff !important;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
   border-radius: 12px;
+  transition: background 0.25s ease, backdrop-filter 0.25s ease;
+}
+/* 选择景区后：主卡片半透明，透出背景图（Web + 移动端） */
+.home-card.home-card-selected {
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.home-card.home-card-selected :deep(.el-card__header),
+.home-card.home-card-selected :deep(.el-card__body) {
+  background: transparent !important;
 }
 
 .card-header {
@@ -209,19 +227,26 @@ const navigateIfSelected = (path) => {
     align-items: center !important;
   }
   .home-card {
-    width: calc(100% - 48px) !important; /* 左右各留 24px，更像中间一块小区域 */
-    max-width: 320px !important; /* 控制在语音导览板块大小 */
-    max-height: 52vh !important; /* 约半屏高，突出“一块区域” */
+    width: calc(100% - 48px) !important;
+    max-width: 320px !important;
+    max-height: 52vh !important;
     margin: 0 auto !important;
-    /* 白色更透明，背景图更明显 */
-    background: rgba(255, 255, 255, 0.48) !important;
-    backdrop-filter: blur(6px) !important;
-    -webkit-backdrop-filter: blur(6px) !important;
     display: flex !important;
     flex-direction: column !important;
     overflow: hidden !important;
     padding: 0 !important;
     border-radius: 14px !important;
+  }
+  /* 移动端：未选景区时卡片略透，选景区后更透、毛玻璃 */
+  .home-card:not(.home-card-selected) {
+    background: rgba(255, 255, 255, 0.85) !important;
+    backdrop-filter: blur(6px) !important;
+    -webkit-backdrop-filter: blur(6px) !important;
+  }
+  .home-card.home-card-selected {
+    background: rgba(255, 255, 255, 0.48) !important;
+    backdrop-filter: blur(8px) !important;
+    -webkit-backdrop-filter: blur(8px) !important;
   }
   .home-card :deep(.el-card__header) {
     padding: 10px 12px !important;

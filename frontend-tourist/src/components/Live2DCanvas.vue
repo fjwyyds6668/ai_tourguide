@@ -104,10 +104,9 @@ onMounted(() => {
     const w = canvas.clientWidth || canvas.offsetWidth || 0
     const h = canvas.clientHeight || canvas.offsetHeight || 0
     if (w >= 10 && h >= 10) {
-      requestAnimationFrame(doInit)
+      doInit()
       return
     }
-    // 移动端布局常稍晚就绪：用 ResizeObserver 在 canvas 有尺寸后立即初始化，减少“很久才出来”
     resizeObserver = new ResizeObserver(() => {
       const c = canvasRef.value
       if (!c || initDone) return
@@ -116,13 +115,12 @@ onMounted(() => {
       if (w2 >= 10 && h2 >= 10) doInit()
     })
     resizeObserver.observe(canvas)
-    // 兜底：若 1.5s 后仍无尺寸则尝试一次
     setTimeout(() => {
       if (initDone) return
       const w2 = canvas.clientWidth || canvas.offsetWidth || 0
       const h2 = canvas.clientHeight || canvas.offsetHeight || 0
       if (w2 >= 10 && h2 >= 10) doInit()
-    }, 1500)
+    }, 800)
   })
 })
 

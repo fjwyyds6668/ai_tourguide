@@ -38,6 +38,8 @@
       }
       #app-loading .text { margin-top: 12px; color: #606266; font-size: 14px; }
     </style>
+    <!-- 预加载默认数字人模型，进入语音导览时更快显示 -->
+    <link rel="preload" href="/sentio/characters/free/Mao/Mao.model3.json" as="fetch" crossorigin="">
     <!-- Live2D Core：同步加载保证移动端/扫码进入语音导览时数字人能正常显示 -->
     <script src="/sentio/core/live2dcubismcore.min.js"></script>
   </head>

@@ -1057,9 +1057,10 @@ async def _upload_items_to_graphrag(
 async def upload_knowledge(
     items: List[KnowledgeBaseItem],
     collection_name: str = "tour_knowledge",
-    build_graph: bool = True
+    build_graph: bool = True,
+    current_user: User = Depends(get_current_user),
 ):
-    """上传知识到 GraphRAG 并持久化到 PostgreSQL。"""
+    """上传知识到 GraphRAG 并持久化到 PostgreSQL，需登录。"""
     try:
         result = await _upload_items_to_graphrag(items, collection_name, build_graph)
         prisma = await get_prisma()
@@ -1111,7 +1112,7 @@ async def upload_knowledge(
 
 
 @router.get("/knowledge", response_model=List[KnowledgeBaseItem])
-async def list_knowledge():
+async def list_knowledge(current_user: User = Depends(get_current_user)):
     prisma = await get_prisma()
     rows = await prisma.knowledge.find_many(order={"id": "asc"}, take=1000)
     return [
@@ -1129,7 +1130,8 @@ async def update_knowledge(
     text_id: str,
     item: KnowledgeBaseItem,
     collection_name: str = "tour_knowledge",
-    build_graph: bool = True
+    build_graph: bool = True,
+    current_user: User = Depends(get_current_user),
 ):
     """更新知识库并同步 GraphRAG。"""
     if not settings.AUTO_UPDATE_GRAPH_RAG:
@@ -1159,7 +1161,8 @@ async def update_knowledge(
 @router.delete("/knowledge/{text_id}")
 async def delete_knowledge(
     text_id: str,
-    collection_name: str = "tour_knowledge"
+    collection_name: str = "tour_knowledge",
+    current_user: User = Depends(get_current_user),
 ):
     """删除知识库并清理 GraphRAG。"""
     if not settings.AUTO_UPDATE_GRAPH_RAG:
@@ -1453,7 +1456,7 @@ async def load_collection(
         raise HTTPException(status_code=500, detail=f"加载失败: {str(e)}")
 
 @router.post("/knowledge/import_attractions")
-async def import_attractions_to_graphrag(req: ImportAttractionsRequest):
+async def import_attractions_to_graphrag(req: ImportAttractionsRequest, current_user: User = Depends(get_current_user)):
     """
     从 PostgreSQL 的 attractions 表批量导入到：
     - Milvus（向量库）
