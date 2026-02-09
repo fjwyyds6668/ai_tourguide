@@ -72,30 +72,25 @@ function ensureLive2DCore() {
   })
 }
 
-let initRetryCount = 0
-const INIT_RETRY_MAX = 20
+let initDone = false
+let resizeObserver = null
 
 function doInit() {
   const canvas = canvasRef.value
-  if (!canvas) return
+  if (!canvas || initDone) return
   const w = canvas.clientWidth || canvas.offsetWidth || 0
   const h = canvas.clientHeight || canvas.offsetHeight || 0
-  if (w < 10 || h < 10) {
-    if (initRetryCount >= INIT_RETRY_MAX) {
-      console.warn('[Live2D] canvas 尺寸无效，已放弃初始化')
-      return
-    }
-    initRetryCount += 1
-    requestAnimationFrame(() => {
-      const w2 = canvas.clientWidth || canvas.offsetWidth || 0
-      const h2 = canvas.clientHeight || canvas.offsetHeight || 0
-      if (w2 >= 10 && h2 >= 10) doInit()
-      else setTimeout(doInit, 40)
-    })
-    return
+  if (w < 10 || h < 10) return
+  initDone = true
+  if (resizeObserver && canvasRef.value) {
+    try { resizeObserver.unobserve(canvasRef.value) } catch (_) {}
+    resizeObserver = null
   }
   const ok = LAppDelegate.getInstance().initialize()
-  if (!ok) return
+  if (!ok) {
+    initDone = false
+    return
+  }
   LAppDelegate.getInstance().run()
   loadCharacter()
   resizeHandler = () => LAppDelegate.getInstance().onResize()
@@ -103,9 +98,31 @@ function doInit() {
 }
 
 onMounted(() => {
-  // 减少等待帧数，加快移动端数字人出现
+  const canvas = canvasRef.value
+  if (!canvas) return
   ensureLive2DCore().then(() => {
-    requestAnimationFrame(doInit)
+    const w = canvas.clientWidth || canvas.offsetWidth || 0
+    const h = canvas.clientHeight || canvas.offsetHeight || 0
+    if (w >= 10 && h >= 10) {
+      requestAnimationFrame(doInit)
+      return
+    }
+    // 移动端布局常稍晚就绪：用 ResizeObserver 在 canvas 有尺寸后立即初始化，减少“很久才出来”
+    resizeObserver = new ResizeObserver(() => {
+      const c = canvasRef.value
+      if (!c || initDone) return
+      const w2 = c.clientWidth || c.offsetWidth || 0
+      const h2 = c.clientHeight || c.offsetHeight || 0
+      if (w2 >= 10 && h2 >= 10) doInit()
+    })
+    resizeObserver.observe(canvas)
+    // 兜底：若 1.5s 后仍无尺寸则尝试一次
+    setTimeout(() => {
+      if (initDone) return
+      const w2 = canvas.clientWidth || canvas.offsetWidth || 0
+      const h2 = canvas.clientHeight || canvas.offsetHeight || 0
+      if (w2 >= 10 && h2 >= 10) doInit()
+    }, 1500)
   })
 })
 
@@ -119,6 +136,10 @@ watch(
 
 onUnmounted(() => {
   if (resizeHandler) window.removeEventListener('resize', resizeHandler)
+  if (resizeObserver && canvasRef.value) {
+    try { resizeObserver.unobserve(canvasRef.value) } catch (_) {}
+    resizeObserver = null
+  }
   LAppDelegate.releaseInstance()
 })
 </script>

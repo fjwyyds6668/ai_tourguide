@@ -1078,8 +1078,9 @@ const triggerSpeakingMotion = () => {
   }
   .avatar-wrapper {
     flex: 0 0 auto;
-    min-height: 220px;
-    max-height: 40vh;
+    min-height: 280px;
+    height: 42vh;
+    max-height: 50vh;
   }
   .textarea-input :deep(.el-textarea__inner) {
     padding-right: 10px;
