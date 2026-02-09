@@ -117,9 +117,6 @@
           </el-input-group>
           <input ref="coverInputRef" type="file" accept="image/*" style="display: none" @change="onCoverUpload" />
         </el-form-item>
-        <el-form-item v-if="!scenicEditing" label="景区知识（可选）" prop="knowledge_text">
-          <el-input v-model="scenicForm.knowledge_text" type="textarea" :rows="5" placeholder="输入景区相关的知识内容..." />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="scenicVisible = false">取消</el-button>
@@ -194,7 +191,6 @@ const scenicForm = reactive({
   location: '',
   description: '',
   cover_image_url: '',
-  knowledge_text: '',
 })
 const knowledgeForm = reactive({ text_id: '', text: '' })
 const knowledgeRules = { text: [{ required: true, message: '请输入知识内容', trigger: 'blur' }] }
@@ -292,10 +288,9 @@ const openScenicModal = (edit) => {
       location: edit.location,
       description: edit.description,
       cover_image_url: edit.cover_image_url,
-      knowledge_text: '',
     })
   } else {
-    Object.assign(scenicForm, { name: '', location: '', description: '', cover_image_url: '', knowledge_text: '' })
+    Object.assign(scenicForm, { name: '', location: '', description: '', cover_image_url: '' })
   }
   scenicVisible.value = true
 }
@@ -319,29 +314,15 @@ const submitScenic = async () => {
   await scenicFormRef.value?.validate().catch(() => {})
   loading.value = true
   try {
-    const { knowledge_text, ...rest } = scenicForm
     if (scenicEditing.value?.id) {
-      await api.put(`/admin/scenic-spots/${scenicEditing.value.id}`, rest)
+      await api.put(`/admin/scenic-spots/${scenicEditing.value.id}`, scenicForm)
       ElMessage.success('更新成功')
       scenicVisible.value = false
       await loadScenicSpots(scenicEditing.value.id)
     } else {
-      const res = await api.post('/admin/scenic-spots', rest)
+      const res = await api.post('/admin/scenic-spots', scenicForm)
       const newId = res.data?.id
-      if (knowledge_text?.trim() && newId) {
-        try {
-          await api.post(
-            `/admin/scenic-spots/${newId}/knowledge/upload`,
-            [{ text: knowledge_text.trim(), text_id: `kb_${Date.now()}`, metadata: {} }],
-            { timeout: 120000 }
-          )
-          ElMessage.success('景区和知识创建成功')
-        } catch (err) {
-          ElMessage.warning('景区创建成功，但知识上传失败：' + (err.response?.data?.detail || err.message))
-        }
-      } else {
-        ElMessage.success('创建成功')
-      }
+      ElMessage.success('创建成功')
       scenicVisible.value = false
       await loadScenicSpots(newId || null)
     }

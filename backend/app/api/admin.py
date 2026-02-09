@@ -295,7 +295,7 @@ async def create_scenic_spot(req: ScenicSpotCreateRequest, current_user: User = 
 
     prisma = await get_prisma()
     scenic_model = _get_prisma_model(prisma, "scenicspot", "scenicSpot")
-
+    
     created = await scenic_model.create(
         data={
             "name": req.name,
@@ -304,6 +304,46 @@ async def create_scenic_spot(req: ScenicSpotCreateRequest, current_user: User = 
             "coverImageUrl": req.cover_image_url,
         }
     )
+
+    # 若填写了“简介”，则自动将简介作为该景区的首条知识上传到向量库和图数据库，
+    # 避免前端再额外填一遍“景区知识”字段。
+    if (created.description or "").strip():
+        intro_text = str(created.description).strip()
+        text_id = f"scenic_intro_{created.id}"
+        item = KnowledgeBaseItem(
+            text=intro_text,
+            text_id=text_id,
+            metadata={"source": "scenic_intro"},
+            scenic_spot_id=created.id,
+        )
+        collection_name = settings.GRAPHRAG_COLLECTION_NAME or "tour_knowledge"
+        try:
+            await _upload_items_to_graphrag(
+                [item],
+                collection_name=collection_name,
+                build_graph=True,
+                scenic_name_override=str(created.name),
+            )
+            meta_str = _serialize_metadata(item.metadata)
+            await prisma.knowledge.upsert(
+                where={"textId": text_id},
+                data={
+                    "create": {
+                        "textId": text_id,
+                        "text": intro_text,
+                        "metadata": meta_str,
+                        "scenicSpotId": created.id,
+                    },
+                    "update": {
+                        "text": intro_text,
+                        "metadata": meta_str,
+                        "scenicSpotId": created.id,
+                    },
+                },
+            )
+        except Exception as e:
+            logger.error(f"自动将景区简介同步到 GraphRAG 失败 scenic_spot_id={created.id}: {e}", exc_info=True)
+
     return ScenicSpotResponse(
         id=created.id,
         name=created.name,
