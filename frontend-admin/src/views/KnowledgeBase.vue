@@ -75,10 +75,36 @@
               <el-empty v-if="!knowledgeData.length && !loading" description="暂无知识，可点击「添加知识」上传" />
             </el-tab-pane>
             <el-tab-pane label="景点" :disabled="!selectedScenicId">
-              <div style="margin-bottom: 16px">
+              <div style="margin-bottom: 16px; display: flex; gap: 8px;">
                 <el-button type="primary" :icon="Plus" @click="openAttractionModal">添加景点</el-button>
+                <el-popconfirm
+                  title="确定要删除选中的景点吗？"
+                  confirm-button-text="删除"
+                  cancel-button-text="取消"
+                  @confirm="deleteSelectedAttractions"
+                >
+                  <template #reference>
+                    <el-button type="danger" :disabled="!selectedAttractionRows.length">删除所选景点</el-button>
+                  </template>
+                </el-popconfirm>
+                <el-popconfirm
+                  title="确定要删除当前景区的全部景点吗？"
+                  confirm-button-text="删除全部"
+                  cancel-button-text="取消"
+                  @confirm="deleteAllAttractions"
+                >
+                  <template #reference>
+                    <el-button type="danger" :disabled="!attractionsData.length">删除全部景点</el-button>
+                  </template>
+                </el-popconfirm>
               </div>
-              <el-table :data="attractionsData" v-loading="loading" row-key="id">
+              <el-table
+                :data="attractionsData"
+                v-loading="loading"
+                row-key="id"
+                @selection-change="onAttractionSelectionChange"
+              >
+                <el-table-column type="selection" width="40" />
                 <el-table-column prop="id" label="ID" width="80" />
                 <el-table-column prop="name" label="名称" />
                 <el-table-column label="操作" width="100">
@@ -182,6 +208,7 @@ const knowledgeVisible = ref(false)
 const knowledgeFormRef = ref(null)
 const knowledgeData = ref([])
 const attractionsData = ref([])
+const selectedAttractionRows = ref([])
 const attractionVisible = ref(false)
 const attractionFormRef = ref(null)
 const attractionImageRef = ref(null)
@@ -239,6 +266,7 @@ const loadScenicAttractions = async (scenicId) => {
   try {
     const res = await api.get(`/admin/scenic-spots/${scenicId}/attractions`)
     attractionsData.value = res.data || []
+    selectedAttractionRows.value = []
   } catch (e) {
     attractionsData.value = []
   } finally {
@@ -439,9 +467,45 @@ const deleteAttraction = async (row) => {
   try {
     await api.delete(`/admin/attractions/${row.id}`)
     ElMessage.success('删除成功')
-    loadScenicAttractions(selectedScenicId.value)
+    await loadScenicAttractions(selectedScenicId.value)
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '删除失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const onAttractionSelectionChange = (rows) => {
+  selectedAttractionRows.value = rows || []
+}
+
+const deleteSelectedAttractions = async () => {
+  if (!selectedAttractionRows.value.length) return
+  loading.value = true
+  try {
+    await Promise.all(
+      selectedAttractionRows.value.map((row) => api.delete(`/admin/attractions/${row.id}`))
+    )
+    ElMessage.success('已删除所选景点')
+    await loadScenicAttractions(selectedScenicId.value)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除所选景点失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const deleteAllAttractions = async () => {
+  if (!attractionsData.value.length) return
+  loading.value = true
+  try {
+    await Promise.all(
+      attractionsData.value.map((row) => api.delete(`/admin/attractions/${row.id}`))
+    )
+    ElMessage.success('已删除全部景点')
+    await loadScenicAttractions(selectedScenicId.value)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除全部景点失败')
   } finally {
     loading.value = false
   }
