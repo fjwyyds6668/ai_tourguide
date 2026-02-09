@@ -436,7 +436,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                     "character_prompt": character_prompt,
                     "use_rag": request.use_rag,
                     "rag_debug": rag_debug,
-                    "final_answer_preview": (full_answer or "")[:400],
+                    "final_answer_preview": (full_answer or "")[:2000],
                 }
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")

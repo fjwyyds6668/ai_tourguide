@@ -1790,7 +1790,7 @@ class RAGService:
                     "character_prompt": character_prompt,
                     "use_rag": use_rag,
                     "rag_debug": rag_debug,
-                    "final_answer_preview": answer[:400] if answer else "",
+                    "final_answer_preview": answer[:2000] if answer else "",
                 }
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")

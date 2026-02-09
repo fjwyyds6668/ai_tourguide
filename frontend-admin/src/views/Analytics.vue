@@ -155,23 +155,34 @@ const fetchAnalytics = async (silent = false) => {
 let refreshTimer = null
 let visibilityHandler = null
 
+function startPolling() {
+  if (refreshTimer) return
+  refreshTimer = setInterval(() => fetchAnalytics(true), 5000)
+}
+function stopPolling() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
+
 onMounted(() => {
   fetchAnalytics(false) // 首次加载显示 loading
-  // 每5秒静默刷新，不触发 loading，避免页面闪烁、减少后端日志刷屏
-  refreshTimer = setInterval(() => fetchAnalytics(true), 5000)
+  // 仅在前台时每 5 秒静默刷新，避免后台标签页持续请求
+  if (document.visibilityState === 'visible') startPolling()
   visibilityHandler = () => {
     if (document.visibilityState === 'visible') {
       fetchAnalytics(true)
+      startPolling()
+    } else {
+      stopPolling()
     }
   }
   document.addEventListener('visibilitychange', visibilityHandler)
 })
 
 onUnmounted(() => {
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
-  }
+  stopPolling()
   if (visibilityHandler) {
     document.removeEventListener('visibilitychange', visibilityHandler)
     visibilityHandler = null
