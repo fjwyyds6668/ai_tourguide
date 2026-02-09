@@ -6,7 +6,7 @@ import json
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, func, text
 from typing import List, Optional
 from app.core.database import get_db
 from app.models.interaction import Interaction
@@ -27,7 +27,6 @@ router = APIRouter()
 
 
 def _get_prisma_model(prisma, *candidate_names: str):
-    """兼容 prisma-client-py 的 model 名（scenicspot / scenicSpot）。"""
     for name in candidate_names:
         if hasattr(prisma, name):
             return getattr(prisma, name)
@@ -62,7 +61,6 @@ async def upload_image(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
 ):
-    """上传图片，返回 /uploads/images/xxx URL。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可上传")
 
@@ -248,7 +246,6 @@ async def list_scenic_spots(
     skip: int = 0,
     limit: int = 200,
 ):
-    """景区列表（含景点数/知识数）。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
 
@@ -295,7 +292,6 @@ async def list_scenic_spots(
 
 @router.post("/scenic-spots", response_model=ScenicSpotResponse)
 async def create_scenic_spot(req: ScenicSpotCreateRequest, current_user: User = Depends(get_current_user)):
-    """创建景区。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
 
@@ -327,7 +323,6 @@ async def update_scenic_spot(
     req: ScenicSpotUpdateRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """更新景区。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
 
@@ -609,7 +604,6 @@ async def create_scenic_spot_attraction(
     req: AttractionAdminCreateRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """在指定景区下创建景点并同步 GraphRAG。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     prisma = await get_prisma()
@@ -699,7 +693,6 @@ async def update_attraction_admin(
 
 @router.delete("/attractions/{attraction_id}")
 async def delete_attraction_admin(attraction_id: int, current_user: User = Depends(get_current_user)):
-    """删除景点并清理 GraphRAG。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     prisma = await get_prisma()
@@ -1060,7 +1053,6 @@ async def upload_knowledge(
     build_graph: bool = True,
     current_user: User = Depends(get_current_user),
 ):
-    """上传知识到 GraphRAG 并持久化到 PostgreSQL，需登录。"""
     try:
         result = await _upload_items_to_graphrag(items, collection_name, build_graph)
         prisma = await get_prisma()
@@ -1133,7 +1125,6 @@ async def update_knowledge(
     build_graph: bool = True,
     current_user: User = Depends(get_current_user),
 ):
-    """更新知识库并同步 GraphRAG。"""
     if not settings.AUTO_UPDATE_GRAPH_RAG:
         raise HTTPException(status_code=400, detail="GraphRAG 自动更新已禁用")
     
@@ -1164,7 +1155,6 @@ async def delete_knowledge(
     collection_name: str = "tour_knowledge",
     current_user: User = Depends(get_current_user),
 ):
-    """删除知识库并清理 GraphRAG。"""
     if not settings.AUTO_UPDATE_GRAPH_RAG:
         raise HTTPException(status_code=400, detail="GraphRAG 自动更新已禁用")
     
@@ -1511,7 +1501,6 @@ async def import_attractions_to_graphrag(req: ImportAttractionsRequest, current_
 
 
 def _read_rag_logs_sync(limit: int = 5) -> List[Dict[str, Any]]:
-    """同步读取 RAG 日志文件最后若干条，供 dashboard 或 run_in_executor 使用。"""
     logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
     log_path = os.path.join(logs_dir, "rag_context.log")
     if not os.path.exists(log_path):
@@ -1542,9 +1531,17 @@ def _read_rag_logs_sync(limit: int = 5) -> List[Dict[str, Any]]:
 
 
 def _fetch_interaction_analytics(db: Session, skip: int = 0, limit: int = 100) -> Dict[str, Any]:
-    """查询交互统计与最近记录，供 dashboard 使用。"""
-    interactions = db.query(Interaction).order_by(desc(Interaction.id)).offset(skip).limit(limit).all()
-    total = db.query(Interaction).count()
+    total_col = func.count(Interaction.id).over().label("_total")
+    rows = (
+        db.query(Interaction)
+        .add_columns(total_col)
+        .order_by(desc(Interaction.id))
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    total = int(rows[0][1]) if rows else 0
+    interactions = [row[0] for row in rows]
     by_type = {}
     for interaction in interactions:
         itype = interaction.interaction_type or "unknown"
@@ -1553,7 +1550,6 @@ def _fetch_interaction_analytics(db: Session, skip: int = 0, limit: int = 100) -
 
 
 def _fetch_popular_attractions(db: Session, limit: int = 5) -> Dict[str, Any]:
-    """查询热门景点统计，供 dashboard 使用。"""
     from sqlalchemy import func
     from app.models.attraction import Attraction
     popular = (
@@ -1582,7 +1578,6 @@ async def get_analytics_dashboard(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """一次返回 RAG 日志、交互列表、热门景点，供数据分析页单次请求。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可查看")
     loop = asyncio.get_event_loop()
@@ -1598,13 +1593,15 @@ async def get_analytics_dashboard(
 
 @router.get("/stats", response_model=DashboardStatsResponse)
 async def get_dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """仪表盘统计（来自真实数据库，需登录）"""
     try:
-        from app.models.attraction import Attraction
-
-        total_users = db.query(User).count()
-        attractions_count = db.query(Attraction).count()
-        interactions_count = db.query(Interaction).count()
+        row = db.execute(
+            text(
+                "SELECT (SELECT COUNT(*) FROM users) AS u, (SELECT COUNT(*) FROM attractions) AS a, (SELECT COUNT(*) FROM interactions) AS i"
+            )
+        ).fetchone()
+        total_users = int(row[0] or 0)
+        attractions_count = int(row[1] or 0)
+        interactions_count = int(row[2] or 0)
 
         return DashboardStatsResponse(
             total_users=total_users,
@@ -1623,7 +1620,6 @@ async def upload_admin_avatar(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """管理员上传头像（保存到本地并写入 users.avatar_url）"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可上传头像")
 
@@ -1700,7 +1696,6 @@ def _get_env_file_path():
 async def get_tts_config(
     current_user: User = Depends(get_current_user),
 ):
-    """获取TTS配置（仅管理员，从.env文件实时读取）"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可查看配置")
     
@@ -1760,7 +1755,7 @@ async def update_tts_config(
     req: TTSConfigUpdateRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """更新TTS配置（仅管理员，需要重启服务才能生效）"""
+    """更新 TTS 配置，需重启服务生效"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可修改配置")
     

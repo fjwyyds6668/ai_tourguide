@@ -1,6 +1,4 @@
-"""
-景点相关 API
-"""
+"""景点 API"""
 import time
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from typing import List, Optional
@@ -17,10 +15,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# 景区列表短期缓存（变更少，减少数据库查询）
+# 景区列表 60s 缓存
 _scenic_spots_cache: Optional[list] = None
 _scenic_spots_cache_time: float = 0
-SCENIC_SPOTS_CACHE_TTL = 60  # 秒
+SCENIC_SPOTS_CACHE_TTL = 60
 
 class AttractionResponse(BaseModel):
     id: int
@@ -70,7 +68,6 @@ async def get_attractions(
     category: Optional[str] = None,
     scenic_spot_id: Optional[int] = None,
 ):
-    """获取景点列表（游客端/管理端通用）"""
     prisma = await get_prisma()
     where: dict = {}
     if category:
@@ -101,10 +98,6 @@ async def get_attractions(
 
 @router.get("/scenic-spots", response_model=List[ScenicSpotPublic])
 async def list_scenic_spots_public():
-    """
-    游客端使用的景区列表（只返回 id + name，用于按景区筛选景点）。
-    使用短期内存缓存减少数据库查询。
-    """
     global _scenic_spots_cache, _scenic_spots_cache_time
     now = time.monotonic()
     if _scenic_spots_cache is not None and (now - _scenic_spots_cache_time) < SCENIC_SPOTS_CACHE_TTL:
@@ -127,8 +120,7 @@ async def list_scenic_spots_public():
 
 @router.get("/recommendations/{user_id}")
 async def get_recommendations(user_id: int, limit: int = 5):
-    """获取个性化推荐（基于用户交互历史）"""
-    # TODO: 实现基于图数据库的推荐算法
+    # TODO: 基于图数据库的推荐
     prisma = await get_prisma()
     rows = await prisma.attraction.find_many(take=limit, order={"id": "asc"})
     return {
@@ -151,7 +143,6 @@ async def get_recommendations(user_id: int, limit: int = 5):
 
 
 def _record_attraction_visit(attraction_id: int, session_id: Optional[str] = None) -> None:
-    """在后台线程中记录一次景点详情页访问（用于热门景点统计）。"""
     try:
         db = SessionLocal()
         try:
@@ -173,13 +164,11 @@ async def get_attraction(
     background_tasks: BackgroundTasks,
     session_id: Optional[str] = None,
 ):
-    """获取单个景点详情。可选传 session_id 以关联会话；会记录一次详情页访问用于热门统计。"""
     prisma = await get_prisma()
     r = await prisma.attraction.find_unique(where={"id": attraction_id})
     if not r:
         raise HTTPException(status_code=404, detail="Attraction not found")
 
-    # 记录一次访问（用于热门景点统计），不阻塞响应
     background_tasks.add_task(_record_attraction_visit, attraction_id, session_id)
 
     return AttractionResponse(
@@ -198,7 +187,6 @@ async def get_attraction(
 @router.post("", response_model=AttractionResponse)
 @router.post("/", response_model=AttractionResponse)
 async def create_attraction(attraction: AttractionCreate, current_user: User = Depends(get_current_user)):
-    """创建景点（自动同步到 GraphRAG），需登录。"""
     prisma = await get_prisma()
     created = await prisma.attraction.create(
         data={
@@ -229,8 +217,6 @@ async def create_attraction(attraction: AttractionCreate, current_user: User = D
         await _sync_attraction_to_graphrag(attraction_dict, operation="upsert")
     except Exception as e:
         logger.error(f"自动同步景点到 GraphRAG 失败: {e}", exc_info=True)
-        # 不抛出异常，避免影响主流程
-    
     return AttractionResponse(
         id=created.id,
         name=created.name,
@@ -250,7 +236,6 @@ async def update_attraction(
     attraction: AttractionUpdate,
     current_user: User = Depends(get_current_user),
 ):
-    """更新景点（自动同步到 GraphRAG），需登录。"""
     prisma = await get_prisma()
     existing = await prisma.attraction.find_unique(where={"id": attraction_id})
     if not existing:
@@ -292,8 +277,6 @@ async def update_attraction(
         await _sync_attraction_to_graphrag(attraction_dict, operation="upsert")
     except Exception as e:
         logger.error(f"自动同步景点到 GraphRAG 失败: {e}", exc_info=True)
-        # 不抛出异常，避免影响主流程
-    
     return AttractionResponse(
         id=updated.id,
         name=updated.name,
@@ -309,7 +292,6 @@ async def update_attraction(
 
 @router.delete("/{attraction_id}")
 async def delete_attraction(attraction_id: int, current_user: User = Depends(get_current_user)):
-    """删除景点（自动从 GraphRAG 删除），需登录。"""
     prisma = await get_prisma()
     existing = await prisma.attraction.find_unique(where={"id": attraction_id})
     if not existing:
@@ -334,7 +316,5 @@ async def delete_attraction(attraction_id: int, current_user: User = Depends(get
         await _sync_attraction_to_graphrag(attraction_dict, operation="delete")
     except Exception as e:
         logger.error(f"自动从 GraphRAG 删除景点失败: {e}", exc_info=True)
-        # 不抛出异常，避免影响主流程
-    
     return {"message": "Attraction deleted successfully"}
 

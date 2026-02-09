@@ -36,7 +36,7 @@ class GenerateRequest(BaseModel):
     session_id: Optional[str] = None
     character_id: Optional[int] = None
     use_rag: bool = True
-    scenic_name: Optional[str] = None  # 用户选择的景区名称，用于指代消解（如「这个景区」）
+    scenic_name: Optional[str] = None  # 指代消解用
 
 class GenerateResponse(BaseModel):
     answer: str
@@ -46,7 +46,6 @@ class GenerateResponse(BaseModel):
 
 
 def _resolve_session_id(request: GenerateRequest) -> str:
-    """根据请求解析或创建 session_id，供 /generate 与 /generate-stream 共用。"""
     if request.session_id:
         session = session_service.get_session(request.session_id)
         if session:
@@ -55,7 +54,6 @@ def _resolve_session_id(request: GenerateRequest) -> str:
 
 
 async def _load_character_prompt_and_voice(character_id: Optional[int]) -> Tuple[Optional[str], Optional[str]]:
-    """一次查询角色，返回 (prompt, voice)，供 /generate 与 /generate-stream 共用，避免重复查库。"""
     if not character_id:
         return None, None
     try:
@@ -71,6 +69,35 @@ async def _load_character_prompt_and_voice(character_id: Optional[int]) -> Tuple
         return None, None
 
 
+# 景点名匹配缓存 60s
+_attraction_id_name_cache: Optional[List[Tuple[int, str]]] = None
+_attraction_cache_time: float = 0
+_ATTRACTION_CACHE_TTL = 60.0
+
+
+def _get_attraction_id_name_list() -> List[Tuple[int, str]]:
+    global _attraction_id_name_cache, _attraction_cache_time
+    now = time.time()
+    if _attraction_id_name_cache is not None and (now - _attraction_cache_time) < _ATTRACTION_CACHE_TTL:
+        return _attraction_id_name_cache
+    from app.core.database import SessionLocal
+    from app.models.attraction import Attraction as AttractionModel
+    db_local = SessionLocal()
+    try:
+        rows = (
+            db_local.query(AttractionModel.id, AttractionModel.name)
+            .filter(AttractionModel.name.isnot(None), AttractionModel.name != "")
+            .limit(200)
+            .all()
+        )
+        out = [(row[0], row[1] if len(row) > 1 else "") for row in rows]
+        _attraction_id_name_cache = out
+        _attraction_cache_time = now
+        return out
+    finally:
+        db_local.close()
+
+
 def _save_interaction(
     session_id: str,
     character_id: Optional[int],
@@ -78,7 +105,6 @@ def _save_interaction(
     response_text: str,
     primary_attraction_id: Optional[int],
 ) -> None:
-    """保存交互记录到数据库；未返回景点 ID 时按问题文本尝试匹配景点名。供 /generate 与 /generate-stream 共用。"""
     try:
         from app.core.database import SessionLocal
         from app.models.attraction import Attraction as AttractionModel
@@ -87,16 +113,9 @@ def _save_interaction(
             aid = primary_attraction_id
             if aid is None and query_text and query_text.strip():
                 q = query_text.strip()
-                rows = (
-                    db_local.query(AttractionModel.id, AttractionModel.name)
-                    .filter(AttractionModel.name.isnot(None), AttractionModel.name != "")
-                    .limit(200)
-                    .all()
-                )
-                for row in rows:
-                    name = row[1] if len(row) > 1 else None
+                for rid, name in _get_attraction_id_name_list():
                     if name and name in q:
-                        aid = row[0]
+                        aid = rid
                         break
             interaction = Interaction(
                 session_id=session_id,
@@ -116,7 +135,6 @@ def _save_interaction(
 
 @router.post("/search", response_model=QueryResponse)
 async def hybrid_search(request: QueryRequest):
-    """混合检索"""
     try:
         results = await rag_service.hybrid_search(request.query, top_k=request.top_k)
         return QueryResponse(**results)
@@ -125,7 +143,6 @@ async def hybrid_search(request: QueryRequest):
 
 @router.post("/vector-search")
 async def vector_search(request: QueryRequest):
-    """向量搜索"""
     try:
         results = await rag_service.vector_search(request.query, top_k=request.top_k)
         return {"results": results}
@@ -134,7 +151,6 @@ async def vector_search(request: QueryRequest):
 
 @router.post("/graph-search")
 async def graph_search(entity_name: str, relation_type: str = None, limit: int = 10):
-    """图搜索"""
     try:
         results = await rag_service.graph_search(entity_name, relation_type, limit)
         return {"results": results}
@@ -143,7 +159,6 @@ async def graph_search(entity_name: str, relation_type: str = None, limit: int =
 
 @router.post("/generate", response_model=GenerateResponse)
 async def generate_answer(request: GenerateRequest, background_tasks: BackgroundTasks):
-    """生成回答（RAG + 多轮对话）。"""
     try:
         session_id = _resolve_session_id(request)
         (character_prompt, _), conversation_history = await asyncio.gather(
@@ -186,7 +201,6 @@ async def generate_answer(request: GenerateRequest, background_tasks: Background
 
 @router.post("/generate-stream")
 async def generate_answer_stream(request: GenerateRequest, background_tasks: BackgroundTasks):
-    """流式生成回答（SSE），文本与 TTS 同步输出"""
     async def generate_stream() -> AsyncGenerator[str, None]:
         session_id = _resolve_session_id(request)
         (character_prompt, voice), conversation_history = await asyncio.gather(
@@ -196,7 +210,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
         if not voice:
             voice = settings.XFYUN_VOICE
         
-        # 执行 RAG 检索（与 generate_answer 一致：寒暄/你是谁等不检索，直接简短回复）
         rag_results = None
         primary_attraction_id = None
         context = ""
@@ -218,13 +231,11 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                     logger.error(f"RAG search failed: {e}")
                     rag_results = {"errors": {"rag_search": str(e)}}
         
-        # 准备 LLM 消息（与 rag_service.generate_answer 共用系统提示）
         if character_prompt:
             system_prompt = f"{RAG_BASE_SYSTEM_PROMPT}\n\n角色设定：{character_prompt}"
         else:
             system_prompt = RAG_BASE_SYSTEM_PROMPT
 
-        # 是否在后端做 TTS（科大讯飞或本地 CosyVoice2），边生成边合成
         backend_tts_enabled = bool(settings.XFYUN_APPID and settings.XFYUN_API_KEY) or settings.LOCAL_TTS_ENABLED
         
         messages = [{"role": "system", "content": system_prompt}]
@@ -238,13 +249,11 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
 请基于以上信息回答用户的问题。"""
         messages.append({"role": "user", "content": user_prompt})
         
-        # 流式调用 LLM
         try:
             if not rag_service.llm_client:
                 yield f"data: {json.dumps({'type': 'error', 'content': 'AI服务未配置'}, ensure_ascii=False)}\n\n"
                 return
             
-            # 使用流式 API
             stream = rag_service.llm_client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
                 messages=messages,
@@ -256,11 +265,11 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             full_answer = ""
             accumulated_text = ""
             completed_audio: Dict[int, str] = {}
-            fallback_tts: Dict[int, str] = {}  # 后端 TTS 失败时，按句回退为 tts 文本给前端合成
+            fallback_tts: Dict[int, str] = {}  # TTS 失败时回退为文本由前端合成
             next_audio_idx = 0
             tts_chunk_index = [0]
             MIN_TTS_CHARS = 12
-            TTS_SENTENCE_TIMEOUT = 25  # 单句合成超时（秒），避免某句卡住拖死整段
+            TTS_SENTENCE_TIMEOUT = 25  # 单句 TTS 超时(秒)
             
             async def synthesize_and_store(idx: int, original_txt: str) -> None:
                 txt = _normalize_tts_text(original_txt)
@@ -314,19 +323,13 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                     if b64:
                         yield f"data: {json.dumps({'type': 'audio', 'content': b64}, ensure_ascii=False)}\n\n"
                     else:
-                        # 后端合成失败，按句回退：发 tts 文本让前端 POST 合成
                         if idx in fallback_tts:
                             text = fallback_tts.pop(idx)
                             if text:
                                 yield f"data: {json.dumps({'type': 'tts', 'content': text}, ensure_ascii=False)}\n\n"
             
-            # 发送 session_id
             yield f"data: {json.dumps({'type': 'session_id', 'content': session_id}, ensure_ascii=False)}\n\n"
-            
-            # 发送 primary_attraction_id（用于后续保存交互）
             yield f"data: {json.dumps({'type': 'attraction_id', 'content': primary_attraction_id}, ensure_ascii=False)}\n\n"
-            
-            # 用队列 + 后台消费 stream，主循环每 50ms 检查一次：有 chunk 就处理并 yield 文本，无 chunk 就 drain 已就绪的音频并 yield，实现「边出字边出声音」
             chunk_queue: asyncio.Queue = asyncio.Queue()
             loop = asyncio.get_event_loop()
             stream_sentinel = object()
@@ -387,11 +390,9 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                         
                         yield f"data: {json.dumps({'type': 'text', 'content': content}, ensure_ascii=False)}\n\n"
                 
-                # 每处理完一个 chunk 或超时都 drain 已就绪的音频，实现边出字边播放
                 for ev in drain_audio():
                     yield ev
             
-            # 剩余累积文本
             if accumulated_text.strip():
                 if backend_tts_enabled:
                     idx = tts_chunk_index[0]
@@ -400,7 +401,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 else:
                     yield f"data: {json.dumps({'type': 'tts', 'content': accumulated_text.strip()}, ensure_ascii=False)}\n\n"
             
-            # 先写入 RAG 日志并保存交互，管理端可立即看到更新（不必等 TTS 全部播完）
             try:
                 rag_debug: Optional[Dict[str, Any]] = None
                 if request.use_rag:
@@ -465,7 +465,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 ),
             )
             
-            # 等待所有 TTS 完成并持续 drain 音频（边等边 yield，用户能边听）
             wait_start = time.monotonic()
             while next_audio_idx < tts_chunk_index[0] or completed_audio:
                 if time.monotonic() - wait_start > 60:
@@ -475,7 +474,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 for ev in drain_audio():
                     yield ev
             
-            # 发送完成信号
             yield f"data: {json.dumps({'type': 'done', 'content': full_answer}, ensure_ascii=False)}\n\n"
             
         except Exception as e:
