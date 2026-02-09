@@ -190,6 +190,9 @@ onMounted(async () => {
   .search-row .search-input {
     width: 100%;
   }
+  .search-row .search-input :deep(.el-input__inner) {
+    font-size: 16px;
+  }
 }
 
 .card-title {

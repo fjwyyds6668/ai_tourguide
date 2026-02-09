@@ -1086,6 +1086,7 @@ const triggerSpeakingMotion = () => {
     padding-right: 10px;
     padding-bottom: 56px;
     min-height: 80px;
+    font-size: 16px; /* 移动端 ≥16px 配合 viewport 避免聚焦时被放大 */
   }
   .input-buttons {
     gap: 6px;
