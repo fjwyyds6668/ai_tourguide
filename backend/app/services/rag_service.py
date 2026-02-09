@@ -1112,6 +1112,14 @@ class RAGService:
         graph_depth = strategy["graph_depth"]
         
         logger.debug(f"查询意图: {intent.value}, top_k={effective_top_k}, threshold={effective_threshold}, graph_depth={graph_depth}")
+
+        # 票务/价格类问题标记，用于避免误扩展景点一簇上下文
+        is_ticket_query = bool(
+            re.search(
+                r"门票|票价|成人票|学生票|半票|优惠票|年卡|票多少钱|票多钱|票多少",
+                (query or "").strip(),
+            )
+        )
         
         # 指代消解 / 景区上下文：优先用用户选择的景区名，其次从对话历史提取；有景区时始终用于增强检索
         resolved_entities: List[str] = []
@@ -1352,13 +1360,26 @@ class RAGService:
                         enhanced_results = scenic_ctx + "\n\n" + (enhanced_results or "")
                         scenic_ctx_found = True
                         break
-        # 非扩展类意图且未扩展时，添加单景点簇信息
-        if (not should_expand) and primary_attraction_id is not None and not (query_about_scenic and scenic_ctx_found):
+        # 非扩展类意图且未扩展时，添加单景点簇信息。
+        # 但对于明显的票务/价格类问题（is_ticket_query=True），避免误注入与票价无关的景点一簇，
+        # 以免干扰 LLM 聚焦景区级 ticket_info/优惠信息。
+        if (
+            not should_expand
+            and primary_attraction_id is not None
+            and not (query_about_scenic and scenic_ctx_found)
+            and not is_ticket_query
+        ):
             cluster_ctx = await self._get_attraction_cluster_context([primary_attraction_id], max_items=1)
             if cluster_ctx:
                 enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
-        # 向量未命中景点 ID 时，用实体名或从问句显式抽取的景点名在图里查 Attraction，补上景点一簇（如「介绍一下忘忧谷」）
-        if (not should_expand) and primary_attraction_id is None and not (query_about_scenic and scenic_ctx_found):
+        # 向量未命中景点 ID 时，用实体名或从问句显式抽取的景点名在图里查 Attraction，补上景点一簇（如「介绍一下忘忧谷」）。
+        # 对票务类问题同样跳过这一兜底逻辑，避免在「有学生票吗」「成人票多少钱」时扩展无关景点簇。
+        if (
+            not should_expand
+            and primary_attraction_id is None
+            and not (query_about_scenic and scenic_ctx_found)
+            and not is_ticket_query
+        ):
             # 优先用「介绍/详情/说说 + 景点名」显式抽取的候选，再试实体名，避免 jieba 未切出忘忧谷
             intro_candidates = self._extract_attraction_candidates_from_query(query)
             names_to_try = list(dict.fromkeys([n.strip() for n in intro_candidates if n and n.strip()]))
