@@ -1005,9 +1005,10 @@ const triggerSpeakingMotion = () => {
 
 .conversation-list {
   flex: 1 1 auto;
-  /* 只在对话列表内部滚动 */
   overflow-y: auto;
   padding: 10px;
+  /* 移动端：iOS 惯性滚动更顺滑 */
+  -webkit-overflow-scrolling: touch;
 }
 
 .message-item {
@@ -1015,6 +1016,9 @@ const triggerSpeakingMotion = () => {
   padding: 10px 12px;
   border-radius: 10px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  /* 移动端：长列表时减少离屏项布局计算 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
 }
 
 .message-item.user {

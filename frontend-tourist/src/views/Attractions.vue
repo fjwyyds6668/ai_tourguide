@@ -67,7 +67,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Picture } from '@element-plus/icons-vue'
 import api from '../api'
@@ -77,6 +77,16 @@ const scenicSpots = ref([])
 const selectedScenicId = ref(null)
 const loading = ref(false)
 const searchText = ref('')
+const searchKeyword = ref('') // 防抖后的关键词，减少输入时频繁过滤与重绘（移动端性能）
+let searchDebounceTimer = null
+watch(searchText, (val) => {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = setTimeout(() => {
+    searchKeyword.value = val
+    searchDebounceTimer = null
+  }, 200)
+}, { immediate: true })
+
 const detailVisible = ref(false)
 const selectedAttraction = ref(null)
 
@@ -90,13 +100,10 @@ const imageSrc = (url) => {
 }
 
 const filteredAttractions = computed(() => {
-  // 未选择景区时不展示任何景点，提示用户先选景区
-  if (!selectedScenicId.value) {
-    return []
-  }
+  if (!selectedScenicId.value) return []
   let list = attractions.value
-  if (searchText.value) {
-    const kw = searchText.value.toLowerCase()
+  const kw = (searchKeyword.value || '').trim().toLowerCase()
+  if (kw) {
     list = list.filter(attraction =>
       attraction.name.toLowerCase().includes(kw) ||
       (attraction.description && attraction.description.toLowerCase().includes(kw))
