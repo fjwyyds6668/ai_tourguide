@@ -30,7 +30,6 @@ const sidebarCollapsed = ref(false)
 .admin-main-content {
   overflow: auto;
 }
-/* 仅透明度过渡，避免 transform 触发布局计算 */
 .admin-main-content :deep(.admin-view-enter-active),
 .admin-main-content :deep(.admin-view-leave-active) {
   transition: opacity 0.1s ease;

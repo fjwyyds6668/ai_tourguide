@@ -128,7 +128,6 @@ function nodeName(n) {
   return p.name || '节点'
 }
 
-/** 一次请求拉取 RAG 日志、交互统计、热门景点，减少轮询请求数 */
 const fetchAnalytics = async (silent = false) => {
   if (!silent) {
     loading.value = true
@@ -168,7 +167,6 @@ function stopPolling() {
 
 onMounted(() => {
   fetchAnalytics(false) // 首次加载显示 loading
-  // 仅在前台时每 5 秒静默刷新，避免后台标签页持续请求
   if (document.visibilityState === 'visible') startPolling()
   visibilityHandler = () => {
     if (document.visibilityState === 'visible') {
@@ -192,12 +190,10 @@ onUnmounted(() => {
 
 <style scoped>
 .page-wrap {
-  /* 统一全页“黑色字”的基准色：与 RAG 检索&上下文板块一致 */
   --rag-black: #000000;
   color: var(--rag-black);
 }
 
-/* Element Plus 默认文本色覆盖（表格/统计等），让“黑色字”统一为 rag-black */
 .page-wrap :deep(.el-table),
 .page-wrap :deep(.el-table__header-wrapper th),
 .page-wrap :deep(.el-table__header-wrapper th .cell),
@@ -211,7 +207,6 @@ onUnmounted(() => {
   color: var(--rag-black);
 }
 
-/* 确保 RAG 日志表格完全展开，无滚动限制 */
 .rag-logs-table {
   overflow: visible;
 }
@@ -238,7 +233,6 @@ onUnmounted(() => {
   padding: 12px 0;
   vertical-align: top;
 }
-/* 用户问题列完整显示，自动换行 */
 .rag-logs-table :deep(.user-query-cell .cell) {
   white-space: normal;
   word-break: break-word;
@@ -249,7 +243,6 @@ onUnmounted(() => {
   white-space: normal;
   word-break: break-word;
 }
-/* RAG 检索&上下文：可滑动区域，内容过多时出现纵向滚动条 */
 .rag-context-wrap {
   max-height: 360px;
   overflow-y: auto;
@@ -302,7 +295,6 @@ onUnmounted(() => {
   margin-bottom: 0;
 }
 
-/* 最近交互表格样式优化 */
 .recent-table :deep(.el-table__header-wrapper th) {
   font-size: 13px;
   color: #303133;

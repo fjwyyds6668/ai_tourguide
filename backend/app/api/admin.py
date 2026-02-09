@@ -222,7 +222,6 @@ async def reclassify_existing_data(
     }
 
 class ImportAttractionsRequest(BaseModel):
-    """批量导入 attractions 到 GraphRAG（Milvus + Neo4j）。"""
     collection_name: str = "tour_knowledge"
     build_graph: bool = True
     build_attraction_graph: bool = True
@@ -231,7 +230,6 @@ class ImportAttractionsRequest(BaseModel):
 
 
 def _normalize_scenic_name(name: str) -> str:
-    """景区名归一化（去尾缀），与 graph_builder 一致。"""
     name = str(name or "").strip()
     for suffix in ["旅游度假区", "旅游区", "度假区", "风景区", "景区"]:
         if name.endswith(suffix) and len(name) > len(suffix):
@@ -485,7 +483,6 @@ async def list_scenic_spot_knowledge(
     scenic_spot_id: int,
     current_user: User = Depends(get_current_user),
 ):
-    """获取某景区下的景区总知识列表。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     prisma = await get_prisma()
@@ -513,11 +510,6 @@ async def upload_scenic_spot_knowledge(
     build_graph: bool = True,
     current_user: User = Depends(get_current_user),
 ):
-    """
-    向指定景区上传“景区总知识”：
-    - PG: Knowledge.scenicSpotId = scenic_spot_id
-    - Milvus/Neo4j: 仍构建景区簇，但以该景区为准（允许自动解析+手动覆盖）
-    """
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
 
@@ -572,7 +564,6 @@ async def list_scenic_spot_attractions(
     scenic_spot_id: int,
     current_user: User = Depends(get_current_user),
 ):
-    """获取某景区下的景点列表。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     prisma = await get_prisma()
@@ -647,7 +638,6 @@ async def update_attraction_admin(
     req: AttractionAdminUpdateRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """更新景点并同步 GraphRAG。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     prisma = await get_prisma()
@@ -872,7 +862,6 @@ async def _delete_text_ids_from_milvus(text_ids: List[str], collection_name: str
 
 
 async def _delete_knowledge_from_neo4j(text_id: str) -> None:
-    """删除 Neo4j 中 text_id 的 Text 及无其他 Text 描述的景区簇。"""
     try:
         query_check = """
         MATCH (t:Text {id: $text_id})-[:DESCRIBES]->(s:ScenicSpot)
@@ -977,7 +966,6 @@ async def _upload_items_to_graphrag(
     build_graph: bool,
     scenic_name_override: str | None = None,
 ) -> dict:
-    """批量导入时复用上传逻辑。"""
     collection = milvus_client.create_collection_if_not_exists(
         collection_name,
         dimension=384
@@ -1022,7 +1010,6 @@ async def _upload_items_to_graphrag(
                     1
                 )
             else:
-                # 必须有景区上下文才创建图，避免离散节点脱离景区簇
                 if item.scenic_spot_id or scenic_name_override:
                     extracted = rag_service.extract_entities(item.text)
                     total_entities += len(extracted)

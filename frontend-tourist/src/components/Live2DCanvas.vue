@@ -11,9 +11,7 @@ import { Live2dManager } from '../lib/live2d/live2dManager'
 import { RESOURCE_TYPE } from '../lib/adhProtocol'
 
 const props = defineProps({
-  // 角色目录名（对应 /public/sentio/characters/free/<Name>/）
   characterName: { type: String, default: 'Mao' },
-  // 模型目录（默认 free）
   characterGroup: { type: String, default: 'free' },
 })
 
@@ -21,7 +19,6 @@ const canvasRef = ref(null)
 let resizeHandler = null
 
 const buildCharacterResource = () => {
-  // 使用当前页面 origin，扫码/隧道访问时与页面同源，避免资源 404 或跨域导致数字人黑屏
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const base = `${origin}/sentio/characters/${props.characterGroup}/${props.characterName}/`
   return {
@@ -41,7 +38,6 @@ const loadCharacter = () => {
   }
 }
 
-/** 确保 Live2D Core 已加载（移动端/扫码时 defer 可能尚未执行，需等待或动态加载） */
 function ensureLive2DCore() {
   return new Promise((resolve) => {
     if (typeof window !== 'undefined' && window.Live2DCubismCore) {
@@ -58,7 +54,6 @@ function ensureLive2DCore() {
         return
       }
       existing.addEventListener('load', done)
-      // 若 defer 已执行但 load 先于我们触发，稍后再检查一次
       setTimeout(() => {
         if (window.Live2DCubismCore) done()
       }, 50)

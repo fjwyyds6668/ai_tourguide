@@ -193,7 +193,6 @@ const onAvatarFileChange = async (e) => {
 .sidebar-menu .el-menu-item.is-active .el-icon {
   color: rgb(64, 158, 255);
 }
-/* 收缩时菜单项图标居中，与顶部 AI 一致 */
 .sidebar--collapsed :deep(.sidebar-menu.el-menu--collapse .el-menu-item) {
   display: flex;
   justify-content: center;

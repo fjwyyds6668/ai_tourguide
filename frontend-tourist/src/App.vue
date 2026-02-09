@@ -150,7 +150,7 @@ html, body {
   display: flex;
   flex-direction: column;
   z-index: 10;
-  overflow: hidden; /* 让菜单区域自己滚动 */
+  overflow: hidden;
 }
 
 .brand {
@@ -177,7 +177,6 @@ html, body {
   flex: 1;
   border-right: 0;
   overflow: auto;
-  /* brand 56 + footer 48 = 104 */
   height: calc(100vh - 104px);
 }
 .menu .el-menu-item {
@@ -210,7 +209,6 @@ html, body {
   position: relative;
 }
 
-/* 右侧顶栏固定，与左侧品牌栏同一顶边、同一高度 */
 .content-header {
   position: fixed;
   top: 0;
@@ -255,12 +253,10 @@ html, body {
   margin-top: 0;
 }
 
-/* 只有语音导览页面关闭主区域滚动，其它页面正常滚动 */
 .main-no-header.main-no-scroll {
   overflow: hidden;
 }
 
-/* 路由切换：仅透明度，缩短时间减轻卡顿 */
 .tourist-fade-enter-active,
 .tourist-fade-leave-active {
   transition: opacity 0.1s ease;
@@ -280,7 +276,6 @@ html, body {
   .tourist-fade-leave-active { transition: none; }
 }
 
-/* ---------- 移动端自适应：小屏隐藏侧栏、内容全宽 + 底部导航 ---------- */
 @media (max-width: 768px) {
   .layout-inner .aside {
     display: none;
@@ -291,7 +286,6 @@ html, body {
   .layout-inner .main {
     padding-bottom: calc(56px + env(safe-area-inset-bottom, 0));
   }
-  /* 移动端语音导览为上下堆叠，需允许滚动才能看到下方对话记录 */
   .main-no-header.main-no-scroll {
     overflow: auto !important;
     -webkit-overflow-scrolling: touch;

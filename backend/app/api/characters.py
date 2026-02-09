@@ -1,6 +1,4 @@
-"""
-角色管理 API（GET 公开供游客端；创建/更新/删除需登录）
-"""
+"""角色 API"""
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
@@ -16,9 +14,9 @@ class CharacterCreate(BaseModel):
     avatar_url: Optional[str] = None
     style: Optional[str] = None
     prompt: Optional[str] = None
-    voice: Optional[str] = None  # TTS voice name
-    live2d_character_name: Optional[str] = None  # Live2D character name, e.g., "Mao", "Chitose"
-    live2d_character_group: Optional[str] = "free"  # Live2D character group, default "free"
+    voice: Optional[str] = None
+    live2d_character_name: Optional[str] = None
+    live2d_character_group: Optional[str] = "free"
     is_active: bool = True
 
 class CharacterUpdate(BaseModel):
@@ -27,9 +25,9 @@ class CharacterUpdate(BaseModel):
     avatar_url: Optional[str] = None
     style: Optional[str] = None
     prompt: Optional[str] = None
-    voice: Optional[str] = None  # TTS voice name
-    live2d_character_name: Optional[str] = None  # Live2D character name
-    live2d_character_group: Optional[str] = None  # Live2D character group
+    voice: Optional[str] = None
+    live2d_character_name: Optional[str] = None
+    live2d_character_group: Optional[str] = None
     is_active: Optional[bool] = None
 
 class CharacterResponse(BaseModel):
@@ -39,16 +37,15 @@ class CharacterResponse(BaseModel):
     avatar_url: Optional[str]
     style: Optional[str]
     prompt: Optional[str]
-    voice: Optional[str]  # TTS voice name
-    live2d_character_name: Optional[str]  # Live2D character name
-    live2d_character_group: Optional[str]  # Live2D character group
+    voice: Optional[str]
+    live2d_character_name: Optional[str]
+    live2d_character_group: Optional[str]
     is_active: bool
     created_at: str
     updated_at: Optional[str]
 
 @router.get("/characters", response_model=List[CharacterResponse])
 async def get_characters(active_only: bool = True):
-    """获取角色列表"""
     try:
         prisma = await get_prisma()
         
@@ -77,7 +74,6 @@ async def get_characters(active_only: bool = True):
 
 @router.get("/characters/{character_id}", response_model=CharacterResponse)
 async def get_character(character_id: int):
-    """获取角色详情"""
     try:
         prisma = await get_prisma()
         character = await prisma.character.find_unique(where={"id": character_id})
@@ -106,7 +102,6 @@ async def get_character(character_id: int):
 
 @router.post("/characters", response_model=CharacterResponse)
 async def create_character(character: CharacterCreate, current_user: User = Depends(get_current_user)):
-    """创建新角色（需登录）"""
     try:
         prisma = await get_prisma()
         new_character = await prisma.character.create(
@@ -142,7 +137,6 @@ async def create_character(character: CharacterCreate, current_user: User = Depe
 
 @router.put("/characters/{character_id}", response_model=CharacterResponse)
 async def update_character(character_id: int, character: CharacterUpdate, current_user: User = Depends(get_current_user)):
-    """更新角色信息（需登录）"""
     try:
         prisma = await get_prisma()
         
@@ -196,7 +190,6 @@ async def update_character(character_id: int, character: CharacterUpdate, curren
 
 @router.delete("/characters/{character_id}")
 async def delete_character(character_id: int, current_user: User = Depends(get_current_user)):
-    """删除角色（需登录）"""
     try:
         prisma = await get_prisma()
         

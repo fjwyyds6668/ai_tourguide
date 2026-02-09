@@ -1,6 +1,4 @@
-"""
-认证相关API
-"""
+"""认证 API"""
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
@@ -36,9 +34,7 @@ class UserResponse(BaseModel):
     is_admin: bool
     avatar_url: Optional[str] = None
 
-# 依赖项：获取当前用户
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    """获取当前登录用户"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="无效的认证凭据",
@@ -61,7 +57,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserRegister, db: Session = Depends(get_db)):
-    """用户注册"""
     if db.query(User).filter(User.username == user_data.username).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -81,7 +76,6 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-    # 这里注册入口只面向“管理员端”，统一创建管理员账号
     new_user = User(
         username=user_data.username,
         email=user_data.email,
@@ -102,7 +96,6 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """用户登录"""
     user = db.query(User).filter(User.username == form_data.username).first()
     
     if not user or not verify_password(form_data.password, user.hashed_password):
@@ -112,7 +105,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # 更新最后登录时间
     user.last_login = datetime.utcnow()
     db.commit()
     
@@ -136,7 +128,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
-    """获取当前用户信息"""
     return UserResponse(
         id=current_user.id,
         username=current_user.username,

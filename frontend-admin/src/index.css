@@ -16,7 +16,6 @@ html, body, #app {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* 管理端全局：页面标题 */
 .admin-page-title {
   font-size: 20px;
   font-weight: 600;
@@ -26,7 +25,6 @@ html, body, #app {
   border-bottom: 1px solid #e5e7eb;
 }
 
-/* 卡片悬停：仅阴影短时过渡，减轻重绘 */
 .el-card {
   border-radius: 8px;
   transition: box-shadow 0.12s ease;
@@ -38,12 +36,10 @@ html, body, #app {
   .el-card { transition: none; }
 }
 
-/* 表格行悬停 */
 .el-table .el-table__row:hover > td {
   background-color: #f8fafc !important;
 }
 
-/* 主内容区背景 */
 .admin-main-wrap {
   background: #f1f5f9;
   min-height: 100vh;
@@ -56,13 +52,11 @@ html, body, #app {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
-/* 页面标题内图标间距 */
 .admin-page-title .el-icon {
   margin-right: 8px;
   vertical-align: middle;
 }
 
-/* 按钮、输入框：短时过渡减少卡顿 */
 .el-button,
 .el-input__wrapper {
   transition: box-shadow 0.1s ease, background-color 0.1s ease, border-color 0.1s ease;

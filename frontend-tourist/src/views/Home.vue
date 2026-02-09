@@ -74,7 +74,6 @@ const scenicSpots = ref([])
 const selectedScenic = ref(null)
 const selectedScenicId = ref(null)
 
-// 图片地址：扫码/隧道访问时用相对路径走同源，由 Vite 代理 /uploads 到后端
 const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
 const getImageUrl = (url) => {
   if (!url) return ''
@@ -97,7 +96,6 @@ watch(backgroundImageUrl, async (url) => {
 }, { immediate: true })
 
 onMounted(async () => {
-  // 景区列表不阻塞首屏渲染，请求在后台完成
   api.get('/attractions/scenic-spots').then(res => {
     scenicSpots.value = res.data || []
   }).catch(e => {
@@ -108,7 +106,6 @@ onMounted(async () => {
   if (mainEl && !backgroundImageUrl.value) {
     mainEl.style.background = '#f5f7fa'
   }
-  // 移动端体验：尽早预取各页 chunk，减少点击后等待；并预加载默认数字人模型
   const prefetch = () => {
     import(/* webpackChunkName: "voice-guide" */ './VoiceGuide.vue').catch(() => {})
     import(/* webpackChunkName: "attractions" */ './Attractions.vue').catch(() => {})
@@ -194,7 +191,6 @@ const navigateIfSelected = (path) => {
   border-radius: 12px;
   transition: background 0.25s ease, backdrop-filter 0.25s ease;
 }
-/* 选择景区后：主卡片半透明，透出背景图（Web + 移动端） */
 .home-card.home-card-selected {
   background: rgba(255, 255, 255, 0.72) !important;
   backdrop-filter: blur(8px);
@@ -237,7 +233,6 @@ const navigateIfSelected = (path) => {
     padding: 0 !important;
     border-radius: 14px !important;
   }
-  /* 移动端：未选景区时卡片略透，选景区后更透、毛玻璃 */
   .home-card:not(.home-card-selected) {
     background: rgba(255, 255, 255, 0.85) !important;
     backdrop-filter: blur(6px) !important;

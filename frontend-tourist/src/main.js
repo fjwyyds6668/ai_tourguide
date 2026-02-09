@@ -2,7 +2,6 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
-// 按需注册图标，减少首包体积（仅注册项目实际使用的图标）
 import {
   Microphone,
   Location,
@@ -41,7 +40,6 @@ app.use(ElementPlus)
 
 app.mount('#app')
 
-// 首屏加载完成后隐藏加载态，提升感知速度
 const loadingEl = document.getElementById('app-loading')
 if (loadingEl) {
   loadingEl.classList.add('app-loaded')

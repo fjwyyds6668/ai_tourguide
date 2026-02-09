@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-// 路由懒加载：首屏只加载 Home，其它页面进入时再加载，减小首包体积
 const routes = [
   {
     path: '/',

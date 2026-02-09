@@ -90,7 +90,6 @@ watch(searchText, (val) => {
 const detailVisible = ref(false)
 const selectedAttraction = ref(null)
 
-// 图片地址：扫码/隧道访问时用相对路径走同源，由 Vite 代理 /uploads 到后端
 const imageSrc = (url) => {
   if (!url) return ''
   if (url.startsWith('http://') || url.startsWith('https://')) return url
@@ -134,11 +133,9 @@ const onScenicChange = () => {}
 const viewDetails = async (attraction) => {
   selectedAttraction.value = attraction
   detailVisible.value = true
-  // 请求详情接口以记录一次访问（用于热门景点统计）
   try {
     await api.get(`/attractions/${attraction.id}`)
   } catch (e) {
-    // 忽略错误，详情已用列表数据展示
   }
 }
 

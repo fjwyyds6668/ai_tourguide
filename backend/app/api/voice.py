@@ -1,6 +1,4 @@
-"""
-语音相关 API
-"""
+"""语音 API"""
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
@@ -35,7 +33,6 @@ _EMOJI_RE = re.compile(
 _PUNCTUATION_RE = re.compile(r"[^\u4e00-\u9fff0-9\s]")
 
 def _remove_invalid_unicode(text: str) -> str:
-    """移除无效的 Unicode 代理对字符"""
     try:
         text.encode('utf-8')
         return text
@@ -64,7 +61,7 @@ def _normalize_tts_text(text: str) -> str:
 
 
 def _minimal_silent_wav_bytes() -> bytes:
-    """生成极短静音 WAV（约 0.1 秒），用于「规范化后无有效内容」时避免返回 400、保持前端队列不中断。"""
+    """无有效文本时返回静音 WAV，避免 400 断前端队列"""
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wav:
         wav.setnchannels(1)
@@ -78,7 +75,6 @@ async def transcribe_audio(
     file: UploadFile = File(...),
     method: str = "whisper"
 ):
-    """语音识别"""
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
@@ -118,8 +114,8 @@ async def transcribe_audio(
 
 class SynthesizeRequest(BaseModel):
     text: str
-    voice: Optional[str] = None  # 语音名称，如果提供则使用，否则从角色配置获取
-    character_id: Optional[int] = None  # 角色ID，用于获取角色的语音配置
+    voice: Optional[str] = None
+    character_id: Optional[int] = None
 
 
 class VoiceOption(BaseModel):
@@ -130,14 +126,12 @@ class VoiceOption(BaseModel):
 
 @router.get("/voices", response_model=List[VoiceOption])
 async def list_voices():
-    """获取可用语音列表（当前仅返回科大讯飞 vcn 列表）"""
     return [VoiceOption(**v) for v in XFYUN_VOICE_OPTIONS]
 
 @router.post("/synthesize")
 async def synthesize_speech(
     req: SynthesizeRequest
 ):
-    """语音合成（优先科大讯飞 TTS，失败可降级到离线本地 TTS：CosyVoice2）"""
     try:
         text = _normalize_tts_text(req.text)
         if not text:
@@ -150,7 +144,6 @@ async def synthesize_speech(
         voice = req.voice
         voice_from_request = bool(req.voice)
         
-        # 如果提供了角色ID但没有提供语音，尝试从角色配置获取
         if not voice and req.character_id:
             try:
                 prisma = await get_prisma()
@@ -215,7 +208,6 @@ async def synthesize_speech(
 async def synthesize_speech_stream(
     req: SynthesizeRequest
 ):
-    """流式语音合成（用于与流式文本同步）：接收文本片段，快速返回音频"""
     try:
         text = _normalize_tts_text(req.text)
         if not text:
@@ -229,7 +221,6 @@ async def synthesize_speech_stream(
         voice = req.voice
         voice_from_request = bool(req.voice)
         
-        # 如果提供了角色ID但没有提供语音，尝试从角色配置获取
         if not voice and req.character_id:
             try:
                 prisma = await get_prisma()
@@ -253,7 +244,6 @@ async def synthesize_speech_stream(
 
         if not settings.LOCAL_TTS_FORCE:
             try:
-                # 流式 TTS：使用更短的超时，快速返回
                 audio_path = await voice_service.synthesize_xfyun(text, voice=voice)
             except Exception as e:
                 last_error = e

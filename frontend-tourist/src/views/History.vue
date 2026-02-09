@@ -63,7 +63,6 @@ const loadHistory = async () => {
         limit: pageSize.value
       }
     })
-    // 接口返回 { data: [...], total: 总数 }
     historyList.value = res.data?.data ?? res.data ?? []
     total.value = res.data?.total ?? 0
   } catch (error) {
@@ -81,7 +80,6 @@ onMounted(() => {
 
 <style scoped>
 .history-page {
-  /* 统一游客端历史记录页“黑色字”颜色（与管理端 RAG 板块一致） */
   --rag-black: #000000;
   color: var(--rag-black);
   max-width: 1200px;
@@ -89,7 +87,6 @@ onMounted(() => {
   padding: 20px;
 }
 
-/* Element Plus 默认文本色覆盖：表格/分页/卡片标题等统一为 rag-black */
 .history-page :deep(.el-table),
 .history-page :deep(.el-table__header-wrapper th),
 .history-page :deep(.el-table__header-wrapper th .cell),

@@ -1,6 +1,4 @@
-"""
-历史记录查询 API
-"""
+"""历史记录 API"""
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional
 from sqlalchemy.orm import Session
@@ -33,18 +31,10 @@ async def get_interaction_history(
     skip: int = Query(0, ge=0, description="跳过数量"),
     db: Session = Depends(get_db)
 ):
-    """
-    获取交互历史记录
-    
-    - 如果提供 session_id，返回该会话的所有交互记录
-    - 如果不提供 session_id，返回最近的交互记录
-    - 使用窗口函数一次查询同时返回 total 与当前页，减少 DB 往返
-    """
     try:
         base = db.query(Interaction)
         if session_id:
             base = base.filter(Interaction.session_id == session_id)
-        # COUNT(*) OVER() 在过滤集上计算，ORDER BY/OFFSET/LIMIT 之后每行仍带完整总数
         total_col = func.count(Interaction.id).over().label("_total")
         rows = (
             base.add_columns(total_col)
@@ -77,7 +67,6 @@ async def get_session_history(
     limit: int = Query(5, ge=1, le=200, description="返回数量限制，默认最近5条"),
     db: Session = Depends(get_db)
 ):
-    """获取指定会话的交互记录（按时间倒序，最近在前）"""
     try:
         interactions = db.query(Interaction).filter(
             Interaction.session_id == session_id

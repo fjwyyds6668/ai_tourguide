@@ -1,6 +1,4 @@
-"""
-API 路由
-"""
+"""API 路由"""
 from fastapi import APIRouter
 from app.api import voice, rag, attractions, admin, graph, auth, history, characters, config
 

@@ -1,6 +1,4 @@
-"""
-图数据库相关 API（GraphRAG 专用；写操作需登录）
-"""
+"""图数据库 API"""
 import asyncio
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
@@ -14,7 +12,6 @@ router = APIRouter()
 
 
 def _run_neo4j_sync(query: str, params: dict):
-    """在线程池中执行同步 Neo4j 查询，避免阻塞事件循环。"""
     return neo4j_client.execute_query(query, params)
 
 class CreateNodeRequest(BaseModel):
@@ -30,7 +27,6 @@ class CreateRelationshipRequest(BaseModel):
 
 @router.post("/nodes")
 async def create_node(request: CreateNodeRequest, current_user: User = Depends(get_current_user)):
-    """创建图节点（需登录）"""
     try:
         labels_str = ":".join(request.labels) if request.labels else "Entity"
         query = f"""
@@ -52,7 +48,6 @@ async def create_node(request: CreateNodeRequest, current_user: User = Depends(g
 
 @router.post("/relationships")
 async def create_relationship(request: CreateRelationshipRequest, current_user: User = Depends(get_current_user)):
-    """创建图关系（需登录）"""
     try:
         success = await graph_builder.create_relationship(
             request.from_entity,
@@ -69,11 +64,6 @@ async def create_relationship(request: CreateRelationshipRequest, current_user: 
 
 @router.get("/subgraph")
 async def get_subgraph(entities: str, depth: int = 2):
-    """
-    获取实体子图
-    
-    GraphRAG 核心功能：基于实体查询相关子图
-    """
     try:
         from app.services.rag_service import rag_service
         entity_list = [e.strip() for e in entities.split(",")]
@@ -84,7 +74,6 @@ async def get_subgraph(entities: str, depth: int = 2):
 
 @router.get("/stats")
 async def get_graph_stats():
-    """获取图数据库统计信息（Neo4j 调用在线程池执行，不阻塞事件循环）"""
     try:
         loop = asyncio.get_event_loop()
         query_nodes = """

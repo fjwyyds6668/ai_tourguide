@@ -124,7 +124,6 @@ const processing = ref(false)
 const selectedCharacterId = ref(null)
 const sessionId = ref(null)
 const characters = ref([])
-// 限制对话历史长度，避免内存占用过大和渲染性能问题
 const MAX_HISTORY_LENGTH = 50
 const conversationHistory = ref([])
 const textInput = ref('')
@@ -138,11 +137,9 @@ const audioQueue = []
 let isPlayingQueue = false
 let currentAudio = null
 let ttsRequestQueue = Promise.resolve()
-// 用于“失效”旧的 TTS，会话 ID 每次新回答或停止播报时自增
 let ttsSessionId = 0
 
 const currentScenic = ref(null)
-// 图片/资源地址：扫码或隧道访问时用相对路径走同源
 const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
 const getImageUrl = (url) => {
   if (!url) return ''
@@ -151,7 +148,6 @@ const getImageUrl = (url) => {
   return `${backendOrigin}${url}`
 }
 
-// 仅在本页面时禁止整体页面滚动，离开时恢复，保证只有对话区域可滚动
 let previousBodyOverflow = ''
 
 onMounted(async () => {
@@ -182,7 +178,6 @@ onUnmounted(() => {
   }
 })
 
-// 加载角色列表（带重试机制）
 const loadCharacters = async (retries = 2) => {
   try {
     const res = await api.get('/characters/characters', {
@@ -350,7 +345,6 @@ const stopSpeaking = () => {
   audioQueue.length = 0
   isPlayingQueue = false
   isSpeaking.value = false
-  // 使当前及之前回答的 TTS 全部失效，避免新对话继续播旧内容
   ttsSessionId += 1
   
   try {
@@ -581,7 +575,6 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
   })
 }
 
-// 流式生成 + 与文字同步的 TTS：使用 SSE，收到句子就立刻合成并排队播放
 const streamGenerateAndSpeak = async (queryText, characterId) => {
   const msgIndex = conversationHistory.value.length
   conversationHistory.value.push({
@@ -603,7 +596,6 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
   })
 
   const msgRef = conversationHistory.value[msgIndex]
-  // 降低“每个 SSE token 都触发一次 Vue 更新 + 滚动”的开销：合并到每帧刷新一次
   let pendingText = ''
   let flushRaf = 0
   const scheduleFlush = () => {
@@ -650,7 +642,6 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
             pendingText += content
             scheduleFlush()
           } else if (type === 'audio' && content) {
-            // 后端边生成边合成，直接推送 base64 音频，无需 POST
             if (ttsSessionId !== thisTtsSessionId) return
             try {
               const binary = atob(content)
@@ -664,10 +655,8 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
               console.warn('解析流式音频失败:', e)
             }
           } else if (type === 'tts' && content && content.trim()) {
-            // 后端未做 TTS 时，前端 POST 合成
             synthesizeAndQueue(content.trim(), characterId ?? selectedCharacterId.value, thisTtsSessionId, true)
           } else if (type === 'done') {
-            // flush 未落盘的 token
             if (pendingText) {
               msgRef.content = (msgRef.content || '') + pendingText
               pendingText = ''
@@ -678,7 +667,6 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
             ElMessage.error(content)
           }
         } catch (e) {
-          // 忽略单条解析错误
         }
       }
     }
@@ -718,9 +706,7 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
   }
 }
 
-// “流式打字 + 分段提前合成”方式（备用，非流式接口时使用）：
 const addAssistantStreamMessage = (fullText, characterId = null) => {
-  // 为当前回答创建一个独立的 TTS 会话 ID，用于废弃旧的音频
   const thisTtsSessionId = ++ttsSessionId
 
   const index = conversationHistory.value.length
@@ -737,16 +723,11 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
   const textLength = fullText.length
   let i = 0
   const interval = 10
-  // 每段送给 TTS 的文本长度（比原来的 25 大很多，减少停顿次数）
   const TTS_CHUNK_SIZE = 80
-  // 提前量：当“打字位置”离上一段 TTS 文本结尾不足这么多字符时，就开始合成下一段
   const TTS_AHEAD_THRESHOLD = 20
   let ttsSynthesizedLength = 0
 
-  // 重置队列，保证本轮回答的 TTS 顺序播放
   ttsRequestQueue = Promise.resolve()
-
-  // 先用首段文本触发第一次 TTS，让语音尽快开始
   const initialChunkEnd = Math.min(TTS_CHUNK_SIZE, textLength)
   const initialText = fullText.substring(0, initialChunkEnd)
   if (initialText.trim()) {
@@ -754,7 +735,6 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
     ttsSynthesizedLength = initialChunkEnd
   }
 
-  // 打字机效果：逐步把完整回答打印出来
   const timer = setInterval(() => {
     if (i >= textLength) {
       clearInterval(timer)
@@ -770,7 +750,6 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
     msg.content += fullText.substring(i, i + chunkSize)
     i += chunkSize
 
-    // 根据“打字进度”提前触发下一段 TTS，减少下一句开头的空白
     if (i >= ttsSynthesizedLength - TTS_AHEAD_THRESHOLD && ttsSynthesizedLength < textLength) {
       const nextChunkStart = ttsSynthesizedLength
       const nextChunkEnd = Math.min(ttsSynthesizedLength + TTS_CHUNK_SIZE, textLength)
@@ -779,7 +758,6 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
         return
       }
 
-      // 如果是最后一段但结尾没有句号/问号/感叹号，自动补一个，让 TTS 更自然收尾
       if (nextChunkEnd === textLength) {
         const lastChar = nextChunk[nextChunk.length - 1]
         if (!['。', '！', '？', '.', '!', '?'].includes(lastChar)) {
@@ -795,7 +773,6 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
 
 const scrollToBottom = () => {
   if (!conversationListRef.value) return
-  // 合并多次滚动调用到同一帧，避免抖动与频繁读写布局
   if (scrollRaf) return
   scrollRaf = requestAnimationFrame(() => {
     scrollRaf = 0
@@ -858,7 +835,6 @@ const triggerSpeakingMotion = () => {
   max-width: 1400px;
   margin: 0 auto;
   padding: 12px;
-  /* 占满一屏高度，避免页面整体滚动 */
   height: calc(100vh - 24px);
   display: flex;
   flex-direction: column;
@@ -933,7 +909,6 @@ const triggerSpeakingMotion = () => {
 
 .avatar-wrapper {
   width: 100%;
-  /* 固定一个视觉高度，让数字人大小稳定 */
   flex: 0 0 460px;
   margin-bottom: 12px;
   border-radius: 12px;
@@ -1007,7 +982,6 @@ const triggerSpeakingMotion = () => {
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 10px;
-  /* 移动端：iOS 惯性滚动更顺滑 */
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1016,7 +990,6 @@ const triggerSpeakingMotion = () => {
   padding: 10px 12px;
   border-radius: 10px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  /* 移动端：长列表时减少离屏项布局计算 */
   content-visibility: auto;
   contain-intrinsic-size: auto 80px;
 }
@@ -1090,7 +1063,7 @@ const triggerSpeakingMotion = () => {
     padding-right: 10px;
     padding-bottom: 56px;
     min-height: 80px;
-    font-size: 16px; /* 移动端 ≥16px 配合 viewport 避免聚焦时被放大 */
+    font-size: 16px;
   }
   .input-buttons {
     gap: 6px;
