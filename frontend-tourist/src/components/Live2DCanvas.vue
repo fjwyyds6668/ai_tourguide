@@ -41,13 +41,72 @@ const loadCharacter = () => {
   }
 }
 
-onMounted(() => {
+/** 确保 Live2D Core 已加载（移动端/扫码时 defer 可能尚未执行，需等待或动态加载） */
+function ensureLive2DCore() {
+  return new Promise((resolve) => {
+    if (typeof window !== 'undefined' && window.Live2DCubismCore) {
+      resolve()
+      return
+    }
+    const origin = window.location.origin
+    const src = `${origin}/sentio/core/live2dcubismcore.min.js`
+    const existing = document.querySelector('script[src*="live2dcubismcore.min.js"]')
+    if (existing) {
+      const done = () => resolve()
+      if (window.Live2DCubismCore) {
+        done()
+        return
+      }
+      existing.addEventListener('load', done)
+      // 若 defer 已执行但 load 先于我们触发，稍后再检查一次
+      setTimeout(() => {
+        if (window.Live2DCubismCore) done()
+      }, 50)
+      return
+    }
+    const script = document.createElement('script')
+    script.src = src
+    script.onload = () => resolve()
+    script.onerror = () => resolve()
+    document.head.appendChild(script)
+  })
+}
+
+let initRetryCount = 0
+const INIT_RETRY_MAX = 20
+
+function doInit() {
+  const canvas = canvasRef.value
+  if (!canvas) return
+  const w = canvas.clientWidth || canvas.offsetWidth || 0
+  const h = canvas.clientHeight || canvas.offsetHeight || 0
+  if (w < 10 || h < 10) {
+    if (initRetryCount >= INIT_RETRY_MAX) {
+      console.warn('[Live2D] canvas 尺寸无效，已放弃初始化')
+      return
+    }
+    initRetryCount += 1
+    requestAnimationFrame(() => {
+      const w2 = canvas.clientWidth || canvas.offsetWidth || 0
+      const h2 = canvas.clientHeight || canvas.offsetHeight || 0
+      if (w2 >= 10 && h2 >= 10) doInit()
+      else setTimeout(doInit, 40)
+    })
+    return
+  }
   const ok = LAppDelegate.getInstance().initialize()
   if (!ok) return
   LAppDelegate.getInstance().run()
   loadCharacter()
   resizeHandler = () => LAppDelegate.getInstance().onResize()
   window.addEventListener('resize', resizeHandler, { passive: true })
+}
+
+onMounted(() => {
+  // 减少等待帧数，加快移动端数字人出现
+  ensureLive2DCore().then(() => {
+    requestAnimationFrame(doInit)
+  })
 })
 
 watch(

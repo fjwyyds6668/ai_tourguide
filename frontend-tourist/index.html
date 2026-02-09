@@ -38,8 +38,8 @@
       }
       #app-loading .text { margin-top: 12px; color: #606266; font-size: 14px; }
     </style>
-    <!-- Live2D 延后加载，不阻塞首屏；进入语音导览时再加载 -->
-    <script defer src="/sentio/core/live2dcubismcore.min.js"></script>
+    <!-- Live2D Core：同步加载保证移动端/扫码进入语音导览时数字人能正常显示 -->
+    <script src="/sentio/core/live2dcubismcore.min.js"></script>
   </head>
   <body>
     <div id="app-loading" role="status" aria-label="加载中">
