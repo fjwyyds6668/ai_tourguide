@@ -665,7 +665,7 @@ class RAGService:
             return []
     
     async def graph_subgraph_search(self, entities: List[str], depth: int = 2) -> Dict[str, Any]:
-        """基于多实体构建子图。depth 经校验后拼接（Neo4j 限制）。"""
+        """基于多实体构建子图。"""
         if not entities:
             return {"nodes": [], "relationships": []}
         safe_depth = 2
@@ -724,7 +724,7 @@ class RAGService:
         }
     
     def _query_needs_context(self, query: str) -> bool:
-        """寒暄/致谢/告别/能力询问等返回 False，不检索；景区/景点问题才走 RAG。"""
+        """判断当前问题是否需要走 RAG。"""
         if not query or not isinstance(query, str):
             return False
         q = query.strip()
@@ -744,7 +744,7 @@ class RAGService:
         return True
     
     def _is_listing_query(self, query: str) -> bool:
-        """判断是否为“景点列表/数量”类问题，例如有哪些景点、景点分布、多少个景点等。"""
+        """判断是否为“景点列表/数量”类问题。"""
         if not query or not isinstance(query, str):
             return False
         q = query.strip()
@@ -797,7 +797,7 @@ class RAGService:
         return names[:5]
 
     def _is_route_query(self, query: str) -> bool:
-        """判断是否为“路线/行程/推荐路线”类问题，需要多景点串联回答。"""
+        """判断是否为“路线/行程/推荐路线”类问题。"""
         if not query or not isinstance(query, str):
             return False
         q = query.strip()
@@ -871,7 +871,7 @@ class RAGService:
         return QueryIntent.GENERAL
 
     def _get_search_strategy(self, intent: QueryIntent) -> Dict[str, Any]:
-        """根据意图返回检索策略配置（top_k, 阈值, 图查询深度等）。"""
+        """根据意图返回检索策略配置。"""
         strategies = {
             QueryIntent.ROUTE: {
                 "top_k": 10,  # 路线需要更多候选
@@ -1320,7 +1320,9 @@ class RAGService:
                 logger.warning(f"DETAIL 查询补充景区簇上下文失败: {e}")
         query_about_scenic = bool(re.search(r"什么景区|哪个景区|是啥景区|这是什么景区|是哪个景区|啥景区|哪个景点.*景区|介绍.*景区|景区.*介绍|这个景区", (query or "").strip()))
         scenic_ctx_found = False
-        if query_about_scenic:
+        # 若已在 DETAIL + scenic_name 下前置拼入了完整景区簇（见上方 DETAIL 分支），
+        # 则无需在此分支再次拉取同一景区簇，避免出现重复的“【景区一簇信息】”块。
+        if query_about_scenic and not (intent == QueryIntent.DETAIL and scenic_name_str):
             scenic_tasks = []
             if primary_attraction_id is not None:
                 async def get_scenic_from_attraction():
