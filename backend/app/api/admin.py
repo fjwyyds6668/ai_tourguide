@@ -824,16 +824,35 @@ def _deserialize_metadata(metadata_str: str | None) -> dict:
 
 
 async def _delete_knowledge_from_milvus(text_id: str, collection_name: str = "tour_knowledge") -> None:
+    """
+    从 Milvus 精确删除某个 text_id 对应的向量。
+    保证在调用 utility/collection 之前已经建立连接，避免 ConnectionNotExistException。
+    """
     try:
         from pymilvus import utility
-        if utility.has_collection(collection_name):
-            collection = milvus_client.get_collection(collection_name, load=True)
-            expr = f'text_id == "{text_id}"'
-            collection.delete(expr)
-            collection.flush()
-            logger.info(f"已从 Milvus 删除知识库: {text_id}")
+
+        # 确保已连接到 Milvus（lazy connect）
+        if not milvus_client.connected:
+            milvus_client.connect()
+        if not milvus_client.connected:
+            logger.warning(
+                "从 Milvus 删除失败: 未能建立连接 (text_id=%s, collection=%s)",
+                text_id,
+                collection_name,
+            )
+            return
+
+        if not utility.has_collection(collection_name):
+            logger.info("Milvus 集合 %s 不存在，跳过删除 text_id=%s", collection_name, text_id)
+            return
+
+        collection = milvus_client.get_collection(collection_name, load=True)
+        expr = f'text_id == "{text_id}"'
+        collection.delete(expr)
+        collection.flush()
+        logger.info("已从 Milvus 删除知识库向量: %s", text_id)
     except Exception as e:
-        logger.warning(f"从 Milvus 删除失败: {e}")
+        logger.warning("从 Milvus 删除失败: %s", e)
 
 
 async def _delete_text_ids_from_milvus(text_ids: List[str], collection_name: str = "tour_knowledge") -> None:
@@ -841,8 +860,22 @@ async def _delete_text_ids_from_milvus(text_ids: List[str], collection_name: str
         return
     try:
         from pymilvus import utility
-        if not utility.has_collection(collection_name):
+
+        # 确保已连接到 Milvus（lazy connect）
+        if not milvus_client.connected:
+            milvus_client.connect()
+        if not milvus_client.connected:
+            logger.warning(
+                "Milvus 批量删除失败: 未能建立连接 (count=%d, collection=%s)",
+                len(text_ids),
+                collection_name,
+            )
             return
+
+        if not utility.has_collection(collection_name):
+            logger.info("Milvus 集合 %s 不存在，跳过批量删除 %d 个 text_id", collection_name, len(text_ids))
+            return
+
         collection = milvus_client.get_collection(collection_name, load=True)
         chunk_size = 200
         for i in range(0, len(text_ids), chunk_size):
@@ -965,6 +998,7 @@ async def _upload_items_to_graphrag(
     collection_name: str,
     build_graph: bool,
     scenic_name_override: str | None = None,
+    clear_existing_cluster: bool = False,
 ) -> dict:
     collection = milvus_client.create_collection_if_not_exists(
         collection_name,
@@ -1000,6 +1034,7 @@ async def _upload_items_to_graphrag(
                     text_id=item.text_id,
                     scenic_spot_id=item.scenic_spot_id,
                     scenic_name_override=scenic_name_override,
+                    clear_existing=clear_existing_cluster,
                 )
                 logger.info(f"Built scenic cluster for text_id={item.text_id}, scenic_spot={parsed.get('scenic_spot')}")
                 total_entities += (
@@ -1182,10 +1217,16 @@ async def rebuild_knowledge_cluster(
         item = KnowledgeBaseItem(
             text_id=text_id,
             text=knowledge.text,
-            metadata=_deserialize_metadata(knowledge.metadata)
+            metadata=_deserialize_metadata(knowledge.metadata),
         )
         
-        result = await _upload_items_to_graphrag([item], "tour_knowledge", build_graph=True)
+        # 重建簇：需要在构图时清理原有 ScenicSpot 簇的旧节点/关系
+        result = await _upload_items_to_graphrag(
+            [item],
+            "tour_knowledge",
+            build_graph=True,
+            clear_existing_cluster=True,
+        )
         
         return {
             "message": f"已重建知识 {text_id} 的图簇",
@@ -1459,6 +1500,8 @@ async def import_attractions_to_graphrag(req: ImportAttractionsRequest, current_
                 "latitude": a.latitude,
                 "longitude": a.longitude,
                 "category": a.category,
+                # 确保批量导入时景点簇也能挂到对应景区簇上
+                "scenic_spot_id": getattr(a, "scenicSpotId", None),
             })
 
         if req.build_attraction_graph:

@@ -50,6 +50,26 @@ class GraphBuilder:
         if not name:
             return
         scenic_spot_id = attraction_data.get("scenic_spot_id")
+
+        # 从解析结果中尝试提取景区名称，作为补充的“簇中心”
+        scenic_name_from_parsed = None
+        if parsed and isinstance(parsed, dict) and parsed.get("scenic_spot"):
+            try:
+                scenic_name_from_parsed = str(parsed.get("scenic_spot")).strip() or None
+            except Exception:
+                scenic_name_from_parsed = None
+
+        # 硬性约束：若既没有景区 ID，也解析不出景区名称，则完全跳过图构建，
+        # 以避免出现“只有景点/特征的小游离簇”
+        if not scenic_spot_id and not scenic_name_from_parsed:
+            logger.warning(
+                "build_attraction_cluster: 缺少景区上下文(scenic_spot_id / scenic_spot 名称)，"
+                "已跳过图构建以避免游离节点: id=%s, name=%s",
+                att_id,
+                name,
+            )
+            return
+
         q_center = """
         MERGE (a:Attraction {id: $id})
         SET a.name = $name,
@@ -86,7 +106,9 @@ class GraphBuilder:
         DETACH DELETE n
         """
         self.client.execute_query(q_clean_orphans, {"id": int(att_id)})
-        has_scenic_spot = False
+
+        # 统一约束：无论景区来自 PostgreSQL 还是解析结果，Attraction 必须挂到某个 ScenicSpot 上，
+        # 从而保证不会出现完全脱离景区簇的景点子图。
         if scenic_spot_id:
             q_scenic_rel = """
             MATCH (a:Attraction {id: $id})
@@ -97,7 +119,6 @@ class GraphBuilder:
                 "id": int(att_id),
                 "scenic_spot_id": int(scenic_spot_id)
             })
-            has_scenic_spot = True
             logger.info(f"景点 '{name}' (Attraction, id={att_id}) 已关联到景区 (scenic_spot_id={scenic_spot_id})")
             q_merge_spot = """
             MATCH (s:ScenicSpot {scenic_spot_id: $scenic_spot_id})
@@ -119,6 +140,39 @@ class GraphBuilder:
                 })
             except Exception as e:
                 logger.warning(f"合并景区子景点 Spot -> Attraction 失败: {e}")
+        elif scenic_name_from_parsed:
+            # 没有 scenic_spot_id，但解析出了景区名称：在图中按名称作为“景区主节点”挂接，
+            # 仍然保证整个簇围绕 ScenicSpot 汇聚，而不是形成独立小簇
+            q_ensure_scenic_by_name = """
+            MERGE (s:ScenicSpot {name: $name})
+            ON CREATE SET s.scenic_spot_id = coalesce(s.scenic_spot_id, 0)
+            RETURN s
+            """
+            try:
+                self.client.execute_query(q_ensure_scenic_by_name, {
+                    "name": scenic_name_from_parsed,
+                })
+            except Exception as e:
+                logger.warning(f"按名称确保 ScenicSpot 节点失败: {e}")
+            q_scenic_rel_by_name = """
+            MATCH (a:Attraction {id: $id})
+            MATCH (s:ScenicSpot {name: $name})
+            MERGE (a)-[:属于]->(s)
+            MERGE (s)-[:HAS_SPOT]->(a)
+            """
+            try:
+                self.client.execute_query(q_scenic_rel_by_name, {
+                    "id": int(att_id),
+                    "name": scenic_name_from_parsed,
+                })
+                logger.info(
+                    "景点 '%s' (Attraction, id=%s) 已通过解析名称挂接到景区 '%s'",
+                    name,
+                    att_id,
+                    scenic_name_from_parsed,
+                )
+            except Exception as e:
+                logger.warning(f"按名称关联景点到景区失败: {e}")
         if text_id and text:
             q_text = """
             MERGE (t:Text {id: $text_id})
@@ -262,17 +316,50 @@ class GraphBuilder:
             return False
     
     async def build_attraction_graph(self, attractions: List[Dict[str, Any]]):
-        """批量构建景点图谱。"""
+        """
+        批量构建景点图谱。
+        要求：所有景点簇必须连接到某个景区簇。
+        因此，这里优先使用 build_attraction_cluster 来创建景点节点，
+        仅当景点具备 scenic_spot_id 时才构图，避免生成游离的 Attraction 小簇。
+        之后在已创建的 Attraction 之间按类别补充 NEARBY 关系。
+        """
+        # 先为每个景点构建“以景区为中心”的景点簇
+        valid_attractions: List[Dict[str, Any]] = []
         for attraction in attractions:
-            await self.create_attraction_node(attraction)
-        for i, att1 in enumerate(attractions):
-            for att2 in attractions[i+1:]:
-                if att1.get('category') == att2.get('category'):
+            scenic_spot_id = attraction.get("scenic_spot_id")
+            if not scenic_spot_id:
+                logger.warning(
+                    "build_attraction_graph: attraction id=%s name=%s 缺少 scenic_spot_id，"
+                    "为避免游离簇，跳过该景点的簇构建",
+                    attraction.get("id"),
+                    attraction.get("name"),
+                )
+                continue
+            try:
+                await self.build_attraction_cluster(
+                    attraction_data=attraction,
+                    text_id=None,
+                    text=None,
+                    parsed=None,
+                )
+                valid_attractions.append(attraction)
+            except Exception as e:
+                logger.error(
+                    "build_attraction_graph: 构建景点簇失败 id=%s name=%s: %s",
+                    attraction.get("id"),
+                    attraction.get("name"),
+                    e,
+                )
+
+        # 在同类别的景点之间补充 NEARBY 关系（它们本身已挂在各自景区簇下）
+        for i, att1 in enumerate(valid_attractions):
+            for att2 in valid_attractions[i + 1 :]:
+                if att1.get("category") and att1.get("category") == att2.get("category"):
                     await self.create_relationship(
-                        att1['name'],
-                        att2['name'],
-                        'NEARBY',
-                        {'category': att1.get('category')}
+                        att1["name"],
+                        att2["name"],
+                        "NEARBY",
+                        {"category": att1.get("category")},
                     )
     
     async def extract_and_store_entities(
@@ -368,6 +455,7 @@ class GraphBuilder:
         text_id: str | None = None,
         scenic_spot_id: int | None = None,
         scenic_name_override: str | None = None,
+        clear_existing: bool = False,
     ) -> None:
         """
         根据结构化的景区信息，在 Neo4j 中构建以景区为中心的一簇节点和关系。
@@ -403,66 +491,69 @@ class GraphBuilder:
         features = parsed.get("features") or []
         spots = parsed.get("spots") or []
         awards = parsed.get("awards") or []
-        if text_id:
-            q_clean_text = """
-            MATCH (t:Text {id: $text_id})
-            OPTIONAL MATCH (t)-[r1:MENTIONS]->(e)
-            DELETE r1
-            WITH t
-            OPTIONAL MATCH (t)-[r2:DESCRIBES]->(s:ScenicSpot)
-            DELETE r2
-            WITH t
-            DETACH DELETE t
-            """
-            self.client.execute_query(q_clean_text, {"text_id": text_id})
-        q_clean_scenic_rels = """
-        MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r:HAS_SPOT|HAS_FEATURE|HAS_HONOR|位于]->(n)
-        DELETE r
-        """
-        if scenic_spot_id is not None:
-            self.client.execute_query(q_clean_scenic_rels, {"sid": int(scenic_spot_id)})
-        else:
-            q_clean_scenic_rels_legacy = """
-            MATCH (s:ScenicSpot {name: $name})-[r:HAS_SPOT|HAS_FEATURE|HAS_HONOR|位于]->(n)
+        # clear_existing=False（默认）时，不会清空原有簇，只做增量合并；
+        # 只有在“重建簇”类工具中才会传 True，触发清理逻辑。
+        if clear_existing:
+            if text_id:
+                q_clean_text = """
+                MATCH (t:Text {id: $text_id})
+                OPTIONAL MATCH (t)-[r1:MENTIONS]->(e)
+                DELETE r1
+                WITH t
+                OPTIONAL MATCH (t)-[r2:DESCRIBES]->(s:ScenicSpot)
+                DELETE r2
+                WITH t
+                DETACH DELETE t
+                """
+                self.client.execute_query(q_clean_text, {"text_id": text_id})
+            q_clean_scenic_rels = """
+            MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r:HAS_SPOT|HAS_FEATURE|HAS_HONOR|位于]->(n)
             DELETE r
             """
-            self.client.execute_query(q_clean_scenic_rels_legacy, {"name": scenic_name})
-        q_clean_isolated = """
-        MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r1:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n)
-        WHERE NOT (n)-[:位于|隶属]->() 
-        WITH n, COUNT { (n)--() } AS connection_count
-        WHERE connection_count <= 1
-        DETACH DELETE n
-        """
-        if scenic_spot_id is not None:
-            self.client.execute_query(q_clean_isolated, {"sid": int(scenic_spot_id)})
-        else:
-            q_clean_isolated_legacy = """
-            MATCH (s:ScenicSpot {name: $name})-[r1:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n)
+            if scenic_spot_id is not None:
+                self.client.execute_query(q_clean_scenic_rels, {"sid": int(scenic_spot_id)})
+            else:
+                q_clean_scenic_rels_legacy = """
+                MATCH (s:ScenicSpot {name: $name})-[r:HAS_SPOT|HAS_FEATURE|HAS_HONOR|位于]->(n)
+                DELETE r
+                """
+                self.client.execute_query(q_clean_scenic_rels_legacy, {"name": scenic_name})
+            q_clean_isolated = """
+            MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r1:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n)
             WHERE NOT (n)-[:位于|隶属]->() 
             WITH n, COUNT { (n)--() } AS connection_count
             WHERE connection_count <= 1
             DETACH DELETE n
             """
-            self.client.execute_query(q_clean_isolated_legacy, {"name": scenic_name})
-        q_clean_orphan_relations = """
-        MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r]->(n)
-        WHERE type(r) IN ['HAS_SPOT', 'HAS_FEATURE', 'HAS_HONOR']
-        AND NOT EXISTS { (n)-[:位于|隶属]->() }
-        AND COUNT { (n)--() } <= 1
-        DELETE r
-        """
-        if scenic_spot_id is not None:
-            self.client.execute_query(q_clean_orphan_relations, {"sid": int(scenic_spot_id)})
-        else:
-            q_clean_orphan_relations_legacy = """
-            MATCH (s:ScenicSpot {name: $name})-[r]->(n)
+            if scenic_spot_id is not None:
+                self.client.execute_query(q_clean_isolated, {"sid": int(scenic_spot_id)})
+            else:
+                q_clean_isolated_legacy = """
+                MATCH (s:ScenicSpot {name: $name})-[r1:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n)
+                WHERE NOT (n)-[:位于|隶属]->() 
+                WITH n, COUNT { (n)--() } AS connection_count
+                WHERE connection_count <= 1
+                DETACH DELETE n
+                """
+                self.client.execute_query(q_clean_isolated_legacy, {"name": scenic_name})
+            q_clean_orphan_relations = """
+            MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r]->(n)
             WHERE type(r) IN ['HAS_SPOT', 'HAS_FEATURE', 'HAS_HONOR']
             AND NOT EXISTS { (n)-[:位于|隶属]->() }
             AND COUNT { (n)--() } <= 1
             DELETE r
             """
-            self.client.execute_query(q_clean_orphan_relations_legacy, {"name": scenic_name})
+            if scenic_spot_id is not None:
+                self.client.execute_query(q_clean_orphan_relations, {"sid": int(scenic_spot_id)})
+            else:
+                q_clean_orphan_relations_legacy = """
+                MATCH (s:ScenicSpot {name: $name})-[r]->(n)
+                WHERE type(r) IN ['HAS_SPOT', 'HAS_FEATURE', 'HAS_HONOR']
+                AND NOT EXISTS { (n)-[:位于|隶属]->() }
+                AND COUNT { (n)--() } <= 1
+                DELETE r
+                """
+                self.client.execute_query(q_clean_orphan_relations_legacy, {"name": scenic_name})
         location_str = "、".join(locations) if locations else None
         
         if use_id:
@@ -504,18 +595,19 @@ class GraphBuilder:
                 MERGE (t)-[:DESCRIBES]->(s)
                 """
                 self.client.execute_query(q_txt_legacy, {"text_id": text_id, "name": scenic_name})
-        if use_id:
-            q_clean_loc = """
-            MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r:位于]->()
-            DELETE r
-            """
-            self.client.execute_query(q_clean_loc, {"sid": sid})
-        else:
-            q_clean_loc_legacy = """
-            MATCH (s:ScenicSpot {name: $name})-[r:位于]->()
-            DELETE r
-            """
-            self.client.execute_query(q_clean_loc_legacy, {"name": scenic_name})
+        if clear_existing:
+            if use_id:
+                q_clean_loc = """
+                MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r:位于]->()
+                DELETE r
+                """
+                self.client.execute_query(q_clean_loc, {"sid": sid})
+            else:
+                q_clean_loc_legacy = """
+                MATCH (s:ScenicSpot {name: $name})-[r:位于]->()
+                DELETE r
+                """
+                self.client.execute_query(q_clean_loc_legacy, {"name": scenic_name})
         if locations:
             params = {"s_name": scenic_name}
             if len(locations) >= 3:
