@@ -142,7 +142,14 @@ let ttsRequestQueue = Promise.resolve()
 let ttsSessionId = 0
 
 const currentScenic = ref(null)
+// 图片/资源地址：扫码或隧道访问时用相对路径走同源
 const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
+const getImageUrl = (url) => {
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  if (url.startsWith('/')) return url
+  return `${backendOrigin}${url}`
+}
 
 // 仅在本页面时禁止整体页面滚动，离开时恢复，保证只有对话区域可滚动
 let previousBodyOverflow = ''
@@ -356,14 +363,8 @@ const stopSpeaking = () => {
 }
 
 const scenicBackgroundStyle = computed(() => {
-  const url = currentScenic.value?.cover_image_url
-  if (!url) {
-    return {}
-  }
-  const full =
-    url.startsWith('http://') || url.startsWith('https://')
-      ? url
-      : `${backendOrigin}${url}`
+  const full = getImageUrl(currentScenic.value?.cover_image_url)
+  if (!full) return {}
   return {
     backgroundImage: `url(${full})`,
     backgroundSize: 'cover',
@@ -1066,10 +1067,27 @@ const triggerSpeakingMotion = () => {
 @media (max-width: 768px) {
   .voice-guide {
     padding: 8px;
-    height: calc(100vh - 16px);
+    height: auto;
+    min-height: calc(100vh - 16px);
+    overflow: visible;
+  }
+  .voice-guide .main-row {
+    flex: none;
+    overflow: visible;
+    min-height: 0;
   }
   .avatar-wrapper {
-    min-height: 280px;
+    flex: 0 0 auto;
+    min-height: 220px;
+    max-height: 40vh;
+  }
+  .textarea-input :deep(.el-textarea__inner) {
+    padding-right: 10px;
+    padding-bottom: 56px;
+    min-height: 80px;
+  }
+  .input-buttons {
+    gap: 6px;
   }
 }
 </style>

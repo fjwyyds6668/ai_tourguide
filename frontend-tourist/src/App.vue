@@ -14,8 +14,8 @@
       </el-main>
     </el-container>
 
-    <!-- 其他页面：左侧固定导航 + 右侧内容区 -->
-    <el-container v-else class="layout">
+    <!-- 其他页面：左侧固定导航 + 右侧内容区（桌面）；移动端为全屏内容 + 底部导航 -->
+    <el-container v-else class="layout layout-inner">
       <el-aside class="aside" :width="collapsed ? '64px' : '220px'">
         <div class="brand" :class="{ collapsed }">
           <span class="brand-text">{{ collapsed ? 'AI' : 'AI 数字人导游系统' }}</span>
@@ -50,7 +50,7 @@
         </div>
       </el-aside>
 
-      <el-container class="content" :style="{ marginLeft: collapsed ? '64px' : '220px' }">
+      <el-container class="content" :style="contentMargin">
         <el-main
           class="main main-no-header"
           :class="{ 'main-no-scroll': route.path === '/voice-guide' }"
@@ -62,16 +62,39 @@
           </router-view>
         </el-main>
       </el-container>
+
+      <!-- 移动端底部导航：仅在小屏显示 -->
+      <nav class="bottom-nav" aria-label="主导航">
+        <router-link to="/voice-guide" class="nav-item" :class="{ active: activePath === '/voice-guide' }">
+          <el-icon><Microphone /></el-icon>
+          <span>语音导览</span>
+        </router-link>
+        <router-link to="/attractions" class="nav-item" :class="{ active: activePath === '/attractions' }">
+          <el-icon><Location /></el-icon>
+          <span>景点浏览</span>
+        </router-link>
+        <router-link to="/history" class="nav-item" :class="{ active: activePath === '/history' }">
+          <el-icon><Document /></el-icon>
+          <span>历史记录</span>
+        </router-link>
+      </nav>
     </el-container>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Microphone, Location, Document, Fold, Expand } from '@element-plus/icons-vue'
 
-onMounted(() => {})
+const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
+const updateWidth = () => { windowWidth.value = window.innerWidth }
+onMounted(() => {
+  window.addEventListener('resize', updateWidth)
+})
+onUnmounted(() => {
+  window.removeEventListener('resize', updateWidth)
+})
 
 const collapsed = ref(false)
 const route = useRoute()
@@ -79,6 +102,11 @@ const router = useRouter()
 
 const activePath = computed(() => route.path)
 const isHome = computed(() => route.path === '/')
+
+const contentMargin = computed(() => {
+  if (windowWidth.value <= 768) return { marginLeft: '0' }
+  return { marginLeft: collapsed.value ? '64px' : '220px' }
+})
 
 const onSelect = (path) => {
   router.push(path)
@@ -244,6 +272,64 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .tourist-fade-enter-active,
   .tourist-fade-leave-active { transition: none; }
+}
+
+/* ---------- 移动端自适应：小屏隐藏侧栏、内容全宽 + 底部导航 ---------- */
+@media (max-width: 768px) {
+  .layout-inner .aside {
+    display: none;
+  }
+  .layout-inner .content {
+    margin-left: 0 !important;
+  }
+  .layout-inner .main {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom, 0));
+  }
+  /* 移动端语音导览为上下堆叠，需允许滚动才能看到下方对话记录 */
+  .main-no-header.main-no-scroll {
+    overflow: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  .bottom-nav {
+    display: flex !important;
+  }
+}
+
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: calc(56px + env(safe-area-inset-bottom, 0));
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  background: #fff;
+  border-top: 1px solid #eee;
+  z-index: 100;
+  align-items: center;
+  justify-content: space-around;
+  box-sizing: border-box;
+}
+
+.bottom-nav .nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 4px;
+  color: #909399;
+  text-decoration: none;
+  font-size: 12px;
+  gap: 4px;
+  -webkit-tap-highlight-color: transparent;
+}
+.bottom-nav .nav-item .el-icon {
+  font-size: 22px;
+}
+.bottom-nav .nav-item.active {
+  color: #409eff;
+  font-weight: 600;
 }
 </style>
 

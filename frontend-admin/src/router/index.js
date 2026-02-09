@@ -12,6 +12,7 @@ const routes = [
       { path: 'characters', name: 'Characters', component: () => import('../views/CharactersManagement.vue') },
       { path: 'knowledge', name: 'Knowledge', component: () => import('../views/KnowledgeBase.vue') },
       { path: 'analytics', name: 'Analytics', component: () => import('../views/Analytics.vue') },
+      { path: 'tourist-entry', name: 'TouristEntry', component: () => import('../views/TouristEntry.vue') },
       { path: 'settings', name: 'Settings', component: () => import('../views/Settings.vue') },
       { path: 'attractions', redirect: '/knowledge' },
     ],

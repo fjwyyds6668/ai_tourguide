@@ -11,7 +11,7 @@
           v-model="selectedScenicId"
           placeholder="请选择景区"
           size="large"
-          style="width: 320px"
+          class="scenic-select"
           @change="handleScenicChange"
         >
           <el-option
@@ -24,7 +24,7 @@
       </div>
 
       <el-row :gutter="20" class="feature-cards" style="margin-top: 24px">
-        <el-col :span="8" class="feature-col">
+        <el-col :xs="24" :sm="24" :md="8" class="feature-col">
           <el-card
             shadow="hover"
             :class="{ disabled: !selectedScenicId }"
@@ -35,7 +35,7 @@
             <p>与 AI 导游进行实时语音交互</p>
           </el-card>
         </el-col>
-        <el-col :span="8" class="feature-col">
+        <el-col :xs="24" :sm="24" :md="8" class="feature-col">
           <el-card
             shadow="hover"
             :class="{ disabled: !selectedScenicId }"
@@ -46,7 +46,7 @@
             <p>查看该景区下的所有景点</p>
           </el-card>
         </el-col>
-        <el-col :span="8" class="feature-col">
+        <el-col :xs="24" :sm="24" :md="8" class="feature-col">
           <el-card
             shadow="hover"
             :class="{ disabled: !selectedScenicId }"
@@ -74,17 +74,15 @@ const scenicSpots = ref([])
 const selectedScenic = ref(null)
 const selectedScenicId = ref(null)
 
+// 图片地址：扫码/隧道访问时用相对路径走同源，由 Vite 代理 /uploads 到后端
 const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
-
-const backgroundImageUrl = computed(() => {
-  const url = selectedScenic.value?.cover_image_url
-  if (!url) {
-    return ''
-  }
-  return url.startsWith('http://') || url.startsWith('https://')
-    ? url
-    : `${backendOrigin}${url}`
-})
+const getImageUrl = (url) => {
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  if (url.startsWith('/')) return url
+  return `${backendOrigin}${url}`
+}
+const backgroundImageUrl = computed(() => getImageUrl(selectedScenic.value?.cover_image_url))
 
 watch(backgroundImageUrl, async (url) => {
   await nextTick()
@@ -99,17 +97,22 @@ watch(backgroundImageUrl, async (url) => {
 }, { immediate: true })
 
 onMounted(async () => {
-  try {
-    const res = await api.get('/attractions/scenic-spots')
+  // 景区列表不阻塞首屏渲染，请求在后台完成
+  api.get('/attractions/scenic-spots').then(res => {
     scenicSpots.value = res.data || []
-    // 不默认选中景区，由用户进入首页后自行选择
-  } catch (e) {
+  }).catch(e => {
     console.error('加载景区列表失败:', e)
-  }
+  })
   await nextTick()
   const mainEl = document.querySelector('.el-main.main-with-header')
   if (mainEl && !backgroundImageUrl.value) {
     mainEl.style.background = '#f5f7fa'
+  }
+  // 空闲时预取语音导览页，点击时响应更快
+  if (typeof requestIdleCallback !== 'undefined') {
+    requestIdleCallback(() => {
+      import(/* webpackChunkName: "voice-guide" */ './VoiceGuide.vue').catch(() => {})
+    }, { timeout: 2000 })
   }
 })
 
@@ -194,6 +197,55 @@ const navigateIfSelected = (path) => {
   display: flex;
   justify-content: center;
   margin-top: 8px;
+}
+.scenic-select-wrapper :deep(.el-select) {
+  width: 100%;
+  max-width: 320px;
+}
+@media (max-width: 768px) {
+  .home {
+    padding: 16px !important;
+    justify-content: center !important;
+    align-items: center !important;
+  }
+  .home-card {
+    width: calc(100% - 48px) !important; /* 左右各留 24px，更像中间一块小区域 */
+    max-width: 320px !important; /* 控制在语音导览板块大小 */
+    max-height: 52vh !important; /* 约半屏高，突出“一块区域” */
+    margin: 0 auto !important;
+    /* 白色更透明，背景图更明显 */
+    background: rgba(255, 255, 255, 0.48) !important;
+    backdrop-filter: blur(6px) !important;
+    -webkit-backdrop-filter: blur(6px) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    border-radius: 14px !important;
+  }
+  .home-card :deep(.el-card__header) {
+    padding: 10px 12px !important;
+    flex-shrink: 0;
+  }
+  .home-card :deep(.el-card__body) {
+    padding: 8px 12px 12px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    flex: 1 !important;
+    min-height: 0 !important;
+  }
+  .feature-cards {
+    margin-top: 12px !important;
+    gap: 0 12px;
+  }
+  .feature-cards .feature-col .el-card {
+    background: rgba(255, 255, 255, 0.55) !important;
+    backdrop-filter: blur(5px) !important;
+    -webkit-backdrop-filter: blur(5px) !important;
+  }
+  .feature-cards .feature-col .el-card :deep(.el-card__body) {
+    padding-top: 14px !important;
+  }
 }
 
 .feature-cards {

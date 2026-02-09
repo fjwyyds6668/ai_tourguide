@@ -21,7 +21,9 @@ const canvasRef = ref(null)
 let resizeHandler = null
 
 const buildCharacterResource = () => {
-  const base = `/sentio/characters/${props.characterGroup}/${props.characterName}/`
+  // 使用当前页面 origin，扫码/隧道访问时与页面同源，避免资源 404 或跨域导致数字人黑屏
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const base = `${origin}/sentio/characters/${props.characterGroup}/${props.characterName}/`
   return {
     resource_id: `${props.characterGroup}:${props.characterName}`,
     name: props.characterName,

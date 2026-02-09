@@ -28,6 +28,10 @@
         <el-icon><DataAnalysis /></el-icon>
         <span>数据分析</span>
       </el-menu-item>
+      <el-menu-item index="/tourist-entry">
+        <el-icon><Iphone /></el-icon>
+        <span>游客端入口</span>
+      </el-menu-item>
       <el-menu-item index="/settings">
         <el-icon><Setting /></el-icon>
         <span>系统设置</span>
@@ -77,7 +81,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Odometer, User, Folder, DataAnalysis, Setting, UserFilled, Upload, SwitchButton, Fold, Expand } from '@element-plus/icons-vue'
+import { Odometer, User, Folder, DataAnalysis, Iphone, Setting, UserFilled, Upload, SwitchButton, Fold, Expand } from '@element-plus/icons-vue'
 import api from '../api'
 
 defineProps({ collapsed: Boolean })

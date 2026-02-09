@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tunnel": "npx cloudflared tunnel --url http://localhost:5173",
+    "tunnel:fallback": "npx localtunnel --port 5173"
   },
   "dependencies": {
     "vue": "^3.3.4",
@@ -20,4 +22,3 @@
     "vite": "^5.0.0"
   }
 }
-

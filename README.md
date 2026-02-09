@@ -137,6 +137,18 @@ uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 | 游客端 | `cd frontend-tourist && npm install && npm run dev` | http://localhost:5173 |
 | 管理端 | `cd frontend-admin && npm install && npm run dev` | http://localhost:5522 |
 
+### 5.4 公网访问（所有人扫码、无需同一 WiFi、无需隧道密码）
+
+要让游客在任意网络下扫码即开，推荐使用 **Cloudflare 快速隧道**：
+
+1. **启动游客端**：`cd frontend-tourist && npm run dev`
+2. **启动隧道**（在游客端目录另开终端）：`npm run tunnel`  
+   首次运行会自动下载 cloudflared。终端会输出公网地址，形如 `https://xxx.trycloudflare.com`，游客扫码即可直接打开，无需输入密码。
+3. **配置二维码**：在管理端打开「游客端入口」，将上述公网地址填入「游客端地址」输入框，即可生成二维码。
+
+**若出现 Cloudflare 错误（如 Error 1101、`invalid character '<' looking for beginning of value`）**：  
+说明 Cloudflare 快速隧道接口暂时异常，可先**过一段时间重试** `npm run tunnel`，或使用备用隧道：在游客端目录执行 `npm run tunnel:fallback`，将终端里显示的地址（如 `https://xxx.loca.lt`）填入管理端「游客端入口」。备用隧道首次访问时可能需在浏览器中点击一次“继续”才能打开。
+
 ---
 
 ## 6. 语音与数字人配置

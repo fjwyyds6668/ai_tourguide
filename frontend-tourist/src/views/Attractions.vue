@@ -21,7 +21,9 @@
       <div v-loading="loading" class="attractions-body">
         <el-row v-if="filteredAttractions.length > 0" :gutter="20">
           <el-col
-            :span="8"
+            :xs="24"
+            :sm="12"
+            :md="8"
             v-for="attraction in filteredAttractions"
             :key="attraction.id"
             class="attraction-col"
@@ -78,14 +80,12 @@ const searchText = ref('')
 const detailVisible = ref(false)
 const selectedAttraction = ref(null)
 
-const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
-
+// 图片地址：扫码/隧道访问时用相对路径走同源，由 Vite 代理 /uploads 到后端
 const imageSrc = (url) => {
   if (!url) return ''
-  // 后端返回形如 /uploads/images/xxx.jpg 的相对路径，需要拼上后端地址
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    return url
-  }
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  if (url.startsWith('/')) return url
+  const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
   return `${backendOrigin}${url}`
 }
 
@@ -182,6 +182,14 @@ onMounted(async () => {
 
 .search-input {
   width: 300px;
+}
+@media (max-width: 768px) {
+  .attractions {
+    padding: 12px;
+  }
+  .search-row .search-input {
+    width: 100%;
+  }
 }
 
 .card-title {

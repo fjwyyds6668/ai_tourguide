@@ -5,13 +5,14 @@
         <span class="card-title">历史记录</span>
       </template>
       
-      <el-table
-        :data="historyList"
-        v-loading="loading"
-        style="width: 100%"
-        stripe
-        :row-key="(row) => row.id"
-      >
+      <div class="table-wrap">
+        <el-table
+          :data="historyList"
+          v-loading="loading"
+          style="width: 100%; min-width: 600px"
+          stripe
+          :row-key="(row) => row.id"
+        >
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="query_text" label="问题" min-width="200" />
         <el-table-column prop="response_text" label="回答" min-width="300" />
@@ -21,9 +22,10 @@
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty description="暂无历史记录" />
-        </template>
-      </el-table>
+            <el-empty description="暂无历史记录" />
+          </template>
+        </el-table>
+      </div>
       
       <div class="pagination-wrap">
         <el-pagination
@@ -128,10 +130,26 @@ onMounted(() => {
   color: var(--rag-black);
 }
 
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .pagination-wrap {
   margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 768px) {
+  .history-page {
+    padding: 12px;
+  }
+  .pagination-wrap {
+    justify-content: center;
+  }
 }
 </style>
 

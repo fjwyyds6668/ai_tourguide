@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     COSYVOICE_PROMPT_WAV: str = ""
     COSYVOICE_PROMPT_TEXT: str = ""
 
+    # 游客端访问地址（用于生成扫码入口二维码，如 http://192.168.1.100:5173）
+    TOURIST_APP_URL: Optional[str] = None
+
     # 管理端 / 上传等配置
     ADMIN_MAX_IMAGE_SIZE_MB: int = 10
     ADMIN_ALLOWED_IMAGE_EXTS: List[str] = [".png", ".jpg", ".jpeg", ".webp", ".gif"]

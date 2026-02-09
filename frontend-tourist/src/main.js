@@ -41,3 +41,12 @@ app.use(ElementPlus)
 
 app.mount('#app')
 
+// 首屏加载完成后隐藏加载态，提升感知速度
+const loadingEl = document.getElementById('app-loading')
+if (loadingEl) {
+  loadingEl.classList.add('app-loaded')
+  requestAnimationFrame(() => {
+    setTimeout(() => loadingEl.remove(), 220)
+  })
+}
+
