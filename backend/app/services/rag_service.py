@@ -816,6 +816,13 @@ class RAGService:
         q = query.strip().lower()
         if not q:
             return QueryIntent.GENERAL
+
+        # 票务/价格类问题优先归为 DETAIL（因为主要问的是具体信息而非列表/路线）
+        if re.search(
+            r"门票|票价|成人票|学生票|半票|优惠票|年卡|票多少钱|票多钱|多少钱票",
+            q,
+        ):
+            return QueryIntent.DETAIL
         
         # 路线/行程类（优先级最高，因为需要特殊处理）
         if re.search(
@@ -856,7 +863,7 @@ class RAGService:
         
         # 详情/介绍类（含门票、开放时间等实用信息）
         if re.search(
-            r"介绍|详情|详细|是什么|什么样|描述|说说|讲讲|了解|门票|票价|开放时间|营业时间",
+            r"介绍|详情|详细|是什么|什么样|描述|说说|讲讲|了解|开放时间|营业时间",
             q
         ):
             return QueryIntent.DETAIL

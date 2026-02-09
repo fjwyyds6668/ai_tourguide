@@ -271,7 +271,9 @@ class GraphBuilder:
                 q_f = """
                 UNWIND $features AS fname
                 MATCH (a:Attraction {id: $id})
-                MERGE (f:Feature {name: fname})
+                // 为避免景点之间因共用 Feature 节点而产生间接“连通”，
+                // 这里按 (name, attraction_id) 作为唯一键，为每个景点创建自己的 Feature 节点。
+                MERGE (f:Feature {name: fname, attraction_id: $id})
                 MERGE (a)-[:HAS_FEATURE]->(f)
                 """
                 self.client.execute_query(q_f, {"id": int(att_id), "features": feats})
@@ -281,7 +283,8 @@ class GraphBuilder:
                 q_h = """
                 UNWIND $honors AS hname
                 MATCH (a:Attraction {id: $id})
-                MERGE (h:Honor {name: hname})
+                // 同理，按 (name, attraction_id) 唯一，避免不同景点通过共用 Honor 节点相连
+                MERGE (h:Honor {name: hname, attraction_id: $id})
                 MERGE (a)-[:HAS_HONOR]->(h)
                 """
                 self.client.execute_query(q_h, {"id": int(att_id), "honors": hns})
@@ -318,13 +321,12 @@ class GraphBuilder:
     async def build_attraction_graph(self, attractions: List[Dict[str, Any]]):
         """
         批量构建景点图谱。
-        要求：所有景点簇必须连接到某个景区簇。
-        因此，这里优先使用 build_attraction_cluster 来创建景点节点，
-        仅当景点具备 scenic_spot_id 时才构图，避免生成游离的 Attraction 小簇。
-        之后在已创建的 Attraction 之间按类别补充 NEARBY 关系。
+        要求：所有景点簇必须连接到某个景区簇，且景点之间**不再直接建立关系**。
+        因此，这里仅调用 build_attraction_cluster 为每个景点补全自身簇，
+        并确保通过“属于 / HAS_SPOT”挂接到对应 ScenicSpot。
+        Attraction 之间不再创建 NEARBY 等边。
         """
-        # 先为每个景点构建“以景区为中心”的景点簇
-        valid_attractions: List[Dict[str, Any]] = []
+        # 为每个景点构建“以景区为中心”的景点簇
         for attraction in attractions:
             scenic_spot_id = attraction.get("scenic_spot_id")
             if not scenic_spot_id:
@@ -342,7 +344,6 @@ class GraphBuilder:
                     text=None,
                     parsed=None,
                 )
-                valid_attractions.append(attraction)
             except Exception as e:
                 logger.error(
                     "build_attraction_graph: 构建景点簇失败 id=%s name=%s: %s",
@@ -350,17 +351,6 @@ class GraphBuilder:
                     attraction.get("name"),
                     e,
                 )
-
-        # 在同类别的景点之间补充 NEARBY 关系（它们本身已挂在各自景区簇下）
-        for i, att1 in enumerate(valid_attractions):
-            for att2 in valid_attractions[i + 1 :]:
-                if att1.get("category") and att1.get("category") == att2.get("category"):
-                    await self.create_relationship(
-                        att1["name"],
-                        att2["name"],
-                        "NEARBY",
-                        {"category": att1.get("category")},
-                    )
     
     async def extract_and_store_entities(
         self,
