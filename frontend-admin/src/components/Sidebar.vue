@@ -30,7 +30,7 @@
       </el-menu-item>
       <el-menu-item index="/tourist-entry">
         <el-icon><Iphone /></el-icon>
-        <span>游客端入口</span>
+        <span>移动端入口</span>
       </el-menu-item>
       <el-menu-item index="/settings">
         <el-icon><Setting /></el-icon>

@@ -1,6 +1,6 @@
 <template>
   <div class="tourist-entry-page">
-    <h1 class="admin-page-title">游客端入口</h1>
+    <h1 class="admin-page-title">移动端入口</h1>
     <p class="page-desc">将下方二维码展示给游客，使用微信、QQ 或手机自带相机扫码即可打开游客端应用（可在浏览器或应用内打开）。</p>
 
     <el-card class="qrcode-card" shadow="hover">

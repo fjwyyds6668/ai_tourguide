@@ -213,8 +213,14 @@ class RAGService:
         system_prompt = """
 你是景区知识结构化助手。请把一段中文景区介绍或景区说明（包括票务政策、开放时间、交通、服务设施等）提取成 JSON，严格按字段返回，不要多余说明。
 
+统一命名规范（非常重要，用于控制图谱中的节点与关系）：
+1）scenic_spot：输出景区的正式全称，例如“蜀南竹海景区”或“蜀南竹海旅游度假区”，不要只输出“蜀南竹海”三个字。
+2）spots 数组中的每个元素是“子景点/核心游览点”的常用短名称，例如“海中海”“观光索道”“竹尖漫步”，不要带“景点”“景区”等后缀。
+3）features / awards 中的每个元素是简洁的名词短语，例如“森林覆盖率高”“世界竹子公园”“国家级旅游度假区”，不要写成很长的句子。
+4）所有数组中的名称，尽量避免重复、避免包含明显无意义的词（比如“这里”“景区里”等）。
+
 返回字段：
-- scenic_spot: 景区名称（字符串）
+- scenic_spot: 景区名称（字符串，按上述规范）
 - location: 行政层级数组，例如 ["四川省", "宜宾市", "长宁县"]（若缺少下级可省略）
 - area: 面积（原文中的描述字符串，若没有则为 null）
 - features: 特色数组，例如 ["天然竹林","森林覆盖率93%","气候温和","雨量充沛"]
@@ -264,8 +270,13 @@ class RAGService:
         system_prompt = """
 你是景点知识结构化助手。请把一段中文“单个景点”的介绍提取成 JSON，严格按字段返回，不要多余说明。
 
+统一命名规范（用于控制图谱中的节点与关系）：
+1）name：输出该景点在图谱中要使用的标准名称，尽量为常用短名，例如“海中海”“竹海博物馆”，不要包含“景点”“景区”等后缀。
+2）category：尽量使用简洁类别词，例如“自然风光”“人文景观”“游乐项目”“观光索道”等。
+3）features / honors 数组中的每个元素是简洁的名词短语，例如“竹筏漂流体验”“国家 4A 级景区核心景点”，不要写成很长的句子。
+
 返回字段：
-- name: 景点名称（字符串）
+- name: 景点名称（字符串，按上述规范）
 - location: 行政层级数组，例如 ["四川省", "宜宾市", "长宁县"]（若无法判断则返回 []）
 - category: 类别（字符串或 null）
 - features: 特色/要点数组（若没有则 []）
@@ -1280,6 +1291,18 @@ class RAGService:
                     enhanced_results = (sentence + "\n\n" + (enhanced_results or "")).strip()
             except Exception as e:
                 logger.warning(f"列举查询兜底查景区景点数量失败: {e}")
+
+        # 详情类问题（如门票、开放时间等）且前端已提供 scenic_name 时，
+        # 直接补充该景区一簇信息（包含 ticket_info / opening_hours 等结构化属性），
+        # 即使向量检索命中很弱也能给出实用答案。
+        if intent == QueryIntent.DETAIL and scenic_name_str:
+            try:
+                scenic_ctx_detail = await self._get_scenic_spot_cluster_context_by_name(scenic_name_str)
+                if scenic_ctx_detail:
+                    # 将景区簇信息放在上下文最前，便于大模型优先利用
+                    enhanced_results = (scenic_ctx_detail + "\n\n" + (enhanced_results or "")).strip()
+            except Exception as e:
+                logger.warning(f"DETAIL 查询补充景区簇上下文失败: {e}")
         query_about_scenic = bool(re.search(r"什么景区|哪个景区|是啥景区|这是什么景区|是哪个景区|啥景区|哪个景点.*景区|介绍.*景区|景区.*介绍|这个景区", (query or "").strip()))
         scenic_ctx_found = False
         if query_about_scenic:
@@ -1302,6 +1325,10 @@ class RAGService:
             if entity_names:
                 for entity_name in entity_names[:3]:
                     scenic_tasks.append(self._get_scenic_spot_cluster_by_entity_name(entity_name))
+            # 如果前端已提供当前景区名称（scenic_name），优先直接按名称拉取该景区一簇，
+            # 用于处理「介绍一下这个景区」这类纯指代问句。
+            if scenic_name_str:
+                scenic_tasks.append(self._get_scenic_spot_cluster_context_by_name(scenic_name_str))
             
             if subgraph_data:
                 async def get_scenic_from_subgraph():
@@ -1513,6 +1540,10 @@ class RAGService:
         s_name = ""
         s_area = ""
         s_location = ""
+        s_ticket_info = ""
+        s_opening_hours = ""
+        s_transport_info = ""
+        s_service_facilities = ""
         spot_names = []
         feature_names = []
         honor_names = []
@@ -1526,10 +1557,19 @@ class RAGService:
                     s_name = (s.get("name") or "").strip()
                     s_area = (s.get("area") or "").strip()
                     s_location = (s.get("location") or "").strip()
+                    s_ticket_info = (s.get("ticket_info") or "").strip()
+                    s_opening_hours = (s.get("opening_hours") or "").strip()
+                    s_transport_info = (s.get("transport_info") or "").strip()
+                    s_service_facilities = (s.get("service_facilities") or "").strip()
                 elif isinstance(s, dict):
                     s_name = (s.get("name") or (s.get("properties") or {}).get("name") or "").strip()
                     s_area = (s.get("area") or (s.get("properties") or {}).get("area") or "").strip()
                     s_location = (s.get("location") or (s.get("properties") or {}).get("location") or "").strip()
+                    props = s.get("properties") or {}
+                    s_ticket_info = (s.get("ticket_info") or props.get("ticket_info") or "").strip()
+                    s_opening_hours = (s.get("opening_hours") or props.get("opening_hours") or "").strip()
+                    s_transport_info = (s.get("transport_info") or props.get("transport_info") or "").strip()
+                    s_service_facilities = (s.get("service_facilities") or props.get("service_facilities") or "").strip()
             if rel_type and n is not None:
                 n_name = self._get_node_name(n)
                 if not n_name:
@@ -1551,6 +1591,14 @@ class RAGService:
             lines.append(f"位置：{s_location}")
         if location_name:
             lines.append(f"所在：{location_name}")
+        if s_ticket_info:
+            lines.append(f"门票与优惠：{s_ticket_info}")
+        if s_opening_hours:
+            lines.append(f"开放时间：{s_opening_hours}")
+        if s_transport_info:
+            lines.append(f"交通信息：{s_transport_info}")
+        if s_service_facilities:
+            lines.append(f"服务设施：{s_service_facilities}")
         if spot_names:
             lines.append("下属景点：" + "、".join(spot_names[:20]))
         if feature_names:
