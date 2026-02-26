@@ -236,7 +236,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
         else:
             system_prompt = RAG_BASE_SYSTEM_PROMPT
 
-        backend_tts_enabled = bool(settings.XFYUN_APPID and settings.XFYUN_API_KEY) or settings.LOCAL_TTS_ENABLED
+        backend_tts_enabled = bool(settings.XFYUN_APPID and settings.XFYUN_API_KEY)
         
         messages = [{"role": "system", "content": system_prompt}]
         if conversation_history:
@@ -278,26 +278,15 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                     return
                 path = None
                 try:
-                    if not settings.LOCAL_TTS_FORCE:
-                        try:
-                            path = await asyncio.wait_for(
-                                voice_service.synthesize_xfyun(txt, voice=voice),
-                                timeout=TTS_SENTENCE_TIMEOUT,
-                            )
-                        except asyncio.TimeoutError:
-                            logger.debug("科大讯飞 TTS 单句超时(%ds)", TTS_SENTENCE_TIMEOUT)
-                        except Exception as e:
-                            logger.debug("科大讯飞 TTS 失败: %s", e)
-                    if path is None and settings.LOCAL_TTS_ENABLED:
-                        try:
-                            path = await asyncio.wait_for(
-                                voice_service.synthesize_local_cosyvoice2(txt, voice=voice),
-                                timeout=TTS_SENTENCE_TIMEOUT,
-                            )
-                        except asyncio.TimeoutError:
-                            logger.debug("CosyVoice2 TTS 单句超时")
-                        except Exception as e:
-                            logger.debug("CosyVoice2 TTS 失败: %s", e)
+                    try:
+                        path = await asyncio.wait_for(
+                            voice_service.synthesize_xfyun(txt, voice=voice),
+                            timeout=TTS_SENTENCE_TIMEOUT,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.debug("科大讯飞 TTS 单句超时(%ds)", TTS_SENTENCE_TIMEOUT)
+                    except Exception as e:
+                        logger.debug("科大讯飞 TTS 失败: %s", e)
                     if path and os.path.exists(path):
                         with open(path, "rb") as f:
                             b64 = base64.b64encode(f.read()).decode("utf-8")

@@ -165,21 +165,11 @@ async def synthesize_speech(
         audio_path = None
         last_error = None
 
-        if not settings.LOCAL_TTS_FORCE:
-            try:
-                audio_path = await voice_service.synthesize_xfyun(text, voice=voice)
-            except Exception as e:
-                last_error = e
-                logger.error(f"科大讯飞 TTS 合成失败: {e}")
-
-        if (audio_path is None) and settings.LOCAL_TTS_ENABLED:
-            try:
-                audio_path = await voice_service.synthesize_local_cosyvoice2(text, voice=voice)
-                last_error = None
-                logger.info("使用 CosyVoice2 TTS（备用方案）合成成功")
-            except Exception as e:
-                last_error = e
-                logger.error(f"CosyVoice2 TTS（备用方案）合成失败: {e}")
+        try:
+            audio_path = await voice_service.synthesize_xfyun(text, voice=voice)
+        except Exception as e:
+            last_error = e
+            logger.error(f"科大讯飞 TTS 合成失败: {e}")
 
         if audio_path is None:
             raise HTTPException(status_code=400, detail=f"TTS 合成失败：{str(last_error) if last_error else 'unknown error'}")
@@ -201,7 +191,7 @@ async def synthesize_speech(
         logger.error(f"TTS synthesize failed: {e}")
         error_detail = str(e)
         if "XFYUN_APPID" in error_detail or "XFYUN_API_KEY" in error_detail or "XFYUN_API_SECRET" in error_detail:
-            error_detail = "科大讯飞 TTS 未配置。请设置 XFYUN_APPID / XFYUN_API_KEY / XFYUN_API_SECRET，或启用离线本地 TTS（CosyVoice2）。"
+            error_detail = "科大讯飞 TTS 未配置。请设置 XFYUN_APPID / XFYUN_API_KEY / XFYUN_API_SECRET。"
         raise HTTPException(status_code=400, detail=f"TTS 合成失败：{error_detail}")
 
 @router.post("/synthesize-stream")
@@ -242,20 +232,11 @@ async def synthesize_speech_stream(
         audio_path = None
         last_error = None
 
-        if not settings.LOCAL_TTS_FORCE:
-            try:
-                audio_path = await voice_service.synthesize_xfyun(text, voice=voice)
-            except Exception as e:
-                last_error = e
-                logger.debug("科大讯飞流式 TTS 失败: %s", e)
-
-        if (audio_path is None) and settings.LOCAL_TTS_ENABLED:
-            try:
-                audio_path = await voice_service.synthesize_local_cosyvoice2(text, voice=voice)
-                last_error = None
-            except Exception as e:
-                last_error = e
-                logger.debug("CosyVoice2 流式 TTS 失败: %s", e)
+        try:
+            audio_path = await voice_service.synthesize_xfyun(text, voice=voice)
+        except Exception as e:
+            last_error = e
+            logger.debug("科大讯飞流式 TTS 失败: %s", e)
 
         if audio_path is None:
             raise HTTPException(status_code=400, detail=f"流式 TTS 合成失败：{str(last_error) if last_error else 'unknown error'}")

@@ -10,7 +10,7 @@
 
 ### 1.1 数字人技术
 
-本系统采用 Live2D 数字人形象，结合 Whisper / Vosk 完成语音识别，使用科大讯飞 TTS 与本地 CosyVoice2 进行语音合成，实现“语音输入 → 文本理解 → 语音输出”的多模态导览交互。
+本系统采用 Live2D 数字人形象，结合 Whisper / Vosk 完成语音识别，使用科大讯飞 TTS 进行语音合成，实现“语音输入 → 文本理解 → 语音输出”的多模态导览交互。
 
 ### 1.2 知识库与检索技术
 
@@ -57,8 +57,8 @@
 | **Node.js** | 16+（推荐 18+） |
 | **PostgreSQL** | 12+（需单独安装运行，不在 docker-compose 中） |
 | **Docker** | 20+（Neo4j、Milvus、MinIO） |
-| **内存** | 建议 8GB+（仅接口调用 LLM/TTS 时；本地 CosyVoice2 需 16GB+） |
-| **磁盘** | 建议 5GB+（应用与数据）；本地嵌入模型、Whisper/Vosk、CosyVoice2 会额外占数 GB，若 LLM/TTS 全走接口则无需为模型预留） |
+| **内存** | 建议 8GB+（仅接口调用 LLM/TTS 时） |
+| **磁盘** | 建议 5GB+（应用与数据）；本地嵌入模型、Whisper/Vosk 会额外占数 GB，若 LLM/TTS 全走接口则无需为模型预留） |
 
 ### 3.2 核心依赖版本
 
@@ -151,7 +151,6 @@ uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 - **Whisper**：自动下载模型，首次使用需联网
 - **Vosk**：需下载 [中文模型](https://alphacephei.com/vosk/models/vosk-model-cn-0.22.zip)
 - **科大讯飞 TTS**：在 [开放平台](https://www.xfyun.cn/) 注册，配置 `XFYUN_*` 变量
-- **CosyVoice2（本地备用）**：克隆 CosyVoice 到项目根目录，设置 `LOCAL_TTS_ENABLED=true` 等，详见 `.env.example`
 - **数字人角色**：在管理端「角色管理」中配置 Live2D 形象与音色
 
 ---
@@ -187,7 +186,7 @@ uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 1. **数据库连接失败**：检查 `.env` 配置，确认 PostgreSQL、Neo4j、Milvus 已启动
 2. **Prisma 客户端未生成**：执行 `cd backend && prisma generate`
 3. **CORS 错误**：后端已默认允许 5173（游客端）、5522（管理端）；若使用其他端口，需在 `backend/app/core/config.py` 的 `CORS_ORIGINS` 中添加对应地址
-4. **TTS/语音识别失败**：Whisper 需约 1.5GB 磁盘；科大讯飞失败时可启用 CosyVoice2 备用
+4. **TTS/语音识别失败**：Whisper 需约 1.5GB 磁盘；请检查科大讯飞 `XFYUN_*` 配置是否正确
 
 ---
 

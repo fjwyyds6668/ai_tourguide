@@ -10,7 +10,7 @@
         show-icon
         style="margin-bottom: 24px"
       >
-        修改配置后需要重启后端服务才能生效。默认使用在线科大讯飞 TTS；当启用备用TTS后，在线服务失败会自动降级到本地 CosyVoice2（也可选择强制始终使用 CosyVoice2）。
+        修改配置后需要重启后端服务才能生效。当前系统仅使用在线科大讯飞 TTS 进行语音合成。
       </el-alert>
       <el-form ref="formRef" :model="config" label-position="top" @submit.prevent="handleSave">
         <el-form-item label="默认讯飞音色（XFYUN_VOICE）">
@@ -23,33 +23,6 @@
             <el-option v-for="opt in voiceOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="启用备用TTS（本地 CosyVoice2）">
-          <el-switch v-model="config.local_tts_enabled" />
-        </el-form-item>
-        <el-form-item label="强制使用备用TTS（CosyVoice2）">
-          <el-switch v-model="config.local_tts_force" />
-        </el-form-item>
-        <el-form-item label="备用TTS引擎">
-          <el-select v-model="config.local_tts_engine" disabled style="width: 100%">
-            <el-option label="CosyVoice2" value="cosyvoice2" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="CosyVoice2 模型路径（可选）">
-          <el-input v-model="config.cosyvoice2_model_path" placeholder="例如：CosyVoice/models 或留空" clearable />
-        </el-form-item>
-        <el-form-item label="CosyVoice2 运行设备">
-          <el-select v-model="config.cosyvoice2_device" style="width: 100%">
-            <el-option label="cpu" value="cpu" />
-            <el-option label="cuda" value="cuda" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="CosyVoice2 语言">
-          <el-select v-model="config.cosyvoice2_language" style="width: 100%">
-            <el-option label="zh" value="zh" />
-            <el-option label="en" value="en" />
-            <el-option label="ja" value="ja" />
-          </el-select>
-        </el-form-item>
         <el-form-item>
           <el-space>
             <el-button type="primary" :icon="Check" :loading="saving" @click="handleSave">保存配置</el-button>
@@ -60,12 +33,6 @@
       <div class="config-status">
         <div><strong>当前配置状态：</strong></div>
         <div>默认讯飞音色：<el-tag>{{ config.xfyun_voice || 'x4_yezi' }}</el-tag></div>
-        <div>备用TTS（CosyVoice2）：<el-tag :type="config.local_tts_enabled ? 'success' : 'info'">{{ config.local_tts_enabled ? '已启用' : '未启用' }}</el-tag></div>
-        <div>强制使用 CosyVoice2：<el-tag :type="config.local_tts_force ? 'warning' : 'info'">{{ config.local_tts_force ? '已启用' : '未启用' }}</el-tag></div>
-        <div>备用引擎：<el-tag>{{ config.local_tts_engine || 'cosyvoice2' }}</el-tag></div>
-        <div>CosyVoice2模型路径：<el-tag>{{ config.cosyvoice2_model_path || '未设置' }}</el-tag></div>
-        <div>CosyVoice2设备：<el-tag>{{ config.cosyvoice2_device || 'cpu' }}</el-tag></div>
-        <div>CosyVoice2语言：<el-tag>{{ config.cosyvoice2_language || 'zh' }}</el-tag></div>
       </div>
     </el-card>
   </div>
@@ -83,12 +50,6 @@ const formRef = ref(null)
 const voiceOptions = ref([])
 const config = reactive({
   xfyun_voice: 'x4_yezi',
-  local_tts_enabled: false,
-  local_tts_force: false,
-  local_tts_engine: 'cosyvoice2',
-  cosyvoice2_model_path: '',
-  cosyvoice2_device: 'cpu',
-  cosyvoice2_language: 'zh',
 })
 
 const fetchVoiceOptions = async () => {

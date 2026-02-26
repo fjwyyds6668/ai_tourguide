@@ -22,14 +22,6 @@ protobuf>=4.21.0  # pymilvus 需要 protobuf 4.x 版本
 # 语音处理
 openai-whisper>=20231117
 vosk==0.3.45
-azure-cognitiveservices-speech==1.32.1
-edge-tts==6.1.9
-# 本地 TTS（CosyVoice2）依赖 / 通用音频依赖
-torch>=2.0.0
-soundfile>=0.12.0
-pyyaml>=6.0
-# CosyVoice2 依赖
-modelscope>=1.9.0
 
 # AI 和向量
 openai==1.3.7
