@@ -5,7 +5,7 @@ import json
 import asyncio
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
 from enum import Enum
 from sentence_transformers import SentenceTransformer
@@ -53,6 +53,21 @@ class QueryIntent(Enum):
     LOCATION = "location"  # 位置/导航查询
     FEATURE = "feature"  # 特色/功能查询
     GENERAL = "general"  # 通用查询
+
+
+# 意图分类 LLM 提示：仅用于意图判断，要求单词输出
+INTENT_CLASSIFY_SYSTEM = """你是景区导览问答系统的意图分类器。根据用户问题（及可选的知识库检索片段）判断用户意图，只输出一个英文单词，不要解释。
+
+意图定义：
+- route：路线/行程/怎么走/游玩顺序/推荐路线/一日游路线等
+- listing：有哪些/有多少个/列举/列出景点或数量
+- detail：介绍/详情/门票/票价/开放时间/描述/说说/讲讲
+- comparison：哪个更好/对比/比较/区别/差异
+- location：在哪/位置/地址/怎么去/导航/距离/附近
+- feature：特色/特点/好玩/玩什么/亮点/推荐理由
+- general：寒暄、问候、无法归入以上类型的通用问题
+
+只输出一个词：route、listing、detail、comparison、location、feature、general 之一。"""
 
 
 def _monotonic() -> float:
@@ -465,7 +480,7 @@ class RAGService:
             return [dict(item) for item in cached]
         self._cache_stats["vector_misses"] = int(self._cache_stats.get("vector_misses", 0)) + 1
 
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         if not milvus_client.connected:
             milvus_client.connect()
         try:
@@ -563,7 +578,7 @@ class RAGService:
                     "score": 1 / (1 + hit.distance) if hit.distance > 0 else 1.0,
                 })
         
-        elapsed_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
+        elapsed_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
         logger.info(
             "vector_search done: collection=%s, top_k=%d, hits=%d, elapsed=%.1fms",
             collection_name,
@@ -796,78 +811,66 @@ class RAGService:
             names.append(t)
         return names[:5]
 
-    def _is_route_query(self, query: str) -> bool:
-        """判断是否为“路线/行程/推荐路线”类问题。"""
+    async def _classify_query_intent(self, query: str) -> QueryIntent:
+        """基于 LLM + RAG 的意图分类：先做轻量向量检索提供上下文，再由 LLM 判断意图。"""
         if not query or not isinstance(query, str):
-            return False
+            return QueryIntent.GENERAL
         q = query.strip()
         if not q:
-            return False
-        pattern = (
-            r"路线|行程|推荐.*(路线|怎么走|游玩顺序)|(亲子|一日游|半日|游览).*路线"
-            r"|怎么走|游玩路线|游览路线|逛.*顺序|先去.*再去|路线推荐|走法"
-        )
-        return bool(re.search(pattern, q))
-
-    def _classify_query_intent(self, query: str) -> QueryIntent:
-        """智能分类查询意图，返回对应的检索策略类型。"""
-        if not query or not isinstance(query, str):
             return QueryIntent.GENERAL
-        q = query.strip().lower()
-        if not q:
+        if not self.llm_client:
+            logger.debug("LLM 未配置，意图默认为 general")
             return QueryIntent.GENERAL
 
-        # 票务/价格类问题优先归为 DETAIL（因为主要问的是具体信息而非列表/路线）
-        if re.search(
-            r"门票|票价|成人票|学生票|半票|优惠票|年卡|票多少钱|票多钱|多少钱票",
-            q,
-        ):
-            return QueryIntent.DETAIL
-        
-        # 路线/行程类（优先级最高，因为需要特殊处理）
-        if re.search(
-            r"路线|行程|推荐.*(路线|怎么走|游玩顺序)|(亲子|一日游|半日|游览).*路线"
-            r"|怎么走|游玩路线|游览路线|逛.*顺序|先去.*再去|路线推荐|走法|游览顺序",
-            q
-        ):
-            return QueryIntent.ROUTE
-        
-        # 特色/功能类（在列表类之前，避免「有什么好玩的」被误判为列表）
-        if re.search(
-            r"特色|特点|好玩|有什么好玩的|玩什么|功能|亮点|推荐理由|为什么|值得|推荐什么",
-            q
-        ):
-            return QueryIntent.FEATURE
-        
-        # 列表/数量类
-        if re.search(
-            r"有哪些|都有(什么|哪些)|情况|分布|有什么(景点|地方)|.*有哪些"
-            r"|有多少个?|多少个|有多少|几个|列举|列出",
-            q
-        ):
-            return QueryIntent.LISTING
-        
-        # 比较类
-        if re.search(
-            r"哪个(更好|更|比较|区别|不同)|对比|比较|区别|差异|哪个好|哪个更",
-            q
-        ):
-            return QueryIntent.COMPARISON
-        
-        # 位置/导航类
-        if re.search(
-            r"在哪|位置|地址|怎么去|怎么到|导航|距离|多远|附近|周围",
-            q
-        ):
-            return QueryIntent.LOCATION
-        
-        # 详情/介绍类（含门票、开放时间等实用信息）
-        if re.search(
-            r"介绍|详情|详细|是什么|什么样|描述|说说|讲讲|了解|开放时间|营业时间",
-            q
-        ):
-            return QueryIntent.DETAIL
-        
+        rag_context = ""
+        try:
+            vector_results = await self.vector_search(q, top_k=2)
+            if vector_results:
+                text_ids_to_fetch = [
+                    (r.get("text_id") or "").strip()
+                    for r in (vector_results or [])[:2]
+                    if (r.get("text_id") or "").strip()
+                    and not (r.get("text_id") or "").strip().startswith("attraction_")
+                ]
+                if text_ids_to_fetch:
+                    loop = asyncio.get_event_loop()
+                    text_contents = await loop.run_in_executor(
+                        None,
+                        self._get_text_contents_from_neo4j,
+                        text_ids_to_fetch,
+                    )
+                    parts = []
+                    for r in (vector_results or [])[:2]:
+                        tid = (r.get("text_id") or "").strip()
+                        content = (text_contents.get(tid) or r.get("content") or "").strip()
+                        if content:
+                            parts.append(content[:200])
+                    if parts:
+                        rag_context = "\n参考知识库片段：\n" + "\n---\n".join(parts)
+        except Exception as e:
+            logger.debug("意图分类 RAG 检索跳过: %s", e)
+
+        user_content = f"用户问题：{q}{rag_context}"
+        try:
+            response = self.llm_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": INTENT_CLASSIFY_SYSTEM},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0,
+                max_tokens=20,
+            )
+            text = (response.choices[0].message.content or "").strip().lower()
+            for word in text.split():
+                word = word.rstrip(".,;:?!")
+                for intent in QueryIntent:
+                    if intent.value == word:
+                        logger.debug("意图分类 LLM 结果: %s -> %s", q[:50], intent.value)
+                        return intent
+            logger.debug("意图分类 LLM 未识别到有效意图，原文: %s，默认 general", text[:80])
+        except Exception as e:
+            logger.warning("意图分类 LLM 调用失败，回退为 general: %s", e)
         return QueryIntent.GENERAL
 
     def _get_search_strategy(self, intent: QueryIntent) -> Dict[str, Any]:
@@ -1109,26 +1112,20 @@ class RAGService:
         当查询含指代词（如「这个景区」）时，优先用 scenic_name（用户选择的景区），
         否则从 conversation_history 解析实体并补充检索。
         """
-        # 1. 意图分类
-        intent = self._classify_query_intent(query)
+        intent = await self._classify_query_intent(query)
         strategy = self._get_search_strategy(intent)
-        
-        # 使用策略中的 top_k（如果外部传入的 top_k 不是默认值，则优先使用外部值）
+
         effective_top_k = top_k if top_k != 5 else strategy["top_k"]
         effective_threshold = strategy["relevance_threshold"]
         graph_depth = strategy["graph_depth"]
         
         logger.debug(f"查询意图: {intent.value}, top_k={effective_top_k}, threshold={effective_threshold}, graph_depth={graph_depth}")
 
-        # 票务/价格类问题标记，用于避免误扩展景点一簇上下文
-        is_ticket_query = bool(
-            re.search(
-                r"门票|票价|成人票|学生票|半票|优惠票|年卡|票多少钱|票多钱|票多少",
-                (query or "").strip(),
-            )
+        q_stripped = (query or "").strip()
+        is_ticket_query = any(
+            k in q_stripped for k in ("门票", "票价", "成人票", "学生票", "半票", "优惠票", "年卡", "票多少钱", "票多钱", "票多少")
         )
         
-        # 指代消解 / 景区上下文：优先用用户选择的景区名，其次从对话历史提取；有景区时始终用于增强检索
         resolved_entities: List[str] = []
         scenic_name_str = (scenic_name or "").strip()
         if scenic_name_str:
@@ -1824,7 +1821,7 @@ class RAGService:
         # 根据意图添加针对性提示语
         intent_hint = ""
         if use_rag and rag_debug:
-            detected_intent = rag_debug.get("intent") or self._classify_query_intent(query).value
+            detected_intent = rag_debug.get("intent") or (await self._classify_query_intent(query)).value
             if detected_intent == "route":
                 intent_hint = "说明：用户询问的是游玩/推荐路线，请结合下列多个景点，推荐一条合理的游览顺序（路线），并简要说明每段怎么走或游玩建议。\n\n"
             elif detected_intent == "listing":
@@ -1868,7 +1865,7 @@ class RAGService:
                 os.makedirs(log_root, exist_ok=True)
                 log_path = os.path.join(log_root, "rag_context.log")
                 entry = {
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                     "query": query,
                     "character_prompt": character_prompt,
                     "use_rag": use_rag,

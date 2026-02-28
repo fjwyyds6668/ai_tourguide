@@ -5,7 +5,7 @@ import asyncio
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -420,7 +420,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 os.makedirs(log_root, exist_ok=True)
                 log_path = os.path.join(log_root, "rag_context.log")
                 entry = {
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                     "query": request.query,
                     "character_prompt": character_prompt,
                     "use_rag": request.use_rag,
