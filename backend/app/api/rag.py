@@ -390,55 +390,85 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 else:
                     yield f"data: {json.dumps({'type': 'tts', 'content': accumulated_text.strip()}, ensure_ascii=False)}\n\n"
             
-            try:
-                rag_debug: Optional[Dict[str, Any]] = None
-                if request.use_rag:
-                    rag_debug = {
-                        "query": (rag_results or {}).get("query") or request.query,
-                        "vector_results": ((rag_results or {}).get("vector_results") or [])[:5],
-                        "graph_results": ((rag_results or {}).get("graph_results") or [])[:5],
-                        "subgraph": (rag_results or {}).get("subgraph"),
-                        "enhanced_context": context or "",
-                        "entities": (rag_results or {}).get("entities", []),
-                        "errors": (rag_results or {}).get("errors", {}),
-                        "intent": (rag_results or {}).get("intent"),
-                        "strategy": (rag_results or {}).get("strategy"),
-                        "final_sent_to_llm": user_prompt,
-                    }
-                else:
-                    rag_debug = {
-                        "query": request.query,
-                        "vector_results": [],
-                        "graph_results": [],
-                        "subgraph": None,
-                        "enhanced_context": "",
-                        "entities": [],
-                        "skip_rag_reason": "未使用 RAG",
-                        "final_sent_to_llm": user_prompt,
-                    }
-                log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
-                os.makedirs(log_root, exist_ok=True)
-                log_path = os.path.join(log_root, "rag_context.log")
-                entry = {
-                    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                    "query": request.query,
-                    "character_prompt": character_prompt,
-                    "use_rag": request.use_rag,
-                    "rag_debug": rag_debug,
-                    "final_answer_preview": (full_answer or "")[:2000],
-                }
-                with open(log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            async def _write_stream_rag_log() -> None:
                 try:
-                    with open(log_path, "r", encoding="utf-8") as f:
-                        lines = [ln for ln in f.readlines() if ln.strip()]
-                    if len(lines) > 5:
-                        with open(log_path, "w", encoding="utf-8") as f:
-                            f.writelines(lines[-5:])
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.warning(f"Failed to write RAG context log (stream): {e}")
+                    rag_debug: Optional[Dict[str, Any]] = None
+                    if request.use_rag:
+                        rag_debug = {
+                            "query": (rag_results or {}).get("query") or request.query,
+                            "vector_results": ((rag_results or {}).get("vector_results") or [])[:5],
+                            "graph_results": ((rag_results or {}).get("graph_results") or [])[:5],
+                            "subgraph": (rag_results or {}).get("subgraph"),
+                            "enhanced_context": context or "",
+                            "entities": (rag_results or {}).get("entities", []),
+                            "errors": (rag_results or {}).get("errors", {}),
+                            "intent": (rag_results or {}).get("intent"),
+                            "strategy": (rag_results or {}).get("strategy"),
+                            "final_sent_to_llm": user_prompt,
+                        }
+                    else:
+                        rag_debug = {
+                            "query": request.query,
+                            "vector_results": [],
+                            "graph_results": [],
+                            "subgraph": None,
+                            "enhanced_context": "",
+                            "entities": [],
+                            "skip_rag_reason": "未使用 RAG",
+                            "final_sent_to_llm": user_prompt,
+                        }
+
+                    def _io_task():
+                        try:
+                            log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+                            os.makedirs(log_root, exist_ok=True)
+                            log_path = os.path.join(log_root, "rag_context.log")
+                            entry = {
+                                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                                "query": request.query,
+                                "character_prompt": character_prompt,
+                                "use_rag": request.use_rag,
+                                "rag_debug": rag_debug,
+                                "final_answer_preview": (full_answer or "")[:2000],
+                            }
+                            with open(log_path, "a", encoding="utf-8") as f:
+                                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                            try:
+                                with open(log_path, "r", encoding="utf-8") as f:
+                                    lines = [ln for ln in f.readlines() if ln.strip()]
+                                if len(lines) > 5:
+                                    with open(log_path, "w", encoding="utf-8") as f:
+                                        f.writelines(lines[-5:])
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            logger.warning(f"Failed to write RAG context log (stream): {e}")
+
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, _io_task)
+                except Exception as e:
+                    logger.warning(f"Failed to schedule RAG context log (stream) write: {e}")
+
+            try:
+                asyncio.create_task(_write_stream_rag_log())
+            except RuntimeError:
+                # 若没有事件循环可用，则回退为同步写入，保证不影响主逻辑
+                try:
+                    log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+                    os.makedirs(log_root, exist_ok=True)
+                    log_path = os.path.join(log_root, "rag_context.log")
+                    entry = {
+                        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "query": request.query,
+                        "character_prompt": character_prompt,
+                        "use_rag": request.use_rag,
+                        "rag_debug": None,
+                        "final_answer_preview": (full_answer or "")[:2000],
+                    }
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                except Exception as e:
+                    logger.warning(f"Fallback write RAG context log (stream) failed: {e}")
             
             session_service.add_message(session_id, "user", request.query)
             session_service.add_message(session_id, "assistant", full_answer)

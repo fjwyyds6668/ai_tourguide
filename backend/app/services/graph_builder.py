@@ -1,15 +1,29 @@
 """知识图谱构建：文本 -> Neo4j 图结构。"""
 import logging
+import asyncio
 from typing import List, Dict, Any
 from app.core.neo4j_client import neo4j_client
 
 logger = logging.getLogger(__name__)
+
 
 class GraphBuilder:
     """将文本知识转为图结构并写入 Neo4j。"""
 
     def __init__(self):
         self.client = neo4j_client
+
+    async def _execute_query_async(self, query: str, parameters: Dict[str, Any] | None = None):
+        """
+        在异步上下文中安全执行 Neo4j 查询，避免阻塞事件循环。
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self.client.execute_query,
+            query,
+            parameters or {},
+        )
     
     async def create_attraction_node(self, attraction_data: Dict[str, Any]) -> bool:
         """创建景点节点"""
@@ -25,7 +39,7 @@ class GraphBuilder:
         """
         
         try:
-            results = self.client.execute_query(query, attraction_data)
+            await self._execute_query_async(query, attraction_data)
             logger.info(f"Created attraction node: {attraction_data.get('name')}")
             return True
         except Exception as e:
@@ -82,7 +96,7 @@ class GraphBuilder:
             a.audio_url = $audio_url,
             a.scenic_spot_id = $scenic_spot_id
         """
-        self.client.execute_query(q_center, {
+        await self._execute_query_async(q_center, {
             "id": int(att_id),
             "name": name,
             "description": attraction_data.get("description"),
@@ -98,14 +112,14 @@ class GraphBuilder:
         MATCH (a:Attraction {id: $id})-[r:HAS_CATEGORY|HAS_FEATURE|HAS_HONOR|HAS_IMAGE|HAS_AUDIO|位于|属于]->(n)
         DELETE r
         """
-        self.client.execute_query(q_clean_rels, {"id": int(att_id)})
+        await self._execute_query_async(q_clean_rels, {"id": int(att_id)})
         q_clean_orphans = """
         MATCH (a:Attraction {id: $id})-[r:HAS_FEATURE|HAS_HONOR|HAS_IMAGE|HAS_AUDIO]->(n)
         WITH n, COUNT { (n)--() } AS c
         WHERE c <= 1
         DETACH DELETE n
         """
-        self.client.execute_query(q_clean_orphans, {"id": int(att_id)})
+        await self._execute_query_async(q_clean_orphans, {"id": int(att_id)})
 
         # 统一约束：无论景区来自 PostgreSQL 还是解析结果，Attraction 必须挂到某个 ScenicSpot 上，
         # 从而保证不会出现完全脱离景区簇的景点子图。
@@ -115,7 +129,7 @@ class GraphBuilder:
             MATCH (s:ScenicSpot {scenic_spot_id: $scenic_spot_id})
             MERGE (a)-[:属于]->(s)
             """
-            self.client.execute_query(q_scenic_rel, {
+            await self._execute_query_async(q_scenic_rel, {
                 "id": int(att_id),
                 "scenic_spot_id": int(scenic_spot_id)
             })
@@ -133,7 +147,7 @@ class GraphBuilder:
             )
             """
             try:
-                self.client.execute_query(q_merge_spot, {
+                await self._execute_query_async(q_merge_spot, {
                     "id": int(att_id),
                     "scenic_spot_id": int(scenic_spot_id),
                     "name": name,
@@ -149,7 +163,7 @@ class GraphBuilder:
             RETURN s
             """
             try:
-                self.client.execute_query(q_ensure_scenic_by_name, {
+                await self._execute_query_async(q_ensure_scenic_by_name, {
                     "name": scenic_name_from_parsed,
                 })
             except Exception as e:
@@ -161,7 +175,7 @@ class GraphBuilder:
             MERGE (s)-[:HAS_SPOT]->(a)
             """
             try:
-                self.client.execute_query(q_scenic_rel_by_name, {
+                await self._execute_query_async(q_scenic_rel_by_name, {
                     "id": int(att_id),
                     "name": scenic_name_from_parsed,
                 })
@@ -181,7 +195,7 @@ class GraphBuilder:
             MATCH (a:Attraction {id: $id})
             MERGE (t)-[:DESCRIBES]->(a)
             """
-            self.client.execute_query(q_text, {"text_id": text_id, "text": text, "id": int(att_id)})
+            await self._execute_query_async(q_text, {"text_id": text_id, "text": text, "id": int(att_id)})
         locations = []
         if parsed and isinstance(parsed.get("location"), list):
             locations = [str(x).strip() for x in parsed.get("location") if str(x).strip()]
@@ -196,7 +210,7 @@ class GraphBuilder:
         MATCH (a:Attraction {id: $id})-[r:位于]->()
         DELETE r
         """
-        self.client.execute_query(q_clean_loc, {"id": int(att_id)})
+        await self._execute_query_async(q_clean_loc, {"id": int(att_id)})
         if locations:
             params = {"id": int(att_id)}
             if len(locations) >= 3:
@@ -208,13 +222,13 @@ class GraphBuilder:
                 MERGE (county)-[:隶属]->(city)
                 """
                 params.update({"prov": locations[0], "city": locations[1], "county": locations[2]})
-                self.client.execute_query(q_loc_nodes, params)
+                await self._execute_query_async(q_loc_nodes, params)
                 q_loc_rel = """
                 MATCH (a:Attraction {id: $id})
                 MATCH (county:County {name: $county})
                 MERGE (a)-[:位于]->(county)
                 """
-                self.client.execute_query(q_loc_rel, params)
+                await self._execute_query_async(q_loc_rel, params)
             elif len(locations) == 2:
                 q_loc_nodes = """
                 MERGE (prov:Province {name: $prov})
@@ -222,25 +236,25 @@ class GraphBuilder:
                 MERGE (city)-[:隶属]->(prov)
                 """
                 params.update({"prov": locations[0], "city": locations[1]})
-                self.client.execute_query(q_loc_nodes, params)
+                await self._execute_query_async(q_loc_nodes, params)
                 q_loc_rel = """
                 MATCH (a:Attraction {id: $id})
                 MATCH (city:City {name: $city})
                 MERGE (a)-[:位于]->(city)
                 """
-                self.client.execute_query(q_loc_rel, params)
+                await self._execute_query_async(q_loc_rel, params)
             elif len(locations) == 1:
                 q_loc_nodes = """
                 MERGE (prov:Province {name: $prov})
                 """
                 params.update({"prov": locations[0]})
-                self.client.execute_query(q_loc_nodes, params)
+                await self._execute_query_async(q_loc_nodes, params)
                 q_loc_rel = """
                 MATCH (a:Attraction {id: $id})
                 MATCH (prov:Province {name: $prov})
                 MERGE (a)-[:位于]->(prov)
                 """
-                self.client.execute_query(q_loc_rel, params)
+                await self._execute_query_async(q_loc_rel, params)
         category = (parsed.get("category") if parsed else None) or attraction_data.get("category")
         if category:
             q_cat = """
@@ -248,21 +262,21 @@ class GraphBuilder:
             MERGE (c:Category {name: $name})
             MERGE (a)-[:HAS_CATEGORY]->(c)
             """
-            self.client.execute_query(q_cat, {"id": int(att_id), "name": str(category).strip()})
+            await self._execute_query_async(q_cat, {"id": int(att_id), "name": str(category).strip()})
         if attraction_data.get("image_url"):
             q_img = """
             MATCH (a:Attraction {id: $id})
             MERGE (img:Image {url: $url})
             MERGE (a)-[:HAS_IMAGE]->(img)
             """
-            self.client.execute_query(q_img, {"id": int(att_id), "url": attraction_data.get("image_url")})
+            await self._execute_query_async(q_img, {"id": int(att_id), "url": attraction_data.get("image_url")})
         if attraction_data.get("audio_url"):
             q_audio = """
             MATCH (a:Attraction {id: $id})
             MERGE (au:Audio {url: $url})
             MERGE (a)-[:HAS_AUDIO]->(au)
             """
-            self.client.execute_query(q_audio, {"id": int(att_id), "url": attraction_data.get("audio_url")})
+            await self._execute_query_async(q_audio, {"id": int(att_id), "url": attraction_data.get("audio_url")})
         features = (parsed.get("features") if parsed else None) or []
         honors = (parsed.get("honors") if parsed else None) or []
         if isinstance(features, list):
@@ -276,7 +290,7 @@ class GraphBuilder:
                 MERGE (f:Feature {name: fname, attraction_id: $id})
                 MERGE (a)-[:HAS_FEATURE]->(f)
                 """
-                self.client.execute_query(q_f, {"id": int(att_id), "features": feats})
+                await self._execute_query_async(q_f, {"id": int(att_id), "features": feats})
         if isinstance(honors, list):
             hns = [str(x).strip() for x in honors if str(x).strip()]
             if hns:
@@ -287,15 +301,26 @@ class GraphBuilder:
                 MERGE (h:Honor {name: hname, attraction_id: $id})
                 MERGE (a)-[:HAS_HONOR]->(h)
                 """
-                self.client.execute_query(q_h, {"id": int(att_id), "honors": hns})
+                await self._execute_query_async(q_h, {"id": int(att_id), "honors": hns})
     
     async def create_relationship(self, from_entity: str, to_entity: str, 
                                  relation_type: str, properties: Dict = None) -> bool:
         """创建实体之间的关系"""
+        # 关系类型做简单的白名单校验，避免 Cypher 注入
+        import re
+        rel = None
+        if relation_type and isinstance(relation_type, str):
+            candidate = relation_type.strip().upper()
+            if re.match(r"^[A-Z_][A-Z0-9_]*$", candidate):
+                rel = candidate
+        if not rel:
+            logger.error(f"Invalid relation_type: {relation_type}")
+            return False
+
         query = f"""
         MATCH (a), (b)
         WHERE a.name = $from_name AND b.name = $to_name
-        MERGE (a)-[r:{relation_type}]->(b)
+        MERGE (a)-[r:{rel}]->(b)
         """
         
         if properties:
@@ -311,7 +336,7 @@ class GraphBuilder:
         }
         
         try:
-            results = self.client.execute_query(query, params)
+            await self._execute_query_async(query, params)
             logger.info(f"Created relationship: {from_entity} -[{relation_type}]-> {to_entity}")
             return True
         except Exception as e:
@@ -379,7 +404,7 @@ class GraphBuilder:
             ON CREATE SET s.name = coalesce($name, '景区')
             RETURN s
             """
-            self.client.execute_query(q_ensure_scenic, {
+            await self._execute_query_async(q_ensure_scenic, {
                 "sid": int(scenic_spot_id),
                 "name": scenic_name_str or "景区",
             })
@@ -388,7 +413,7 @@ class GraphBuilder:
             MERGE (s:ScenicSpot {name: $name})
             RETURN s
             """
-            self.client.execute_query(q_ensure_scenic_legacy, {"name": scenic_name_str})
+            await self._execute_query_async(q_ensure_scenic_legacy, {"name": scenic_name_str})
 
         # 创建文本节点，并立即连接到景区簇
         if use_id:
@@ -400,7 +425,7 @@ class GraphBuilder:
             MERGE (t)-[:DESCRIBES]->(s)
             RETURN t
             """
-            self.client.execute_query(q_text, {
+            await self._execute_query_async(q_text, {
                 "text_id": text_id,
                 "text": text,
                 "sid": int(scenic_spot_id),
@@ -414,7 +439,7 @@ class GraphBuilder:
             MERGE (t)-[:DESCRIBES]->(s)
             RETURN t
             """
-            self.client.execute_query(q_text_legacy, {
+            await self._execute_query_async(q_text_legacy, {
                 "text_id": text_id,
                 "text": text,
                 "name": scenic_name_str,
@@ -434,7 +459,7 @@ class GraphBuilder:
             MERGE (t)-[:MENTIONS]->(e)
             RETURN e
             """
-            self.client.execute_query(create_entity_query, {
+            await self._execute_query_async(create_entity_query, {
                 "text_id": text_id,
                 "name": str(entity_name).strip(),
             })
@@ -500,19 +525,19 @@ class GraphBuilder:
                 WITH t
                 DETACH DELETE t
                 """
-                self.client.execute_query(q_clean_text, {"text_id": text_id})
+                await self._execute_query_async(q_clean_text, {"text_id": text_id})
             q_clean_scenic_rels = """
             MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r:HAS_SPOT|HAS_FEATURE|HAS_HONOR|位于]->(n)
             DELETE r
             """
             if scenic_spot_id is not None:
-                self.client.execute_query(q_clean_scenic_rels, {"sid": int(scenic_spot_id)})
+                await self._execute_query_async(q_clean_scenic_rels, {"sid": int(scenic_spot_id)})
             else:
                 q_clean_scenic_rels_legacy = """
                 MATCH (s:ScenicSpot {name: $name})-[r:HAS_SPOT|HAS_FEATURE|HAS_HONOR|位于]->(n)
                 DELETE r
                 """
-                self.client.execute_query(q_clean_scenic_rels_legacy, {"name": scenic_name})
+                await self._execute_query_async(q_clean_scenic_rels_legacy, {"name": scenic_name})
             q_clean_isolated = """
             MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r1:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n)
             WHERE NOT (n)-[:位于|隶属]->() 
@@ -521,7 +546,7 @@ class GraphBuilder:
             DETACH DELETE n
             """
             if scenic_spot_id is not None:
-                self.client.execute_query(q_clean_isolated, {"sid": int(scenic_spot_id)})
+                await self._execute_query_async(q_clean_isolated, {"sid": int(scenic_spot_id)})
             else:
                 q_clean_isolated_legacy = """
                 MATCH (s:ScenicSpot {name: $name})-[r1:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n)
@@ -530,7 +555,7 @@ class GraphBuilder:
                 WHERE connection_count <= 1
                 DETACH DELETE n
                 """
-                self.client.execute_query(q_clean_isolated_legacy, {"name": scenic_name})
+                await self._execute_query_async(q_clean_isolated_legacy, {"name": scenic_name})
             q_clean_orphan_relations = """
             MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r]->(n)
             WHERE type(r) IN ['HAS_SPOT', 'HAS_FEATURE', 'HAS_HONOR']
@@ -539,7 +564,7 @@ class GraphBuilder:
             DELETE r
             """
             if scenic_spot_id is not None:
-                self.client.execute_query(q_clean_orphan_relations, {"sid": int(scenic_spot_id)})
+                await self._execute_query_async(q_clean_orphan_relations, {"sid": int(scenic_spot_id)})
             else:
                 q_clean_orphan_relations_legacy = """
                 MATCH (s:ScenicSpot {name: $name})-[r]->(n)
@@ -548,7 +573,7 @@ class GraphBuilder:
                 AND COUNT { (n)--() } <= 1
                 DELETE r
                 """
-                self.client.execute_query(q_clean_orphan_relations_legacy, {"name": scenic_name})
+                await self._execute_query_async(q_clean_orphan_relations_legacy, {"name": scenic_name})
         location_str = "、".join(locations) if locations else None
         
         if use_id:
@@ -571,7 +596,7 @@ class GraphBuilder:
                 s.transport_info = coalesce(s.transport_info, $transport_info),
                 s.service_facilities = coalesce(s.service_facilities, $service_facilities)
             """
-            self.client.execute_query(
+            await self._execute_query_async(
                 q_scenic,
                 {
                     "sid": sid,
@@ -602,7 +627,7 @@ class GraphBuilder:
                 s.transport_info = coalesce(s.transport_info, $transport_info),
                 s.service_facilities = coalesce(s.service_facilities, $service_facilities)
             """
-            self.client.execute_query(
+            await self._execute_query_async(
                 q_scenic_legacy,
                 {
                     "name": scenic_name,
@@ -621,27 +646,27 @@ class GraphBuilder:
                 MERGE (s:ScenicSpot {scenic_spot_id: $sid})
                 MERGE (t)-[:DESCRIBES]->(s)
                 """
-                self.client.execute_query(q_txt, {"text_id": text_id, "sid": sid})
+                await self._execute_query_async(q_txt, {"text_id": text_id, "sid": sid})
             else:
                 q_txt_legacy = """
                 MERGE (t:Text {id: $text_id})
                 MERGE (s:ScenicSpot {name: $name})
                 MERGE (t)-[:DESCRIBES]->(s)
                 """
-                self.client.execute_query(q_txt_legacy, {"text_id": text_id, "name": scenic_name})
+                await self._execute_query_async(q_txt_legacy, {"text_id": text_id, "name": scenic_name})
         if clear_existing:
             if use_id:
                 q_clean_loc = """
                 MATCH (s:ScenicSpot {scenic_spot_id: $sid})-[r:位于]->()
                 DELETE r
                 """
-                self.client.execute_query(q_clean_loc, {"sid": sid})
+                await self._execute_query_async(q_clean_loc, {"sid": sid})
             else:
                 q_clean_loc_legacy = """
                 MATCH (s:ScenicSpot {name: $name})-[r:位于]->()
                 DELETE r
                 """
-                self.client.execute_query(q_clean_loc_legacy, {"name": scenic_name})
+                await self._execute_query_async(q_clean_loc_legacy, {"name": scenic_name})
         if locations:
             params = {"s_name": scenic_name}
             if len(locations) >= 3:
@@ -661,7 +686,7 @@ class GraphBuilder:
                 })
                 if use_id:
                     params["sid"] = sid
-                    self.client.execute_query(q_loc, params)
+                    await self._execute_query_async(q_loc, params)
                 else:
                     q_loc_legacy = """
                     MERGE (prov:Province {name: $prov})
@@ -672,7 +697,7 @@ class GraphBuilder:
                     MERGE (county)-[:隶属]->(city)
                     MERGE (s)-[:位于]->(county)
                     """
-                    self.client.execute_query(q_loc_legacy, params)
+                    await self._execute_query_async(q_loc_legacy, params)
             elif len(locations) == 2:
                 q_loc = """
                 MERGE (prov:Province {name: $prov})
@@ -687,7 +712,7 @@ class GraphBuilder:
                 })
                 if use_id:
                     params["sid"] = sid
-                    self.client.execute_query(q_loc, params)
+                    await self._execute_query_async(q_loc, params)
                 else:
                     q_loc_legacy = """
                     MERGE (prov:Province {name: $prov})
@@ -696,7 +721,7 @@ class GraphBuilder:
                     MERGE (city)-[:隶属]->(prov)
                     MERGE (s)-[:位于]->(city)
                     """
-                    self.client.execute_query(q_loc_legacy, params)
+                    await self._execute_query_async(q_loc_legacy, params)
             elif len(locations) == 1:
                 q_loc = """
                 MERGE (prov:Province {name: $prov})
@@ -706,14 +731,14 @@ class GraphBuilder:
                 params.update({"prov": locations[0]})
                 if use_id:
                     params["sid"] = sid
-                    self.client.execute_query(q_loc, params)
+                    await self._execute_query_async(q_loc, params)
                 else:
                     q_loc_legacy = """
                     MERGE (prov:Province {name: $prov})
                     MERGE (s:ScenicSpot {name: $s_name})
                     MERGE (s)-[:位于]->(prov)
                     """
-                    self.client.execute_query(q_loc_legacy, params)
+                    await self._execute_query_async(q_loc_legacy, params)
         spot_names = [str(x).strip() for x in (spots or []) if str(x).strip()]
         if spot_names:
             if use_id:
@@ -723,7 +748,7 @@ class GraphBuilder:
                 MERGE (sp:Spot {name: n})
                 MERGE (s)-[:HAS_SPOT]->(sp)
                 """
-                self.client.execute_query(q_spot, {"names": spot_names, "sid": sid})
+                await self._execute_query_async(q_spot, {"names": spot_names, "sid": sid})
             else:
                 q_spot_legacy = """
                 UNWIND $names AS n
@@ -731,7 +756,7 @@ class GraphBuilder:
                 MERGE (sp:Spot {name: n})
                 MERGE (s)-[:HAS_SPOT]->(sp)
                 """
-                self.client.execute_query(q_spot_legacy, {"names": spot_names, "s_name": scenic_name})
+                await self._execute_query_async(q_spot_legacy, {"names": spot_names, "s_name": scenic_name})
         feat_names = [str(x).strip() for x in (features or []) if str(x).strip()]
         if feat_names:
             if use_id:
@@ -741,7 +766,7 @@ class GraphBuilder:
                 MERGE (f:Feature {name: n})
                 MERGE (s)-[:HAS_FEATURE]->(f)
                 """
-                self.client.execute_query(q_feat, {"names": feat_names, "sid": sid})
+                await self._execute_query_async(q_feat, {"names": feat_names, "sid": sid})
             else:
                 q_feat_legacy = """
                 UNWIND $names AS n
@@ -749,7 +774,7 @@ class GraphBuilder:
                 MERGE (f:Feature {name: n})
                 MERGE (s)-[:HAS_FEATURE]->(f)
                 """
-                self.client.execute_query(q_feat_legacy, {"names": feat_names, "s_name": scenic_name})
+                await self._execute_query_async(q_feat_legacy, {"names": feat_names, "s_name": scenic_name})
         honor_names = [str(x).strip() for x in (awards or []) if str(x).strip()]
         if honor_names:
             if use_id:
@@ -759,7 +784,7 @@ class GraphBuilder:
                 MERGE (h:Honor {name: n})
                 MERGE (s)-[:HAS_HONOR]->(h)
                 """
-                self.client.execute_query(q_award, {"names": honor_names, "sid": sid})
+                await self._execute_query_async(q_award, {"names": honor_names, "sid": sid})
             else:
                 q_award_legacy = """
                 UNWIND $names AS n
@@ -767,21 +792,21 @@ class GraphBuilder:
                 MERGE (h:Honor {name: n})
                 MERGE (s)-[:HAS_HONOR]->(h)
                 """
-                self.client.execute_query(q_award_legacy, {"names": honor_names, "s_name": scenic_name})
+                await self._execute_query_async(q_award_legacy, {"names": honor_names, "s_name": scenic_name})
         if use_id:
             q_verify = """
             MATCH (s:ScenicSpot {scenic_spot_id: $sid})
             OPTIONAL MATCH (s)-[r:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n)
             RETURN COUNT(r) AS connected_count
             """
-            result = self.client.execute_query(q_verify, {"sid": sid})
+            result = await self._execute_query_async(q_verify, {"sid": sid})
         else:
             q_verify_legacy = """
             MATCH (s:ScenicSpot {name: $name})
             OPTIONAL MATCH (s)-[r:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n)
             RETURN COUNT(r) AS connected_count
             """
-            result = self.client.execute_query(q_verify_legacy, {"name": scenic_name})
+            result = await self._execute_query_async(q_verify_legacy, {"name": scenic_name})
         if result and len(result) > 0:
             connected_count = result[0].get("connected_count", 0)
             logger.info(f"景区 '{scenic_name}' 已连接到 {connected_count} 个节点（Spot/Feature/Honor）")

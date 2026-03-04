@@ -1860,31 +1860,64 @@ class RAGService:
             if answer:
                 answer = _strip_emoji(answer)
                 answer = _clean_special_symbols(answer)
-            try:
-                log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
-                os.makedirs(log_root, exist_ok=True)
-                log_path = os.path.join(log_root, "rag_context.log")
-                entry = {
-                    "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                    "query": query,
-                    "character_prompt": character_prompt,
-                    "use_rag": use_rag,
-                    "rag_debug": rag_debug,
-                    "final_answer_preview": answer[:2000] if answer else "",
-                }
-                with open(log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+            async def _write_rag_log():
                 try:
-                    with open(log_path, "r", encoding="utf-8") as f:
-                        lines = [ln for ln in f.readlines() if ln.strip()]
-                    # 仅在行数较多时裁剪，减少写放大；接口仍只返回最近 5 条
-                    if len(lines) > 20:
-                        with open(log_path, "w", encoding="utf-8") as f:
-                            f.writelines(lines[-20:])
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.warning(f"Failed to write RAG context log: {e}")
+                    log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+                    os.makedirs(log_root, exist_ok=True)
+                    log_path = os.path.join(log_root, "rag_context.log")
+                    entry = {
+                        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "query": query,
+                        "character_prompt": character_prompt,
+                        "use_rag": use_rag,
+                        "rag_debug": rag_debug,
+                        "final_answer_preview": answer[:2000] if answer else "",
+                    }
+
+                    def _io_task():
+                        try:
+                            with open(log_path, "a", encoding="utf-8") as f:
+                                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                            try:
+                                with open(log_path, "r", encoding="utf-8") as f:
+                                    lines = [ln for ln in f.readlines() if ln.strip()]
+                                # 仅在行数较多时裁剪，减少写放大；接口仍只保留最近 20 条
+                                if len(lines) > 20:
+                                    with open(log_path, "w", encoding="utf-8") as f:
+                                        f.writelines(lines[-20:])
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            logger.warning(f"Failed to write RAG context log: {e}")
+
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, _io_task)
+                except Exception as e:
+                    logger.warning(f"Failed to schedule RAG context log write: {e}")
+
+            # 异步触发日志写入，不阻塞主请求流程
+            try:
+                asyncio.create_task(_write_rag_log())
+            except RuntimeError:
+                # 若当前无事件循环（例如被同步调用），退回同步写入
+                try:
+                    log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+                    os.makedirs(log_root, exist_ok=True)
+                    log_path = os.path.join(log_root, "rag_context.log")
+                    entry = {
+                        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "query": query,
+                        "character_prompt": character_prompt,
+                        "use_rag": use_rag,
+                        "rag_debug": rag_debug,
+                        "final_answer_preview": answer[:2000] if answer else "",
+                    }
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                except Exception as e:
+                    logger.warning(f"Fallback write RAG context log failed: {e}")
+
             logger.info(f"Generated answer for query: {query[:50]}...")
             return {"answer": answer, "primary_attraction_id": primary_attraction_id, "context": out_context}
         except Exception as e:
