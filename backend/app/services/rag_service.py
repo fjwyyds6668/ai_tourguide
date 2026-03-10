@@ -28,6 +28,13 @@ from app.services.rag_settings import (
 
 logger = logging.getLogger(__name__)
 
+# 线性融合评分的默认权重与上下文预算（字符数）
+# 用于把论文中的 S(c)=αsvec+βsgraph+γsent 落地到混合检索上下文构造中
+DEFAULT_FUSION_ALPHA = 0.60
+DEFAULT_FUSION_BETA = 0.25
+DEFAULT_FUSION_GAMMA = 0.15
+DEFAULT_CONTEXT_BUDGET_CHARS = 2500
+
 # 与 rag.py 流式生成共用的系统提示，避免两处重复维护
 RAG_BASE_SYSTEM_PROMPT = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
 回答要求：
@@ -481,102 +488,105 @@ class RAGService:
         self._cache_stats["vector_misses"] = int(self._cache_stats.get("vector_misses", 0)) + 1
 
         start_time = datetime.now(timezone.utc)
-        if not milvus_client.connected:
-            milvus_client.connect()
-        try:
-            collection = milvus_client.create_collection_if_not_exists(
-                collection_name, dimension=384, load=False
-            )
-        except Exception as e:
-            logger.warning(
-                "Milvus not available for vector search, fallback to empty results: %s",
-                e,
-            )
-            return []
-        try:
-            from pymilvus import utility
-            if not utility.has_collection(collection_name):
-                logger.warning(f"Collection '{collection_name}' does not exist")
-                return []
-        except Exception as e:
-            logger.warning("Failed to check collection existence: %s", e)
-            return []
-        if collection_name not in self._milvus_loaded_collections:
+
+        def _blocking_search() -> List[Dict[str, Any]]:
+            if not milvus_client.connected:
+                milvus_client.connect()
             try:
-                from pymilvus import utility
-                load_state = utility.load_state(collection_name)
-
-                is_loaded = False
-                if isinstance(load_state, dict):
-                    state_value = (
-                        load_state.get("state", "").upper()
-                        if isinstance(load_state.get("state"), str)
-                        else str(load_state.get("state", "")).upper()
-                    )
-                    is_loaded = state_value in ("LOADED", "LOADED_FOR_SEARCH")
-                elif isinstance(load_state, str):
-                    is_loaded = load_state.upper() in ("LOADED", "LOADED_FOR_SEARCH")
-                else:
-                    is_loaded = "LOADED" in str(load_state).upper()
-
-                if not is_loaded:
-                    logger.info(
-                        "Collection '%s' is not loaded (state: %s), loading now...",
-                        collection_name,
-                        load_state,
-                    )
-                    collection.load()
-                self._milvus_loaded_collections.add(collection_name)
+                collection = milvus_client.create_collection_if_not_exists(
+                    collection_name, dimension=384, load=False
+                )
             except Exception as e:
                 logger.warning(
-                    "Failed to ensure collection '%s' loaded, will rely on retry: %s",
-                    collection_name,
+                    "Milvus not available for vector search, fallback to empty results: %s",
                     e,
                 )
-        query_vector = [self.generate_embedding(query)]
-        try:
+                return []
+
+            try:
+                from pymilvus import utility
+                if not utility.has_collection(collection_name):
+                    logger.warning("Collection '%s' does not exist", collection_name)
+                    return []
+            except Exception as e:
+                logger.warning("Failed to check collection existence: %s", e)
+                return []
+
+            if collection_name not in self._milvus_loaded_collections:
+                try:
+                    from pymilvus import utility
+                    load_state = utility.load_state(collection_name)
+
+                    is_loaded = False
+                    if isinstance(load_state, dict):
+                        state_value = (
+                            load_state.get("state", "").upper()
+                            if isinstance(load_state.get("state"), str)
+                            else str(load_state.get("state", "")).upper()
+                        )
+                        is_loaded = state_value in ("LOADED", "LOADED_FOR_SEARCH")
+                    elif isinstance(load_state, str):
+                        is_loaded = load_state.upper() in ("LOADED", "LOADED_FOR_SEARCH")
+                    else:
+                        is_loaded = "LOADED" in str(load_state).upper()
+
+                    if not is_loaded:
+                        collection.load()
+                    self._milvus_loaded_collections.add(collection_name)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to ensure collection '%s' loaded, will rely on retry: %s",
+                        collection_name,
+                        e,
+                    )
+
+            query_vector = [self.generate_embedding(query)]
             search_params = {
                 "metric_type": str(MILVUS_METRIC_TYPE or "L2"),
                 "params": {"nprobe": int(MILVUS_NPROBE or 10)},
             }
-            results = collection.search(
-                data=query_vector,
-                anns_field="embedding",
-                param=search_params,
-                limit=top_k,
-                output_fields=["text_id"]
-            )
-        except Exception as e:
-            if "not loaded" in str(e).lower() or "collection not loaded" in str(e).lower():
-                logger.warning(
-                    "Search failed due to collection not loaded, retrying after reload: %s",
-                    e,
+            try:
+                results = collection.search(
+                    data=query_vector,
+                    anns_field="embedding",
+                    param=search_params,
+                    limit=top_k,
+                    output_fields=["text_id"],
                 )
-                try:
-                    collection.load()
-                    self._milvus_loaded_collections.add(collection_name)
-                    results = collection.search(
-                        data=query_vector,
-                        anns_field="embedding",
-                        param=search_params,
-                        limit=top_k,
-                        output_fields=["text_id"]
-                    )
-                except Exception as retry_error:
-                    logger.error("Retry search failed: %s", retry_error)
+            except Exception as e:
+                if "not loaded" in str(e).lower() or "collection not loaded" in str(e).lower():
+                    try:
+                        collection.load()
+                        self._milvus_loaded_collections.add(collection_name)
+                        results = collection.search(
+                            data=query_vector,
+                            anns_field="embedding",
+                            param=search_params,
+                            limit=top_k,
+                            output_fields=["text_id"],
+                        )
+                    except Exception as retry_error:
+                        logger.error("Retry search failed: %s", retry_error)
+                        return []
+                else:
+                    logger.error("Search failed: %s", e)
                     return []
-            else:
-                logger.error("Search failed: %s", e)
-                return []
-        search_results = []
-        if results and len(results) > 0:
-            for hit in results[0]:
-                search_results.append({
-                    "id": hit.id,
-                    "text_id": hit.entity.get("text_id", ""),
-                    "distance": hit.distance,
-                    "score": 1 / (1 + hit.distance) if hit.distance > 0 else 1.0,
-                })
+
+            out: List[Dict[str, Any]] = []
+            if results and len(results) > 0:
+                for hit in results[0]:
+                    out.append(
+                        {
+                            "id": hit.id,
+                            "text_id": hit.entity.get("text_id", ""),
+                            "distance": hit.distance,
+                            "score": 1 / (1 + hit.distance) if hit.distance > 0 else 1.0,
+                        }
+                    )
+            return out
+
+        loop = asyncio.get_event_loop()
+        search_results = await loop.run_in_executor(None, _blocking_search)
         
         elapsed_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
         logger.info(
@@ -1242,7 +1252,14 @@ class RAGService:
             tid = (r.get("text_id") or "").strip()
             if tid and tid in text_contents:
                 r["content"] = text_contents[tid]
-        enhanced_results = self._merge_results(vector_results, graph_results, entity_names)
+        # 线性融合评分 + 预算内上下文构造
+        enhanced_results, scored_candidates = self._build_scored_context(
+            vector_results=vector_results or [],
+            graph_results=graph_results or [],
+            entity_names=entity_names,
+            resolved_entities=resolved_entities,
+            scenic_name=scenic_name_str,
+        )
         attraction_ids = []
         primary_attraction_id = None
         for r in (vector_results or []):
@@ -1283,8 +1300,7 @@ class RAGService:
                                     enhanced_results = (enhanced_results or "") + "\n\n" + clusters_ctx
             except Exception as e:
                 logger.warning(f"扩展景区景点失败 (intent={intent.value}): {e}")
-        # 列举类问题（如「这个景区有多少景点」）若向量未命中 attraction_XX，则无 primary_attraction_id，
-        # 此处兜底：优先用用户选择的景区名，否则从图库查任意景区，补充景点数量。
+
         if intent == QueryIntent.LISTING and "根据图数据库，景区「" not in (enhanced_results or ""):
             try:
                 async def fetch_first_scenic_listing():
@@ -1408,6 +1424,7 @@ class RAGService:
             "subgraph": subgraph_data,
             "entities": list(unique_entities.values()),
             "enhanced_context": enhanced_results,
+            "scored_candidates": scored_candidates[:10],
             "query": query,
             "attraction_ids": attraction_ids,
             "primary_attraction_id": primary_attraction_id,
@@ -1737,6 +1754,143 @@ class RAGService:
             context_parts.append(f"\n识别到的实体：{', '.join(entities[:5])}")
         
         return "\n".join(context_parts)
+
+    def _build_scored_context(
+        self,
+        *,
+        vector_results: List[Dict[str, Any]],
+        graph_results: List[Dict[str, Any]],
+        entity_names: List[str],
+        resolved_entities: List[str],
+        scenic_name: str,
+        alpha: float = DEFAULT_FUSION_ALPHA,
+        beta: float = DEFAULT_FUSION_BETA,
+        gamma: float = DEFAULT_FUSION_GAMMA,
+        budget_chars: int = DEFAULT_CONTEXT_BUDGET_CHARS,
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """
+        按论文公式对候选片段进行线性融合评分并在字符预算内构造上下文。
+
+        S(c)=α svec(c)+β sgraph(c)+γ sent(c)
+        - svec: 来自向量检索 score（已由 distance 换算）
+        - sgraph: 依据图检索命中关系中实体是否在候选片段中出现的“结构支持强度”（启发式归一化）
+        - sent: 依据候选片段是否命中当前景区/指代消解实体的“实体一致性支持”（启发式）
+        """
+        a = float(alpha)
+        b = float(beta)
+        g = float(gamma)
+        ssum = a + b + g
+        if ssum <= 0:
+            a, b, g = 1.0, 0.0, 0.0
+        else:
+            a, b, g = a / ssum, b / ssum, g / ssum
+
+        budget = max(400, int(budget_chars or DEFAULT_CONTEXT_BUDGET_CHARS))
+        scenic_name = (scenic_name or "").strip()
+        resolved = [str(x).strip() for x in (resolved_entities or []) if str(x).strip()]
+        entities = [str(x).strip() for x in (entity_names or []) if str(x).strip()]
+
+        # 预处理图结果实体名，供 sgraph(c) 计算
+        rel_pairs: List[tuple[str, str]] = []
+        for r in graph_results or []:
+            try:
+                a_node = r.get("a") if isinstance(r, dict) else None
+                b_node = r.get("b") if isinstance(r, dict) else None
+                a_name = (a_node.get("name") if hasattr(a_node, "get") else "") if a_node is not None else ""
+                b_name = (b_node.get("name") if hasattr(b_node, "get") else "") if b_node is not None else ""
+                a_name = str(a_name).strip()
+                b_name = str(b_name).strip()
+                if a_name or b_name:
+                    rel_pairs.append((a_name, b_name))
+            except Exception:
+                continue
+
+        scored: List[Dict[str, Any]] = []
+        for item in vector_results or []:
+            c = dict(item)
+            content = (c.get("content") or "").strip()
+            # svec：已有 score 字段；缺失则置 0
+            svec = float(c.get("score") or 0.0)
+
+            # sgraph：候选片段中出现的图实体名数量（启发式），并做 0..1 归一化
+            hits = 0
+            if content and rel_pairs:
+                for an, bn in rel_pairs:
+                    if an and an in content:
+                        hits += 1
+                    if bn and bn in content:
+                        hits += 1
+            sgraph = min(1.0, hits / 3.0) if hits > 0 else 0.0
+
+            # sent：实体一致性支持（优先 scenic_name / resolved_entities，其次 entity_names）
+            sent = 0.0
+            if content:
+                if scenic_name and scenic_name in content:
+                    sent = 1.0
+                else:
+                    for e0 in resolved:
+                        if e0 and e0 in content:
+                            sent = 1.0
+                            break
+                if sent <= 0 and entities:
+                    for e1 in entities[:5]:
+                        if e1 and e1 in content:
+                            sent = 0.5
+                            break
+
+            S = a * svec + b * sgraph + g * sent
+            c["svec"] = svec
+            c["sgraph"] = sgraph
+            c["sent"] = sent
+            c["S"] = S
+            scored.append(c)
+
+        scored.sort(key=lambda x: float(x.get("S") or 0.0), reverse=True)
+
+        # 在预算内组织“相关文本内容”部分（只对文本块计预算，图关系与实体列表通常较短）
+        context_parts: List[str] = []
+        if scored:
+            context_parts.append("相关文本内容：")
+            used = 0
+            idx = 1
+            for c in scored:
+                content = (c.get("content") or "").strip()
+                text_id = (c.get("text_id") or "").strip()
+                svec = float(c.get("svec") or 0.0)
+                sgraph = float(c.get("sgraph") or 0.0)
+                sent = float(c.get("sent") or 0.0)
+                S = float(c.get("S") or 0.0)
+                header = f"{idx}. (S: {S:.2f}, svec: {svec:.2f}, sgraph: {sgraph:.2f}, sent: {sent:.2f})"
+                block = f"{header}\n{content}" if content else f"{header}\n{text_id}"
+                block_len = len(block)
+                if used + block_len > budget:
+                    break
+                context_parts.append(block)
+                used += block_len
+                idx += 1
+
+        # 图关系摘要（复用原逻辑，控制数量）
+        if graph_results:
+            context_parts.append("\n相关实体关系：")
+            seen_relations = set()
+            for r in graph_results[:8]:
+                if isinstance(r, dict) and "a" in r and "b" in r and "rel_type" in r:
+                    try:
+                        a_name = r["a"].get("name", "未知")
+                        b_name = r["b"].get("name", "未知")
+                        rel_type = r.get("rel_type", "相关")
+                        relation_key = f"{a_name}-{rel_type}-{b_name}"
+                        if relation_key in seen_relations:
+                            continue
+                        seen_relations.add(relation_key)
+                        context_parts.append(f"- {a_name} {rel_type} {b_name}")
+                    except Exception:
+                        continue
+
+        if entity_names:
+            context_parts.append(f"\n识别到的实体：{', '.join(entity_names[:5])}")
+
+        return "\n".join(context_parts), scored
     
     async def generate_answer(
         self, 

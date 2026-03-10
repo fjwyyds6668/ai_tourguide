@@ -722,7 +722,6 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
 
   const textLength = fullText.length
   let i = 0
-  const interval = 10
   const TTS_CHUNK_SIZE = 80
   const TTS_AHEAD_THRESHOLD = 20
   let ttsSynthesizedLength = 0
@@ -735,18 +734,26 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
     ttsSynthesizedLength = initialChunkEnd
   }
 
-  const timer = setInterval(() => {
+  let rafId = 0
+  const step = () => {
+    if (ttsSessionId !== thisTtsSessionId) {
+      if (rafId) cancelAnimationFrame(rafId)
+      rafId = 0
+      return
+    }
     if (i >= textLength) {
-      clearInterval(timer)
+      if (rafId) cancelAnimationFrame(rafId)
+      rafId = 0
       return
     }
     const msg = conversationHistory.value[index]
     if (!msg) {
-      clearInterval(timer)
+      if (rafId) cancelAnimationFrame(rafId)
+      rafId = 0
       return
     }
-
-    const chunkSize = Math.min(3, textLength - i)
+    // 每帧追加一小段，减少响应式更新次数（比10ms setInterval更省渲染）
+    const chunkSize = Math.min(12, textLength - i)
     msg.content += fullText.substring(i, i + chunkSize)
     i += chunkSize
 
@@ -755,6 +762,7 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
       const nextChunkEnd = Math.min(ttsSynthesizedLength + TTS_CHUNK_SIZE, textLength)
       let nextChunk = fullText.substring(nextChunkStart, nextChunkEnd)
       if (nextChunk.trim().length === 0) {
+        rafId = requestAnimationFrame(step)
         return
       }
 
@@ -768,7 +776,9 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
       synthesizeAndQueue(nextChunk, characterId || selectedCharacterId.value, thisTtsSessionId)
       ttsSynthesizedLength = nextChunkEnd
     }
-  }, interval)
+    rafId = requestAnimationFrame(step)
+  }
+  rafId = requestAnimationFrame(step)
 }
 
 const scrollToBottom = () => {

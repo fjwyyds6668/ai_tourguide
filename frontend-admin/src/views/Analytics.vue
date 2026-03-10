@@ -143,6 +143,7 @@ const fetchAnalytics = async (silent = false) => {
     popularData.value = data.popular_attractions || null
   } catch (e) {
     console.error('获取数据分析失败:', e)
+    throw e
   } finally {
     if (!silent) {
       loading.value = false
@@ -153,16 +154,31 @@ const fetchAnalytics = async (silent = false) => {
 
 let refreshTimer = null
 let visibilityHandler = null
+let pollDelayMs = 5000
+let stopped = false
 
 function startPolling() {
   if (refreshTimer) return
-  refreshTimer = setInterval(() => fetchAnalytics(true), 5000)
+  stopped = false
+  const tick = async () => {
+    if (stopped) return
+    try {
+      await fetchAnalytics(true)
+      pollDelayMs = 5000
+    } catch (_) {
+      // 失败指数退避，最多60s
+      pollDelayMs = Math.min(60000, Math.max(5000, pollDelayMs * 2))
+    }
+    refreshTimer = setTimeout(tick, pollDelayMs)
+  }
+  refreshTimer = setTimeout(tick, pollDelayMs)
 }
 function stopPolling() {
   if (refreshTimer) {
-    clearInterval(refreshTimer)
+    clearTimeout(refreshTimer)
     refreshTimer = null
   }
+  stopped = true
 }
 
 onMounted(() => {

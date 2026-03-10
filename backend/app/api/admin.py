@@ -773,7 +773,6 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                     collection = milvus_client.get_collection(collection_name, load=True)
                     expr = f'text_id == "{text_id}"'
                     collection.delete(expr)
-                    collection.flush()
                     logger.info(f"已从 Milvus 删除景点: {text_id}")
             except Exception as e:
                 logger.warning(f"从 Milvus 删除失败: {e}")
@@ -818,8 +817,8 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                 if utility.has_collection(collection_name):
                     expr = f'text_id == "{text_id}"'
                     collection.delete(expr)
-                    collection.flush()
-                embedding = rag_service.generate_embedding(text)
+                # embedding 计算是CPU重活，放线程池避免阻塞事件循环
+                embedding = await asyncio.to_thread(rag_service.generate_embedding, text)
                 entities = [
                     [text_id],
                     [embedding]

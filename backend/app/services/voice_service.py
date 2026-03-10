@@ -84,15 +84,20 @@ class VoiceService:
         
         try:
             import warnings
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
-                result = self.whisper_model.transcribe(audio_file_path, language="zh")
-            
-            text = result.get("text", "").strip()
+            import asyncio
+
+            def _run_transcribe() -> str:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
+                    result = self.whisper_model.transcribe(audio_file_path, language="zh")
+                return (result.get("text", "") or "").strip()
+
+            loop = asyncio.get_event_loop()
+            text = await loop.run_in_executor(None, _run_transcribe)
             if not text:
                 logger.warning("Whisper 识别结果为空")
                 return ""
-            
+
             logger.info(f"Whisper 识别成功: text_length={len(text)}")
             return text
         except FileNotFoundError as e:
@@ -122,29 +127,37 @@ class VoiceService:
         if not self.vosk_model:
             raise ValueError("Vosk model not loaded")
         
+        import asyncio
         import json
         import wave
         from vosk import KaldiRecognizer
-        
-        wf = wave.open(audio_file_path, "rb")
-        rec = KaldiRecognizer(self.vosk_model, wf.getframerate())
-        rec.SetWords(True)
-        
-        text_parts = []
-        while True:
-            data = wf.readframes(4000)
-            if len(data) == 0:
-                break
-            if rec.AcceptWaveform(data):
-                result = json.loads(rec.Result())
-                if 'text' in result:
-                    text_parts.append(result['text'])
-        
-        final_result = json.loads(rec.FinalResult())
-        if 'text' in final_result:
-            text_parts.append(final_result['text'])
-        
-        return " ".join(text_parts)
+
+        def _run_vosk() -> str:
+            wf = wave.open(audio_file_path, "rb")
+            try:
+                rec = KaldiRecognizer(self.vosk_model, wf.getframerate())
+                rec.SetWords(True)
+                text_parts = []
+                while True:
+                    data = wf.readframes(4000)
+                    if len(data) == 0:
+                        break
+                    if rec.AcceptWaveform(data):
+                        result = json.loads(rec.Result())
+                        if "text" in result:
+                            text_parts.append(result["text"])
+                final_result = json.loads(rec.FinalResult())
+                if "text" in final_result:
+                    text_parts.append(final_result["text"])
+                return " ".join(text_parts).strip()
+            finally:
+                try:
+                    wf.close()
+                except Exception:
+                    pass
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _run_vosk)
     
     async def synthesize_xfyun(self, text: str, output_path: Optional[str] = None, voice: Optional[str] = None) -> str:
         """使用科大讯飞 WebSocket TTS 进行语音合成（带重试机制）
@@ -168,6 +181,7 @@ class VoiceService:
         from time import mktime
         from urllib.parse import urlencode
         from wsgiref.handlers import format_date_time
+        import wave
         
         if not output_path:
             output_path = tempfile.mktemp(suffix=".wav")
@@ -179,11 +193,6 @@ class VoiceService:
             raise Exception(
                 "科大讯飞 TTS 未配置：请在 .env 中设置 XFYUN_APPID、XFYUN_API_KEY 和 XFYUN_API_SECRET。"
             )
-        
-        if not output_path:
-            # 使用临时目录（通常在内存文件系统或SSD上，比默认位置更快）
-            temp_dir = tempfile.gettempdir()
-            output_path = tempfile.mktemp(suffix=".wav", dir=temp_dir)
         
         try:
             text = text.encode('utf-8', errors='ignore').decode('utf-8')
@@ -199,6 +208,25 @@ class VoiceService:
         
         if not text:
             raise Exception("文本为空，无法合成")
+
+        def _validate_wav_file(path: str) -> bool:
+            try:
+                if not path or not os.path.exists(path):
+                    return False
+                size = os.path.getsize(path)
+                if size < 800:
+                    return False
+                with wave.open(path, "rb") as wf:
+                    fr = wf.getframerate() or 0
+                    nframes = wf.getnframes() or 0
+                    if fr <= 0 or nframes <= 0:
+                        return False
+                    dur = nframes / fr
+                    if dur < 0.15 or dur > 120:
+                        return False
+                return True
+            except Exception:
+                return False
         
         max_retries = 3
         last_error = None
@@ -315,14 +343,16 @@ class VoiceService:
                         skip_utf8_validation=True,
                     )
                 
-                # 在线程中运行 WebSocket（同步阻塞）
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, run_websocket)
-                
-                # 等待 WebSocket 关闭（根据文本长度动态调整超时：每100字约6秒，最少20秒，最多90秒，避免长文本合成未完成就超时）
+                # 在线程中运行 WebSocket（同步阻塞），并用 wait_for 让超时真正生效
                 text_len = len(text)
                 timeout_seconds = max(20.0, min(90.0, (text_len / 100) * 6))
-                if not ws_closed.wait(timeout=timeout_seconds):
+                loop = asyncio.get_event_loop()
+                try:
+                    await asyncio.wait_for(
+                        loop.run_in_executor(None, run_websocket),
+                        timeout=timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
                     raise Exception(f"科大讯飞 TTS 请求超时（{timeout_seconds:.1f}秒）")
                 
                 if error_occurred[0]:
@@ -340,7 +370,7 @@ class VoiceService:
                 # 保存为 WAV 文件
                 sf.write(output_path, audio_array, 16000)
                 
-                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                if _validate_wav_file(output_path):
                     logger.debug("科大讯飞 TTS 合成成功 (尝试 %d/%d)", attempt + 1, max_retries)
                     return output_path
                 raise Exception("生成的音频文件为空")
@@ -366,14 +396,14 @@ class VoiceService:
             )
             
             if attempt < max_retries - 1:
+                # 仅对网络/超时/连接类可恢复异常进行指数退避重试
                 if is_connection_error:
                     wait_time = 1.0 * (2 ** attempt)
                     logger.debug("TTS 连接错误，%.1fs 后重试", wait_time)
+                    await asyncio.sleep(wait_time)
                 else:
-                    # 其他错误快速重试：0.2秒、0.4秒、0.8秒
-                    wait_time = 0.2 * (2 ** attempt)
-                
-                await asyncio.sleep(wait_time)
+                    # 非可恢复异常不重试，直接进入最终错误分支
+                    break
             else:
                 if "401" in error_msg or "403" in error_msg or "鉴权" in error_msg:
                     raise Exception(

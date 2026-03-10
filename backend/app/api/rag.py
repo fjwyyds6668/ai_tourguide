@@ -22,6 +22,59 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_HISTORY_BUDGET_CHARS = 1200  # 发送给LLM前的对话历史字符预算（仅裁剪历史，不含本轮问题）
+
+
+def _trim_conversation_history(
+    history: List[Dict[str, str]],
+    *,
+    budget_chars: int = _HISTORY_BUDGET_CHARS,
+    prefer_terms: Optional[List[str]] = None,
+) -> List[Dict[str, str]]:
+    """按“最近几轮+长度预算”裁剪会话历史，优先保留包含关键实体的消息。"""
+    if not history:
+        return []
+    budget = max(0, int(budget_chars or 0))
+    if budget <= 0:
+        return []
+
+    terms = [t.strip() for t in (prefer_terms or []) if isinstance(t, str) and t.strip()]
+
+    def _len_msg(m: Dict[str, str]) -> int:
+        return len((m.get("role") or "")) + len((m.get("content") or ""))
+
+    def _hit(m: Dict[str, str]) -> bool:
+        if not terms:
+            return False
+        c = (m.get("content") or "")
+        return any(t in c for t in terms)
+
+    recent = [m for m in history if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
+    recent = recent[-20:]
+    flags = [_hit(m) for m in recent]
+
+    keep: set[int] = set()
+    used = 0
+    # 先从后往前保留“命中消息”
+    for i in range(len(recent) - 1, -1, -1):
+        if not flags[i]:
+            continue
+        ln = _len_msg(recent[i])
+        if used + ln > budget:
+            continue
+        keep.add(i)
+        used += ln
+    # 再补足未命中消息（仍从后往前）
+    for i in range(len(recent) - 1, -1, -1):
+        if i in keep:
+            continue
+        ln = _len_msg(recent[i])
+        if used + ln > budget:
+            continue
+        keep.add(i)
+        used += ln
+    return [recent[i] for i in range(len(recent)) if i in keep]
+
 class QueryRequest(BaseModel):
     query: str
     top_k: int = 5
@@ -104,25 +157,79 @@ def _save_interaction(
     query_text: str,
     response_text: str,
     primary_attraction_id: Optional[int],
+    scenic_name: Optional[str] = None,
+    interaction_type: str = "voice_query",
 ) -> None:
     try:
         from app.core.database import SessionLocal
-        from app.models.attraction import Attraction as AttractionModel
+        from app.core.neo4j_client import neo4j_client
         db_local = SessionLocal()
         try:
+            # 优先使用 RAG 返回的主景点
             aid = primary_attraction_id
-            if aid is None and query_text and query_text.strip():
-                q = query_text.strip()
+
+            # 若无主景点，则按“问题+回答”做主关联景点打分（论文算法落地）
+            if aid is None:
+                q = (query_text or "").strip()
+                r = (response_text or "").strip()
+                scenic = (scenic_name or "").strip()
+
+                # 权重：问题命中更重要，其次回答命中，最后景区一致性加成
+                wq, wr, ws = 1.0, 0.6, 0.8
+
+                best_id: Optional[int] = None
+                best_score: float = 0.0
+
+                scenic_aid_set: set[int] = set()
+                if scenic:
+                    # 一次性查询该景区下的景点集合，避免对每个候选景点都打一次 Neo4j
+                    try:
+                        rows = neo4j_client.execute_query(
+                            """
+                            MATCH (s:ScenicSpot {name: $s_name})
+                            OPTIONAL MATCH (s)<-[:属于]-(a1:Attraction)
+                            OPTIONAL MATCH (s)-[:HAS_SPOT]->(a2:Attraction)
+                            WITH collect(DISTINCT a1.id) + collect(DISTINCT a2.id) AS xs
+                            UNWIND xs AS aid
+                            WITH DISTINCT aid WHERE aid IS NOT NULL
+                            RETURN aid
+                            LIMIT 800
+                            """,
+                            {"s_name": scenic},
+                        ) or []
+                        scenic_aid_set = {int(x["aid"]) for x in rows if x and x.get("aid") is not None}
+                    except Exception:
+                        scenic_aid_set = set()
+
                 for rid, name in _get_attraction_id_name_list():
-                    if name and name in q:
-                        aid = rid
-                        break
+                    nm = (name or "").strip()
+                    if not nm:
+                        continue
+                    cnt_q = q.count(nm) if q else 0
+                    cnt_r = r.count(nm) if r else 0
+                    if cnt_q == 0 and cnt_r == 0:
+                        continue
+
+                    scenic_hit = 0
+                    if scenic and scenic_aid_set:
+                        try:
+                            scenic_hit = 1 if int(rid) in scenic_aid_set else 0
+                        except Exception:
+                            scenic_hit = 0
+
+                    score = wq * cnt_q + wr * cnt_r + ws * scenic_hit
+                    if score > best_score:
+                        best_score = score
+                        best_id = int(rid)
+
+                if best_id is not None and best_score > 0:
+                    aid = best_id
             interaction = Interaction(
                 session_id=session_id,
                 character_id=character_id,
                 query_text=query_text,
                 response_text=response_text,
-                interaction_type="voice_query",
+                interaction_type=interaction_type,
                 attraction_id=aid,
             )
             db_local.add(interaction)
@@ -165,6 +272,11 @@ async def generate_answer(request: GenerateRequest, background_tasks: Background
             _load_character_prompt_and_voice(request.character_id),
             asyncio.to_thread(session_service.get_conversation_history, session_id),
         )
+        conversation_history = _trim_conversation_history(
+            conversation_history,
+            budget_chars=_HISTORY_BUDGET_CHARS,
+            prefer_terms=[request.scenic_name] if request.scenic_name else None,
+        )
 
         result = await rag_service.generate_answer(
             query=request.query,
@@ -188,6 +300,8 @@ async def generate_answer(request: GenerateRequest, background_tasks: Background
             request.query,
             answer,
             primary_attraction_id,
+            request.scenic_name,
+            "text_query",
         )
 
         return GenerateResponse(
@@ -206,6 +320,11 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
         (character_prompt, voice), conversation_history = await asyncio.gather(
             _load_character_prompt_and_voice(request.character_id),
             asyncio.to_thread(session_service.get_conversation_history, session_id),
+        )
+        conversation_history = _trim_conversation_history(
+            conversation_history,
+            budget_chars=_HISTORY_BUDGET_CHARS,
+            prefer_terms=[request.scenic_name] if request.scenic_name else None,
         )
         if not voice:
             voice = settings.XFYUN_VOICE
@@ -263,45 +382,89 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             )
             
             full_answer = ""
-            accumulated_text = ""
+            accumulated_text = ""  # 累积缓冲文本 T
             completed_audio: Dict[int, str] = {}
             fallback_tts: Dict[int, str] = {}  # TTS 失败时回退为文本由前端合成
             next_audio_idx = 0
             tts_chunk_index = [0]
-            MIN_TTS_CHARS = 12
-            TTS_SENTENCE_TIMEOUT = 25  # 单句 TTS 超时(秒)
+            Lmin = 12  # 子句最小长度阈值 Lmin
+            TTS_SENTENCE_TIMEOUT = 25  # 单句TTS超时(秒)
+            TTS_MAX_CONCURRENCY = 3  # 并行合成上限，避免任务堆积
+            tts_sema = asyncio.Semaphore(TTS_MAX_CONCURRENCY)
+            TTS_MAX_PENDING = 10  # 最大排队片段数，避免 create_task 堆积
+            pending_tts = 0
+            SENTENCE_PUNCT = ['。', '！', '？', '.', '!', '?']
             
-            async def synthesize_and_store(idx: int, original_txt: str) -> None:
-                txt = _normalize_tts_text(original_txt)
-                if not txt:
-                    completed_audio[idx] = ""
-                    return
-                path = None
+            def _compute_cut(buf: str) -> Optional[int]:
+                """
+                计算切分位置 cut：
+                - 若存在句末标点集合 P，则 cut=max(P)+1
+                - 若 P 为空且 |T|>=Lmin，则 cut=|T|
+                - 否则不切分
+                """
+                if not buf:
+                    return None
+                last = -1
+                for p in SENTENCE_PUNCT:
+                    last = max(last, buf.rfind(p))
+                if last >= 0:
+                    return last + 1
+                if len(buf) >= Lmin:
+                    return len(buf)
+                return None
+
+            def _validate_wav_file(path: str) -> bool:
+                """对音频结果做基本校验：文件存在、大小合理、时长合理。"""
                 try:
-                    try:
-                        path = await asyncio.wait_for(
-                            voice_service.synthesize_xfyun(txt, voice=voice),
-                            timeout=TTS_SENTENCE_TIMEOUT,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.debug("科大讯飞 TTS 单句超时(%ds)", TTS_SENTENCE_TIMEOUT)
-                    except Exception as e:
-                        logger.debug("科大讯飞 TTS 失败: %s", e)
-                    if path and os.path.exists(path):
-                        with open(path, "rb") as f:
-                            b64 = base64.b64encode(f.read()).decode("utf-8")
-                        completed_audio[idx] = b64
+                    if not path or not os.path.exists(path):
+                        return False
+                    size = os.path.getsize(path)
+                    if size < 800:  # 太小基本可视为无效
+                        return False
+                    # 用标准库 wave 读取时长（本项目合成 wav）
+                    import wave
+                    with wave.open(path, "rb") as wf:
+                        fr = wf.getframerate() or 0
+                        nframes = wf.getnframes() or 0
+                        if fr <= 0 or nframes <= 0:
+                            return False
+                        dur = nframes / fr
+                        if dur < 0.15 or dur > 120:
+                            return False
+                    return True
+                except Exception:
+                    return False
+
+            async def synthesize_and_store(idx: int, original_txt: str) -> None:
+                """文本预处理→并行提交→音频校验→失败回退（重试由 voice_service 内部处理）。"""
+                nonlocal pending_tts
+                try:
+                    txt = _normalize_tts_text(original_txt)
+                    if not txt:
+                        completed_audio[idx] = ""
+                        return
+                    async with tts_sema:
+                        path: Optional[str] = None
                         try:
-                            os.unlink(path)
-                        except OSError:
+                            path = await asyncio.wait_for(
+                                voice_service.synthesize_xfyun(txt, voice=voice),
+                                timeout=TTS_SENTENCE_TIMEOUT,
+                            )
+                            if path and _validate_wav_file(path):
+                                with open(path, "rb") as f:
+                                    b64 = base64.b64encode(f.read()).decode("utf-8")
+                                completed_audio[idx] = b64
+                                try:
+                                    os.unlink(path)
+                                except OSError:
+                                    pass
+                                return
+                        except Exception:
                             pass
-                    else:
                         fallback_tts[idx] = original_txt.strip()
                         completed_audio[idx] = ""
-                except Exception as e:
-                    logger.debug("流式 TTS 合成失败: %s", e)
-                    fallback_tts[idx] = original_txt.strip()
-                    completed_audio[idx] = ""
+                finally:
+                    pending_tts = max(0, pending_tts - 1)
             
             def drain_audio():
                 nonlocal next_audio_idx
@@ -319,16 +482,36 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             
             yield f"data: {json.dumps({'type': 'session_id', 'content': session_id}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'attraction_id', 'content': primary_attraction_id}, ensure_ascii=False)}\n\n"
-            chunk_queue: asyncio.Queue = asyncio.Queue()
+            # 有界队列：防止上游生成过快导致内存增长
+            chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
             loop = asyncio.get_event_loop()
             stream_sentinel = object()
             
             def put_stream_in_queue():
                 try:
                     for c in stream:
-                        loop.call_soon_threadsafe(chunk_queue.put_nowait, c)
+                        def _put():
+                            try:
+                                chunk_queue.put_nowait(c)
+                            except asyncio.QueueFull:
+                                # 队列满时丢弃最旧的一个，再写入当前chunk
+                                try:
+                                    chunk_queue.get_nowait()
+                                except Exception:
+                                    pass
+                                try:
+                                    chunk_queue.put_nowait(c)
+                                except Exception:
+                                    pass
+
+                        loop.call_soon_threadsafe(_put)
                 finally:
-                    loop.call_soon_threadsafe(chunk_queue.put_nowait, stream_sentinel)
+                    def _put_end():
+                        try:
+                            chunk_queue.put_nowait(stream_sentinel)
+                        except Exception:
+                            pass
+                    loop.call_soon_threadsafe(_put_end)
             
             loop.run_in_executor(None, put_stream_in_queue)
             DRAIN_INTERVAL = 0.05
@@ -353,27 +536,22 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                         accumulated_text += content
                         
                         tts_chunk = None
-                        if any(punct in accumulated_text for punct in ['。', '！', '？', '.', '!', '?']):
-                            last_punct_idx = max(
-                                accumulated_text.rfind('。'),
-                                accumulated_text.rfind('！'),
-                                accumulated_text.rfind('？'),
-                                accumulated_text.rfind('.'),
-                                accumulated_text.rfind('!'),
-                                accumulated_text.rfind('?')
-                            )
-                            if last_punct_idx >= 0:
-                                tts_chunk = accumulated_text[:last_punct_idx + 1]
-                                accumulated_text = accumulated_text[last_punct_idx + 1:]
-                        elif len(accumulated_text) >= MIN_TTS_CHARS:
-                            tts_chunk = accumulated_text
-                            accumulated_text = ""
+                        cut = _compute_cut(accumulated_text)
+                        if cut is not None and cut > 0:
+                            tts_chunk = accumulated_text[:cut]
+                            accumulated_text = accumulated_text[cut:]
                         
                         if tts_chunk:
                             if backend_tts_enabled:
                                 idx = tts_chunk_index[0]
                                 tts_chunk_index[0] += 1
-                                asyncio.create_task(synthesize_and_store(idx, tts_chunk))
+                                if pending_tts >= TTS_MAX_PENDING:
+                                    # 排队过多则回退为文本TTS事件，避免堆积导致延迟膨胀
+                                    fallback_tts[idx] = tts_chunk.strip()
+                                    completed_audio[idx] = ""
+                                else:
+                                    pending_tts += 1
+                                    asyncio.create_task(synthesize_and_store(idx, tts_chunk))
                             else:
                                 yield f"data: {json.dumps({'type': 'tts', 'content': tts_chunk}, ensure_ascii=False)}\n\n"
                         
@@ -386,7 +564,12 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 if backend_tts_enabled:
                     idx = tts_chunk_index[0]
                     tts_chunk_index[0] += 1
-                    asyncio.create_task(synthesize_and_store(idx, accumulated_text.strip()))
+                    if pending_tts >= TTS_MAX_PENDING:
+                        fallback_tts[idx] = accumulated_text.strip()
+                        completed_audio[idx] = ""
+                    else:
+                        pending_tts += 1
+                        asyncio.create_task(synthesize_and_store(idx, accumulated_text.strip()))
                 else:
                     yield f"data: {json.dumps({'type': 'tts', 'content': accumulated_text.strip()}, ensure_ascii=False)}\n\n"
             
@@ -481,6 +664,8 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                     request.query,
                     full_answer,
                     primary_attraction_id,
+                    request.scenic_name,
+                    "voice_query",
                 ),
             )
             
