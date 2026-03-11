@@ -14,11 +14,15 @@
           :row-key="(row) => row.id"
         >
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="query_text" label="问题" min-width="200" />
-        <el-table-column prop="response_text" label="回答" min-width="300" />
+        <el-table-column prop="query_text" label="用户问题" min-width="220" show-overflow-tooltip />
+        <el-table-column label="回答" min-width="420">
+          <template #default="{ row }">
+            <div class="answer-full">{{ row.response_text || '—' }}</div>
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="时间" width="180">
           <template #default="{ row }">
-            {{ formatTime(row.created_at) }}
+            {{ formatTime(row.created_at) || row.created_at || '—' }}
           </template>
         </el-table-column>
         <template #empty>
@@ -59,6 +63,7 @@ const loadHistory = async () => {
   try {
     const res = await api.get('/history/history', {
       params: {
+        only_qa: true,
         skip: (currentPage.value - 1) * pageSize.value,
         limit: pageSize.value
       }
@@ -130,6 +135,12 @@ onMounted(() => {
 .table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.answer-full {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
 }
 
 .pagination-wrap {

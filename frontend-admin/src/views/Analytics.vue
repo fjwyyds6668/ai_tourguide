@@ -57,59 +57,41 @@
             <span class="user-query-text">{{ row.query || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="摘要" min-width="260">
+        <el-table-column label="RAG 检索日志" min-width="520" align="left">
           <template #default="{ row }">
-            <div class="summary">
-              <div>
-                <strong>向量命中</strong>：{{ (row.rag_debug?.vector_results || []).length }}
-                <span style="margin-left: 10px"><strong>图命中</strong>：{{ (row.rag_debug?.graph_results || []).length }}</span>
+            <div class="rag-context-wrap">
+              <div class="rag-context">
+                <div><strong>① 向量数据库命中（Milvus）</strong></div>
+                <div v-if="!(row.rag_debug?.vector_results?.length)">
+                  <span style="color: #999">（无向量检索结果）</span>
+                </div>
+                <ol v-else style="padding-left: 20px; margin: 4px 0">
+                  <li v-for="(r, idx) in (row.rag_debug?.vector_results || []).slice(0, 5)" :key="idx">
+                    text_id: <code>{{ r.text_id }}</code>，相似度: {{ (r.score ?? 0).toFixed(2) }}
+                  </li>
+                </ol>
+                <div><strong>② 图数据库命中（Neo4j）</strong></div>
+                <div v-if="!(row.rag_debug?.graph_results?.length)">
+                  <span style="color: #999">（无图数据库检索结果）</span>
+                </div>
+                <ul v-else style="padding-left: 20px; margin: 4px 0">
+                  <li v-for="(r, idx) in (row.rag_debug?.graph_results || []).slice(0, 5)" :key="idx">
+                    {{ nodeName(r.a) }} [{{ r.rel_type || '关联' }}] → {{ nodeName(r.b) }}
+                  </li>
+                </ul>
+                <div><strong>③ 组装后传给 LLM 的完整信息</strong></div>
+                <div v-if="!(row.rag_debug?.final_sent_to_llm || row.rag_debug?.enhanced_context)" style="color: #999">
+                  （未构造上下文或未使用 RAG）
+                </div>
+                <pre v-else class="context-pre">{{ row.rag_debug?.final_sent_to_llm || row.rag_debug?.enhanced_context }}</pre>
+                <div><strong>④ 大模型回复</strong></div>
+                <div class="answer-full">{{ row.final_answer_preview || '（本次未记录回复预览）' }}</div>
               </div>
-              <div class="answer-preview">{{ row.final_answer_preview || '（本次未记录回复预览）' }}</div>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="110" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" @click="openDetail(row)">查看</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
-
-    <el-dialog v-model="detailVisible" title="RAG 日志详情" width="900px" destroy-on-close>
-      <div v-if="detailRow" class="detail">
-        <div class="detail-line"><strong>时间：</strong>{{ formatTime(detailRow.timestamp) }}</div>
-        <div class="detail-line"><strong>是否 RAG：</strong>{{ detailRow.use_rag ? 'RAG' : 'Direct' }}</div>
-        <div class="detail-line"><strong>用户问题：</strong>{{ detailRow.query || '—' }}</div>
-        <div class="detail-block">
-          <div class="detail-title">① 向量数据库命中（Milvus）</div>
-          <div v-if="!(detailRow.rag_debug?.vector_results?.length)" style="color: #999">（无向量检索结果）</div>
-          <ol v-else style="padding-left: 20px; margin: 6px 0">
-            <li v-for="(r, idx) in (detailRow.rag_debug?.vector_results || []).slice(0, 20)" :key="idx">
-              text_id: <code>{{ r.text_id }}</code>，相似度: {{ (r.score ?? 0).toFixed(2) }}
-            </li>
-          </ol>
-        </div>
-        <div class="detail-block">
-          <div class="detail-title">② 图数据库命中（Neo4j）</div>
-          <div v-if="!(detailRow.rag_debug?.graph_results?.length)" style="color: #999">（无图数据库检索结果）</div>
-          <ul v-else style="padding-left: 20px; margin: 6px 0">
-            <li v-for="(r, idx) in (detailRow.rag_debug?.graph_results || []).slice(0, 20)" :key="idx">
-              {{ nodeName(r.a) }} [{{ r.rel_type || '关联' }}] → {{ nodeName(r.b) }}
-            </li>
-          </ul>
-        </div>
-        <div class="detail-block">
-          <div class="detail-title">③ 组装后传给 LLM 的完整信息</div>
-          <div v-if="!(detailRow.rag_debug?.final_sent_to_llm || detailRow.rag_debug?.enhanced_context)" style="color: #999">（未构造上下文或未使用 RAG）</div>
-          <pre v-else class="context-pre">{{ detailRow.rag_debug?.final_sent_to_llm || detailRow.rag_debug?.enhanced_context }}</pre>
-        </div>
-        <div class="detail-block">
-          <div class="detail-title">④ 大模型回复</div>
-          <pre class="context-pre">{{ detailRow.final_answer_preview || '（本次未记录回复预览）' }}</pre>
-        </div>
-      </div>
-    </el-dialog>
   </div>
 </template>
 
@@ -123,13 +105,7 @@ const ragLogsLoading = ref(false)
 const interactionData = ref(null)
 const popularData = ref(null)
 const ragLogs = ref([])
-const detailVisible = ref(false)
-const detailRow = ref(null)
-
-const openDetail = (row) => {
-  detailRow.value = row || null
-  detailVisible.value = true
-}
+// 旧版：表格内直接展示上下文，不使用弹窗
 
 const formatTime = (val) => {
   if (!val) return '—'
@@ -292,34 +268,28 @@ onUnmounted(() => {
   line-height: inherit;
   font-weight: inherit;
 }
-.answer-preview {
+.answer-full {
   white-space: pre-wrap;
   word-break: break-word;
   margin-top: 4px;
   color: var(--rag-black);
-  display: -webkit-box;
-  line-clamp: 3;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
-.summary {
+.rag-context-wrap {
+  max-height: 360px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+.rag-context-wrap::-webkit-scrollbar {
+  width: 6px;
+}
+.rag-context-wrap::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+.rag-context {
   font-size: 13px;
   color: var(--rag-black);
-}
-.detail {
-  font-size: 13px;
-  color: var(--rag-black);
-}
-.detail-line {
-  margin-bottom: 8px;
-}
-.detail-block {
-  margin-top: 12px;
-}
-.detail-title {
-  font-weight: 600;
-  margin-bottom: 6px;
 }
 .page-wrap {
   min-height: 200px;
