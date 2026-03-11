@@ -315,15 +315,15 @@ class VoiceService:
                                 ws.close()
                                 return
 
-                            if status == 2:
-                                ws_closed.set()
-                                ws.close()
-                                return
-
                             audio_base64 = msg.get("data", {}).get("audio", "")
                             if audio_base64:
                                 audio_bytes = base64.b64decode(audio_base64)
                                 audio_data_list.append(audio_bytes)
+
+                            if status == 2:
+                                ws_closed.set()
+                                ws.close()
+                                return
                         except Exception as e:
                             error_occurred[0] = True
                             error_message[0] = f"解析消息失败: {e}"
@@ -405,6 +405,9 @@ class VoiceService:
 
                     # 合并所有音频块
                     pcm_data = b''.join(audio_data_list)
+                    # int16 对齐（避免奇数字节导致播放爆音/卡顿）
+                    if len(pcm_data) % 2 == 1:
+                        pcm_data = pcm_data[:-1]
 
                     # 将 PCM (16kHz, 16bit, mono) 转换为 numpy 数组
                     audio_array = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32) / 32768.0

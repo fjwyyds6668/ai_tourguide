@@ -22,6 +22,7 @@
         :data="popularData?.popular_attractions || []"
         v-loading="loading"
         row-key="id"
+        max-height="360"
       >
         <el-table-column prop="id" label="景点ID" width="100" />
         <el-table-column prop="name" label="景点名称" />
@@ -33,7 +34,13 @@
       <template #header>
         <span>RAG 检索上下文日志（显示最近 5 条）</span>
       </template>
-      <el-table :data="ragLogs" v-loading="ragLogsLoading" class="rag-logs-table">
+      <el-table
+        :data="ragLogs"
+        v-loading="ragLogsLoading"
+        class="rag-logs-table"
+        row-key="id"
+        max-height="520"
+      >
         <el-table-column prop="timestamp" label="时间" width="180">
           <template #default="{ row }">
             {{ formatTime(row.timestamp) }}
@@ -50,52 +57,79 @@
             <span class="user-query-text">{{ row.query || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="RAG 检索&上下文" min-width="400" align="left">
+        <el-table-column label="摘要" min-width="260">
           <template #default="{ row }">
-            <div class="rag-context-wrap">
-            <div class="rag-context">
-              <div><strong>① 向量数据库命中（Milvus）</strong></div>
-              <div v-if="!(row.rag_debug?.vector_results?.length)">
-                <span style="color: #999">（无向量检索结果）</span>
+            <div class="summary">
+              <div>
+                <strong>向量命中</strong>：{{ (row.rag_debug?.vector_results || []).length }}
+                <span style="margin-left: 10px"><strong>图命中</strong>：{{ (row.rag_debug?.graph_results || []).length }}</span>
               </div>
-              <ol v-else style="padding-left: 20px; margin: 4px 0">
-                <li v-for="(r, idx) in (row.rag_debug?.vector_results || []).slice(0, 5)" :key="idx">
-                  text_id: <code>{{ r.text_id }}</code>，相似度: {{ (r.score ?? 0).toFixed(2) }}
-                </li>
-              </ol>
-              <div><strong>② 图数据库命中（Neo4j）</strong></div>
-              <div v-if="!(row.rag_debug?.graph_results?.length)">
-                <span style="color: #999">（无图数据库检索结果）</span>
-              </div>
-              <ul v-else style="padding-left: 20px; margin: 4px 0">
-                <li v-for="(r, idx) in (row.rag_debug?.graph_results || []).slice(0, 5)" :key="idx">
-                  {{ nodeName(r.a) }} [{{ r.rel_type || '关联' }}] → {{ nodeName(r.b) }}
-                </li>
-              </ul>
-              <div><strong>③ 组装后传给 LLM 的完整信息</strong></div>
-              <div v-if="!(row.rag_debug?.final_sent_to_llm || row.rag_debug?.enhanced_context)" style="color: #999">（未构造上下文或未使用 RAG）</div>
-              <pre v-else class="context-pre">{{ row.rag_debug?.final_sent_to_llm || row.rag_debug?.enhanced_context }}</pre>
-              <div><strong>④ 大模型回复</strong></div>
               <div class="answer-preview">{{ row.final_answer_preview || '（本次未记录回复预览）' }}</div>
             </div>
-            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="110" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" @click="openDetail(row)">查看</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-dialog v-model="detailVisible" title="RAG 日志详情" width="900px" destroy-on-close>
+      <div v-if="detailRow" class="detail">
+        <div class="detail-line"><strong>时间：</strong>{{ formatTime(detailRow.timestamp) }}</div>
+        <div class="detail-line"><strong>是否 RAG：</strong>{{ detailRow.use_rag ? 'RAG' : 'Direct' }}</div>
+        <div class="detail-line"><strong>用户问题：</strong>{{ detailRow.query || '—' }}</div>
+        <div class="detail-block">
+          <div class="detail-title">① 向量数据库命中（Milvus）</div>
+          <div v-if="!(detailRow.rag_debug?.vector_results?.length)" style="color: #999">（无向量检索结果）</div>
+          <ol v-else style="padding-left: 20px; margin: 6px 0">
+            <li v-for="(r, idx) in (detailRow.rag_debug?.vector_results || []).slice(0, 20)" :key="idx">
+              text_id: <code>{{ r.text_id }}</code>，相似度: {{ (r.score ?? 0).toFixed(2) }}
+            </li>
+          </ol>
+        </div>
+        <div class="detail-block">
+          <div class="detail-title">② 图数据库命中（Neo4j）</div>
+          <div v-if="!(detailRow.rag_debug?.graph_results?.length)" style="color: #999">（无图数据库检索结果）</div>
+          <ul v-else style="padding-left: 20px; margin: 6px 0">
+            <li v-for="(r, idx) in (detailRow.rag_debug?.graph_results || []).slice(0, 20)" :key="idx">
+              {{ nodeName(r.a) }} [{{ r.rel_type || '关联' }}] → {{ nodeName(r.b) }}
+            </li>
+          </ul>
+        </div>
+        <div class="detail-block">
+          <div class="detail-title">③ 组装后传给 LLM 的完整信息</div>
+          <div v-if="!(detailRow.rag_debug?.final_sent_to_llm || detailRow.rag_debug?.enhanced_context)" style="color: #999">（未构造上下文或未使用 RAG）</div>
+          <pre v-else class="context-pre">{{ detailRow.rag_debug?.final_sent_to_llm || detailRow.rag_debug?.enhanced_context }}</pre>
+        </div>
+        <div class="detail-block">
+          <div class="detail-title">④ 大模型回复</div>
+          <pre class="context-pre">{{ detailRow.final_answer_preview || '（本次未记录回复预览）' }}</pre>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ChatDotRound } from '@element-plus/icons-vue'
-import api from '../api'
+import api, { withAbort, cancelInflight } from '../api'
 
 const loading = ref(false)
 const ragLogsLoading = ref(false)
 const interactionData = ref(null)
 const popularData = ref(null)
 const ragLogs = ref([])
+const detailVisible = ref(false)
+const detailRow = ref(null)
+
+const openDetail = (row) => {
+  detailRow.value = row || null
+  detailVisible.value = true
+}
 
 const formatTime = (val) => {
   if (!val) return '—'
@@ -129,6 +163,8 @@ function nodeName(n) {
 }
 
 const fetchAnalytics = async (silent = false) => {
+  if (fetchAnalytics._inFlight) return
+  fetchAnalytics._inFlight = true
   if (!silent) {
     loading.value = true
     ragLogsLoading.value = true
@@ -136,19 +172,24 @@ const fetchAnalytics = async (silent = false) => {
   try {
     const res = await api.get('/admin/analytics/dashboard', {
       params: { rag_limit: 5, interactions_limit: 5 },
+      ...withAbort('admin:analytics:dashboard'),
     })
     const data = res.data || {}
     ragLogs.value = data.rag_logs || []
     interactionData.value = data.interactions || null
     popularData.value = data.popular_attractions || null
   } catch (e) {
-    console.error('获取数据分析失败:', e)
-    throw e
+    // 被取消的请求不算失败
+    if (e?.name !== 'CanceledError' && e?.code !== 'ERR_CANCELED') {
+      console.error('获取数据分析失败:', e)
+      throw e
+    }
   } finally {
     if (!silent) {
       loading.value = false
       ragLogsLoading.value = false
     }
+    fetchAnalytics._inFlight = false
   }
 }
 
@@ -179,6 +220,7 @@ function stopPolling() {
     refreshTimer = null
   }
   stopped = true
+  cancelInflight('admin:analytics:dashboard')
 }
 
 onMounted(() => {
@@ -223,25 +265,6 @@ onUnmounted(() => {
   color: var(--rag-black);
 }
 
-.rag-logs-table {
-  overflow: visible;
-}
-.rag-logs-table :deep(.el-table__body-wrapper) {
-  overflow: visible !important;
-  max-height: none !important;
-  height: auto !important;
-}
-.rag-logs-table :deep(.el-scrollbar__wrap) {
-  overflow: visible !important;
-  max-height: none !important;
-  height: auto !important;
-}
-.rag-logs-table :deep(.el-scrollbar__view) {
-  overflow: visible !important;
-}
-.rag-logs-table :deep(.el-table__body) {
-  overflow: visible !important;
-}
 .rag-logs-table :deep(.el-table__row) {
   height: auto;
 }
@@ -259,32 +282,6 @@ onUnmounted(() => {
   white-space: normal;
   word-break: break-word;
 }
-.rag-context-wrap {
-  max-height: 360px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding-right: 4px;
-}
-.rag-context-wrap::-webkit-scrollbar {
-  width: 6px;
-}
-.rag-context-wrap::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 3px;
-}
-.rag-context {
-  font-size: 13px;
-  white-space: normal;
-  word-wrap: break-word;
-  color: var(--rag-black);
-}
-.rag-context strong {
-  color: var(--rag-black);
-  font-weight: 600;
-}
-.rag-context > div {
-  margin-bottom: 8px;
-}
 .context-pre {
   white-space: pre-wrap;
   word-break: break-word;
@@ -300,6 +297,29 @@ onUnmounted(() => {
   word-break: break-word;
   margin-top: 4px;
   color: var(--rag-black);
+  display: -webkit-box;
+  line-clamp: 3;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.summary {
+  font-size: 13px;
+  color: var(--rag-black);
+}
+.detail {
+  font-size: 13px;
+  color: var(--rag-black);
+}
+.detail-line {
+  margin-bottom: 8px;
+}
+.detail-block {
+  margin-top: 12px;
+}
+.detail-title {
+  font-weight: 600;
+  margin-bottom: 6px;
 }
 .page-wrap {
   min-height: 200px;

@@ -133,11 +133,13 @@ let scrollRaf = 0
 let mediaRecorder = null
 let audioChunks = []
 
-const audioQueue = []
+const audioQueue = [] // { url: string, blob?: Blob }
 let isPlayingQueue = false
 let currentAudio = null
 let ttsRequestQueue = Promise.resolve()
 let ttsSessionId = 0
+let ttsAbortController = null
+let ragStreamAbortController = null
 
 const currentScenic = ref(null)
 const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
@@ -341,11 +343,16 @@ const stopSpeaking = () => {
     audioSource.disconnect()
     audioSource = null
   }
-  audioQueue.forEach(url => URL.revokeObjectURL(url))
+  audioQueue.forEach(item => URL.revokeObjectURL(item?.url || item))
   audioQueue.length = 0
   isPlayingQueue = false
   isSpeaking.value = false
   ttsSessionId += 1
+  // 取消所有在途请求，避免弱网下继续占用资源/触发无用更新
+  try { ttsAbortController?.abort() } catch (_) {}
+  try { ragStreamAbortController?.abort() } catch (_) {}
+  ttsAbortController = null
+  ragStreamAbortController = null
   
   try {
     const manager = Live2dManager.getInstance()
@@ -440,12 +447,17 @@ const playAudioQueue = async () => {
   initAudioAnalyzer()
 
   while (audioQueue.length > 0) {
-    const audioUrl = audioQueue.shift()
+    const item = audioQueue.shift()
+    const audioUrl = item?.url || item
     const isLastChunk = audioQueue.length === 0
     try {
       await new Promise((resolve, reject) => {
-        fetch(audioUrl)
-          .then(response => response.arrayBuffer())
+        const toArrayBuffer = () => {
+          if (item?.blob && typeof item.blob.arrayBuffer === 'function') return item.blob.arrayBuffer()
+          // 兼容旧数据（仅 url）
+          return fetch(audioUrl).then(r => r.arrayBuffer())
+        }
+        toArrayBuffer()
           .then(arrayBuffer => {
             audioContext.decodeAudioData(arrayBuffer)
               .then(audioBuffer => {
@@ -546,13 +558,16 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
       return
     }
     try {
+      if (!ttsAbortController && typeof AbortController !== 'undefined') {
+        ttsAbortController = new AbortController()
+      }
       const synthesizeRes = await api.post(
         synthesizeUrl,
         { 
           text: cleanedText, 
           character_id: characterId 
         },
-        { responseType: 'blob', timeout: 30000 }
+        { responseType: 'blob', timeout: 30000, signal: ttsAbortController?.signal }
       )
       // 请求返回时再次检查，会话是否已经失效（例如用户点了“停止播报”或者开始新对话）
       if (sessionId !== ttsSessionId) {
@@ -564,8 +579,9 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
         console.warn('TTS 返回空音频数据，文本:', cleanedText.substring(0, 50))
         return
       }
-      const audioUrl = URL.createObjectURL(synthesizeRes.data)
-      audioQueue.push(audioUrl)
+      const blob = synthesizeRes.data
+      const audioUrl = URL.createObjectURL(blob)
+      audioQueue.push({ url: audioUrl, blob })
       playAudioQueue()
     } catch (error) {
       console.warn('TTS 合成失败，已静默跳过:', error?.message || error, '文本:', cleanedText.substring(0, 50))
@@ -611,10 +627,13 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
     })
   }
   try {
+    try { ragStreamAbortController?.abort() } catch (_) {}
+    ragStreamAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null
     const resp = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body
+      body,
+      signal: ragStreamAbortController?.signal,
     })
     if (!resp.ok) {
       const errText = await resp.text()

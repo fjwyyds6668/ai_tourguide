@@ -19,12 +19,12 @@
       </div>
       
       <div v-loading="loading" class="attractions-body">
-        <el-row v-if="filteredAttractions.length > 0" :gutter="20">
+        <el-row v-if="pagedAttractions.length > 0" :gutter="20">
           <el-col
             :xs="24"
             :sm="12"
             :md="8"
-            v-for="attraction in filteredAttractions"
+            v-for="attraction in pagedAttractions"
             :key="attraction.id"
             class="attraction-col"
           >
@@ -51,12 +51,35 @@
           style="padding: 40px 0"
         />
       </div>
+
+      <div v-if="selectedScenicId && filteredAttractions.length > 0" class="pager">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :page-sizes="[9, 12, 18, 24]"
+          :total="filteredAttractions.length"
+          layout="total, sizes, prev, pager, next"
+          background
+        />
+      </div>
     </el-card>
     
     <el-dialog v-model="detailVisible" title="景点详情" width="600px">
       <div v-if="selectedAttraction">
         <h3>{{ selectedAttraction.name }}</h3>
         <p v-if="selectedAttraction.location"><strong>位置：</strong>{{ selectedAttraction.location }}</p>
+        <div class="detail-image-wrap">
+          <img
+            v-if="selectedAttraction.image_url"
+            :src="imageSrc(selectedAttraction.image_url)"
+            class="detail-image"
+            alt="景点图片"
+            loading="eager"
+          />
+          <div v-else class="detail-placeholder-image">
+            <el-icon :size="56"><Picture /></el-icon>
+          </div>
+        </div>
         <p><strong>描述：</strong>{{ selectedAttraction.description }}</p>
         <div v-if="selectedAttraction.audio_url">
           <audio :src="selectedAttraction.audio_url" controls></audio>
@@ -90,6 +113,9 @@ watch(searchText, (val) => {
 const detailVisible = ref(false)
 const selectedAttraction = ref(null)
 
+const page = ref(1)
+const pageSize = ref(12)
+
 const imageSrc = (url) => {
   if (!url) return ''
   if (url.startsWith('http://') || url.startsWith('https://')) return url
@@ -111,18 +137,51 @@ const filteredAttractions = computed(() => {
   return list
 })
 
+const pagedAttractions = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return filteredAttractions.value.slice(start, start + pageSize.value)
+})
+
+watch([selectedScenicId, searchKeyword, pageSize], () => {
+  page.value = 1
+})
+
+// 简单缓存：同一景区短时间内重复进入/返回不必重新拉取
+const _attractionsCache = new Map() // scenicId -> { ts, data }
+const CACHE_TTL_MS = 60_000
+let attractionsAbortController = null
+
 const fetchAttractions = async () => {
+  if (!selectedScenicId.value) {
+    attractions.value = []
+    return
+  }
+
+  const scenicId = selectedScenicId.value
+  const cached = _attractionsCache.get(scenicId)
+  const now = Date.now()
+  if (cached && now - cached.ts < CACHE_TTL_MS) {
+    attractions.value = cached.data
+    return
+  }
+
   loading.value = true
   try {
-    const params = {}
-    if (selectedScenicId.value) {
-      params.scenic_spot_id = selectedScenicId.value
-    }
-    const res = await api.get('/attractions', { params })
-    attractions.value = res.data
+    try { attractionsAbortController?.abort() } catch (_) {}
+    attractionsAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null
+
+    const res = await api.get('/attractions', {
+      params: { scenic_spot_id: scenicId },
+      signal: attractionsAbortController?.signal,
+    })
+    const data = res.data || []
+    attractions.value = data
+    _attractionsCache.set(scenicId, { ts: Date.now(), data })
   } catch (error) {
-    ElMessage.error('加载景点失败')
-    console.error(error)
+    if (error?.name !== 'CanceledError' && error?.code !== 'ERR_CANCELED') {
+      ElMessage.error('加载景点失败')
+      console.error(error)
+    }
   } finally {
     loading.value = false
   }
@@ -134,7 +193,8 @@ const viewDetails = async (attraction) => {
   selectedAttraction.value = attraction
   detailVisible.value = true
   try {
-    await api.get(`/attractions/${attraction.id}`)
+    const res = await api.get(`/attractions/${attraction.id}`)
+    if (res?.data) selectedAttraction.value = res.data
   } catch (e) {
   }
 }
@@ -153,6 +213,12 @@ onMounted(async () => {
       selectedScenicId.value = idNum
     }
   }
+  await fetchAttractions()
+})
+
+watch(selectedScenicId, async (id) => {
+  if (!id) return
+  localStorage.setItem('current_scenic_spot_id', String(id))
   await fetchAttractions()
 })
 </script>
@@ -207,6 +273,11 @@ onMounted(async () => {
 .attractions-body {
   min-height: 200px;
 }
+.pager {
+  display: flex;
+  justify-content: center;
+  padding-top: 12px;
+}
 
 .attraction-col {
   margin-bottom: 20px;
@@ -250,8 +321,31 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+
+.detail-image-wrap {
+  margin: 12px 0 10px;
+}
+.detail-image {
+  width: 100%;
+  max-height: 320px;
+  object-fit: cover;
+  border-radius: 10px;
+  display: block;
+  background: #f5f7fa;
+}
+.detail-placeholder-image {
+  width: 100%;
+  height: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f7fa;
+  border-radius: 10px;
+  color: #9aa0a6;
 }
 </style>
 
