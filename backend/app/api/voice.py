@@ -1,6 +1,7 @@
 """语音 API"""
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from typing import Optional, List
 import tempfile
@@ -78,8 +79,18 @@ async def transcribe_audio(
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-            content = await file.read()
-            tmp_file.write(content)
+            max_mb = int(getattr(settings, "VOICE_MAX_AUDIO_SIZE_MB", 15) or 15)
+            max_bytes = max_mb * 1024 * 1024
+            total = 0
+            chunk_size = 1024 * 1024  # 1MB
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(status_code=400, detail=f"音频大小不能超过 {max_mb}MB")
+                tmp_file.write(chunk)
             tmp_path = tmp_file.name
         
         if not tmp_path or not os.path.exists(tmp_path):
@@ -184,7 +195,19 @@ async def synthesize_speech(
             media_type = "audio/mpeg"
             filename = "speech.mp3"
 
-        return FileResponse(audio_path, media_type=media_type, filename=filename)
+        def _cleanup() -> None:
+            try:
+                if audio_path and os.path.exists(audio_path):
+                    os.unlink(audio_path)
+            except Exception:
+                pass
+
+        return FileResponse(
+            audio_path,
+            media_type=media_type,
+            filename=filename,
+            background=BackgroundTask(_cleanup),
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -252,7 +275,19 @@ async def synthesize_speech_stream(
             media_type = "audio/mpeg"
             filename = "speech.mp3"
 
-        return FileResponse(audio_path, media_type=media_type, filename=filename)
+        def _cleanup() -> None:
+            try:
+                if audio_path and os.path.exists(audio_path):
+                    os.unlink(audio_path)
+            except Exception:
+                pass
+
+        return FileResponse(
+            audio_path,
+            media_type=media_type,
+            filename=filename,
+            background=BackgroundTask(_cleanup),
+        )
     except HTTPException:
         raise
     except Exception as e:

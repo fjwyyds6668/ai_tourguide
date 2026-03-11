@@ -28,12 +28,21 @@ const router = createRouter({
 router.beforeEach((to, _from, next) => {
   const token = localStorage.getItem('token')
   const user = localStorage.getItem('user')
-  const isAuth = !!(token && user)
+  let parsedUser = null
+  try {
+    parsedUser = user ? JSON.parse(user) : null
+  } catch (e) {
+    parsedUser = null
+  }
+  const isAuth = !!(token && parsedUser)
+  const isAdmin = !!parsedUser?.is_admin
   if (to.meta.public) {
     next()
     return
   }
-  if (to.meta.requiresAuth && !isAuth) {
+  if (to.meta.requiresAuth && (!isAuth || !isAdmin)) {
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
     next('/login')
     return
   }

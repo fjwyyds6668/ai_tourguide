@@ -18,6 +18,13 @@ class VoiceService:
         self.vosk_model = None
         self._ffmpeg_available = self._check_ffmpeg()
         self._init_models()
+        # TTS 是高成本 IO/CPU 混合任务，避免并发过高拖垮进程（默认 4，可用环境变量覆盖）
+        self._tts_max_concurrency = int(getattr(settings, "XFYUN_TTS_MAX_CONCURRENCY", 4) or 4)
+        try:
+            import asyncio
+            self._tts_semaphore = asyncio.Semaphore(self._tts_max_concurrency)
+        except Exception:
+            self._tts_semaphore = None
     
     def _check_ffmpeg(self) -> bool:
         """检查 ffmpeg 是否可用（Whisper 需要 ffmpeg）"""
@@ -182,9 +189,15 @@ class VoiceService:
         from urllib.parse import urlencode
         from wsgiref.handlers import format_date_time
         import wave
-        
+
         if not output_path:
-            output_path = tempfile.mktemp(suffix=".wav")
+            # 安全创建临时文件，避免 mktemp 的竞态风险
+            fd, path = tempfile.mkstemp(suffix=".wav")
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            output_path = path
         
         if not voice:
             voice = settings.XFYUN_VOICE
@@ -230,195 +243,216 @@ class VoiceService:
         
         max_retries = 3
         last_error = None
-        
-        for attempt in range(max_retries):
-            try:
-                # 生成 WebSocket URL（参考 demo 的 Ws_Param.create_url）
-                url = 'wss://tts-api.xfyun.cn/v2/tts'
-                now = datetime.now()
-                date = format_date_time(mktime(now.timetuple()))
-                
-                signature_origin = "host: " + "ws-api.xfyun.cn" + "\n"
-                signature_origin += "date: " + date + "\n"
-                signature_origin += "GET " + "/v2/tts " + "HTTP/1.1"
-                
-                signature_sha = hmac.new(
-                    settings.XFYUN_API_SECRET.encode('utf-8'),
-                    signature_origin.encode('utf-8'),
-                    digestmod=hashlib.sha256
-                ).digest()
-                signature_sha = base64.b64encode(signature_sha).decode(encoding='utf-8')
-                
-                authorization_origin = f'api_key="{settings.XFYUN_API_KEY}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature_sha}"'
-                authorization = base64.b64encode(authorization_origin.encode('utf-8')).decode(encoding='utf-8')
-                
-                v = {
-                    "authorization": authorization,
-                    "date": date,
-                    "host": "ws-api.xfyun.cn"
-                }
-                ws_url = url + '?' + urlencode(v)
-                
-                # 准备请求数据
-                common_args = {"app_id": settings.XFYUN_APPID}
-                business_args = {
-                    "aue": "raw",
-                    "auf": "audio/L16;rate=16000",
-                    "vcn": voice,
-                    "tte": "utf8"
-                }
-                data_args = {
-                    "status": 2,
-                    "text": str(base64.b64encode(text.encode('utf-8')), "UTF8")
-                }
-                
-                request_data = {
-                    "common": common_args,
-                    "business": business_args,
-                    "data": data_args
-                }
-                
-                # 使用线程池运行同步 WebSocket（websocket-client 是同步的）
-                audio_data_list = []
-                error_occurred = [False]
-                error_message = [None]
-                ws_closed = threading.Event()
-                
-                def on_message(ws, message):
-                    try:
-                        msg = json.loads(message)
-                        code = msg.get("code", 0)
-                        status = msg.get("data", {}).get("status", 0)
-                        
-                        if code != 0:
-                            err_msg = msg.get("message", "未知错误")
-                            error_occurred[0] = True
-                            error_message[0] = f"科大讯飞 TTS 错误: code={code}, message={err_msg}"
-                            logger.debug("TTS 科大讯飞错误: code=%s, %s", code, err_msg)
-                            ws.close()
-                            return
-                        
-                        if status == 2:
-                            ws_closed.set()
-                            ws.close()
-                            return
-                        
-                        audio_base64 = msg.get("data", {}).get("audio", "")
-                        if audio_base64:
-                            audio_bytes = base64.b64decode(audio_base64)
-                            audio_data_list.append(audio_bytes)
-                    except Exception as e:
-                        error_occurred[0] = True
-                        error_message[0] = f"解析消息失败: {e}"
-                        logger.debug("TTS 解析消息失败: %s", e)
-                        ws.close()
-                
-                def on_error(ws, error):
-                    error_occurred[0] = True
-                    error_message[0] = f"WebSocket 错误: {error}"
-                    logger.debug("TTS WebSocket 错误: %s", error)
-                    ws_closed.set()
-                
-                def on_close(ws, close_status_code, close_msg):
-                    ws_closed.set()
-                
-                def on_open(ws):
-                    ws.send(json.dumps(request_data))
-                    logger.debug("科大讯飞 TTS 发送: %s...", text[:40])
-                
-                def run_websocket():
-                    ws = websocket.WebSocketApp(
-                        ws_url,
-                        on_message=on_message,
-                        on_error=on_error,
-                        on_close=on_close
-                    )
-                    ws.on_open = on_open
-                    # ping_interval/ping_timeout 保活；ping_timeout 需足够大，否则合成期间服务端忙时无法及时 pong 会触发 "ping/pong timed out"
-                    # 注意：ping_interval 必须大于 ping_timeout
-                    ws.run_forever(
-                        sslopt={"cert_reqs": ssl.CERT_NONE},
-                        ping_interval=30,
-                        ping_timeout=25,
-                        skip_utf8_validation=True,
-                    )
-                
-                # 在线程中运行 WebSocket（同步阻塞），并用 wait_for 让超时真正生效
-                text_len = len(text)
-                timeout_seconds = max(20.0, min(90.0, (text_len / 100) * 6))
-                loop = asyncio.get_event_loop()
+
+        semaphore = getattr(self, "_tts_semaphore", None)
+        sem_cm = semaphore if semaphore is not None else asyncio.Semaphore(10_000_000)
+        async with sem_cm:
+            for attempt in range(max_retries):
                 try:
-                    await asyncio.wait_for(
-                        loop.run_in_executor(None, run_websocket),
-                        timeout=timeout_seconds,
+                    # 生成 WebSocket URL（参考 demo 的 Ws_Param.create_url）
+                    url = 'wss://tts-api.xfyun.cn/v2/tts'
+                    now = datetime.now()
+                    date = format_date_time(mktime(now.timetuple()))
+
+                    signature_origin = "host: " + "ws-api.xfyun.cn" + "\n"
+                    signature_origin += "date: " + date + "\n"
+                    signature_origin += "GET " + "/v2/tts " + "HTTP/1.1"
+
+                    signature_sha = hmac.new(
+                        settings.XFYUN_API_SECRET.encode('utf-8'),
+                        signature_origin.encode('utf-8'),
+                        digestmod=hashlib.sha256
+                    ).digest()
+                    signature_sha = base64.b64encode(signature_sha).decode(encoding='utf-8')
+
+                    authorization_origin = f'api_key="{settings.XFYUN_API_KEY}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature_sha}"'
+                    authorization = base64.b64encode(authorization_origin.encode('utf-8')).decode(encoding='utf-8')
+
+                    v = {
+                        "authorization": authorization,
+                        "date": date,
+                        "host": "ws-api.xfyun.cn"
+                    }
+                    ws_url = url + '?' + urlencode(v)
+
+                    # 准备请求数据
+                    common_args = {"app_id": settings.XFYUN_APPID}
+                    business_args = {
+                        "aue": "raw",
+                        "auf": "audio/L16;rate=16000",
+                        "vcn": voice,
+                        "tte": "utf8"
+                    }
+                    data_args = {
+                        "status": 2,
+                        "text": str(base64.b64encode(text.encode('utf-8')), "UTF8")
+                    }
+
+                    request_data = {
+                        "common": common_args,
+                        "business": business_args,
+                        "data": data_args
+                    }
+
+                    # 使用线程池运行同步 WebSocket（websocket-client 是同步的）
+                    audio_data_list = []
+                    error_occurred = [False]
+                    error_message = [None]
+                    ws_closed = threading.Event()
+                    ws_holder = {"ws": None}
+
+                    def on_message(ws, message):
+                        try:
+                            msg = json.loads(message)
+                            code = msg.get("code", 0)
+                            status = msg.get("data", {}).get("status", 0)
+
+                            if code != 0:
+                                err_msg = msg.get("message", "未知错误")
+                                error_occurred[0] = True
+                                error_message[0] = f"科大讯飞 TTS 错误: code={code}, message={err_msg}"
+                                logger.debug("TTS 科大讯飞错误: code=%s, %s", code, err_msg)
+                                ws.close()
+                                return
+
+                            if status == 2:
+                                ws_closed.set()
+                                ws.close()
+                                return
+
+                            audio_base64 = msg.get("data", {}).get("audio", "")
+                            if audio_base64:
+                                audio_bytes = base64.b64decode(audio_base64)
+                                audio_data_list.append(audio_bytes)
+                        except Exception as e:
+                            error_occurred[0] = True
+                            error_message[0] = f"解析消息失败: {e}"
+                            logger.debug("TTS 解析消息失败: %s", e)
+                            ws.close()
+
+                    def on_error(ws, error):
+                        error_occurred[0] = True
+                        error_message[0] = f"WebSocket 错误: {error}"
+                        logger.debug("TTS WebSocket 错误: %s", error)
+                        ws_closed.set()
+
+                    def on_close(ws, close_status_code, close_msg):
+                        ws_closed.set()
+
+                    def on_open(ws):
+                        ws.send(json.dumps(request_data))
+                        logger.debug("科大讯飞 TTS 发送: %s...", text[:40])
+
+                    def run_websocket():
+                        ws = websocket.WebSocketApp(
+                            ws_url,
+                            on_message=on_message,
+                            on_error=on_error,
+                            on_close=on_close
+                        )
+                        ws_holder["ws"] = ws
+                        ws.on_open = on_open
+                        # ping_interval/ping_timeout 保活；ping_timeout 需足够大，否则合成期间服务端忙时无法及时 pong 会触发 "ping/pong timed out"
+                        # 注意：ping_interval 必须大于 ping_timeout
+                        ws.run_forever(
+                            sslopt={"cert_reqs": ssl.CERT_NONE},
+                            ping_interval=30,
+                            ping_timeout=25,
+                            skip_utf8_validation=True,
+                        )
+                
+                    # 在线程中运行 WebSocket（同步阻塞），并用 wait_for 让超时真正生效
+                    text_len = len(text)
+                    timeout_seconds = max(20.0, min(90.0, (text_len / 100) * 6))
+                    loop = asyncio.get_event_loop()
+                    try:
+                        await asyncio.wait_for(
+                            loop.run_in_executor(None, run_websocket),
+                            timeout=timeout_seconds,
+                        )
+                    except asyncio.TimeoutError:
+                        # 超时后显式关闭 WebSocket，尽力让后台线程退出，避免线程/连接泄漏
+                        try:
+                            ws = ws_holder.get("ws")
+                            if ws is not None:
+                                ws.close()
+                        except Exception:
+                            pass
+                        try:
+                            ws_closed.wait(timeout=2.0)
+                        except Exception:
+                            pass
+                        raise Exception(f"科大讯飞 TTS 请求超时（{timeout_seconds:.1f}秒）")
+                    except asyncio.CancelledError:
+                        # 请求被取消时也要主动 close，避免后台线程继续跑
+                        try:
+                            ws = ws_holder.get("ws")
+                            if ws is not None:
+                                ws.close()
+                        except Exception:
+                            pass
+                        try:
+                            ws_closed.wait(timeout=2.0)
+                        except Exception:
+                            pass
+                        raise
+
+                    if error_occurred[0]:
+                        raise Exception(error_message[0] or "科大讯飞 TTS 未知错误")
+
+                    if not audio_data_list:
+                        raise Exception("科大讯飞 TTS 返回空音频数据")
+
+                    # 合并所有音频块
+                    pcm_data = b''.join(audio_data_list)
+
+                    # 将 PCM (16kHz, 16bit, mono) 转换为 numpy 数组
+                    audio_array = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32) / 32768.0
+
+                    # 保存为 WAV 文件
+                    sf.write(output_path, audio_array, 16000)
+
+                    if _validate_wav_file(output_path):
+                        logger.debug("科大讯飞 TTS 合成成功 (尝试 %d/%d)", attempt + 1, max_retries)
+                        return output_path
+                    raise Exception("生成的音频文件为空")
+                except Exception as e:
+                    last_error = e
+                    error_msg = str(e)
+                    logger.debug("科大讯飞 TTS 尝试 %d/%d 失败: %s", attempt + 1, max_retries, e)
+
+                    is_connection_error = (
+                        "Cannot connect" in error_msg or
+                        "远程主机强迫关闭" in error_msg or
+                        "Connection" in error_msg or
+                        "timeout" in error_msg.lower() or
+                        "timed out" in error_msg.lower() or
+                        "WebSocket" in error_msg or
+                        "SSL" in error_msg or
+                        "EOF" in error_msg
                     )
-                except asyncio.TimeoutError:
-                    raise Exception(f"科大讯飞 TTS 请求超时（{timeout_seconds:.1f}秒）")
-                
-                if error_occurred[0]:
-                    raise Exception(error_message[0] or "科大讯飞 TTS 未知错误")
-                
-                if not audio_data_list:
-                    raise Exception("科大讯飞 TTS 返回空音频数据")
-                
-                # 合并所有音频块
-                pcm_data = b''.join(audio_data_list)
-                
-                # 将 PCM (16kHz, 16bit, mono) 转换为 numpy 数组
-                audio_array = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32) / 32768.0
-                
-                # 保存为 WAV 文件
-                sf.write(output_path, audio_array, 16000)
-                
-                if _validate_wav_file(output_path):
-                    logger.debug("科大讯飞 TTS 合成成功 (尝试 %d/%d)", attempt + 1, max_retries)
-                    return output_path
-                raise Exception("生成的音频文件为空")
-                    
-            except asyncio.TimeoutError:
-                last_error = Exception("科大讯飞 TTS 请求超时")
-                error_msg = "请求超时 (timeout)"
-                logger.debug("科大讯飞 TTS 尝试 %d/%d 超时", attempt + 1, max_retries)
-            except Exception as e:
-                last_error = e
-                error_msg = str(e)
-                logger.debug("科大讯飞 TTS 尝试 %d/%d 失败: %s", attempt + 1, max_retries, e)
-            
-            is_connection_error = (
-                "Cannot connect" in error_msg or 
-                "远程主机强迫关闭" in error_msg or
-                "Connection" in error_msg or
-                "timeout" in error_msg.lower() or
-                "timed out" in error_msg.lower() or
-                "WebSocket" in error_msg or
-                "SSL" in error_msg or
-                "EOF" in error_msg
-            )
-            
-            if attempt < max_retries - 1:
-                # 仅对网络/超时/连接类可恢复异常进行指数退避重试
-                if is_connection_error:
-                    wait_time = 1.0 * (2 ** attempt)
-                    logger.debug("TTS 连接错误，%.1fs 后重试", wait_time)
-                    await asyncio.sleep(wait_time)
-                else:
-                    # 非可恢复异常不重试，直接进入最终错误分支
-                    break
-            else:
-                if "401" in error_msg or "403" in error_msg or "鉴权" in error_msg:
-                    raise Exception(
-                        "科大讯飞 TTS 服务暂时不可用（鉴权失败或被拒绝）。"
-                        "请检查 XFYUN_APPID / XFYUN_API_KEY / XFYUN_API_SECRET 是否正确，或检查网络/限制。"
-                    )
-                elif is_connection_error:
-                    raise Exception(
-                        f"科大讯飞 TTS 连接失败（已重试 {max_retries} 次）。"
-                        "请检查网络连接或稍后重试。"
-                        f"错误详情: {error_msg}"
-                    )
-                else:
+
+                    if attempt < max_retries - 1 and is_connection_error:
+                        wait_time = 1.0 * (2 ** attempt)
+                        logger.debug("TTS 连接错误，%.1fs 后重试", wait_time)
+                        await asyncio.sleep(wait_time)
+                        continue
+
+                    if "401" in error_msg or "403" in error_msg or "鉴权" in error_msg:
+                        raise Exception(
+                            "科大讯飞 TTS 服务暂时不可用（鉴权失败或被拒绝）。"
+                            "请检查 XFYUN_APPID / XFYUN_API_KEY / XFYUN_API_SECRET 是否正确，或检查网络/限制。"
+                        )
+                    if is_connection_error:
+                        raise Exception(
+                            f"科大讯飞 TTS 连接失败（已重试 {attempt + 1} 次）。"
+                            "请检查网络连接或稍后重试。"
+                            f"错误详情: {error_msg}"
+                        )
                     raise Exception(f"科大讯飞 TTS 合成失败: {error_msg}")
-        
+
+        if last_error:
+            raise last_error
 # 全局语音服务实例
 voice_service = VoiceService()
 

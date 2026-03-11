@@ -75,6 +75,12 @@ const onSubmit = async () => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     })
     const { access_token, user } = res.data
+    if (!user?.is_admin) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      ElMessage.error('该账号不是管理员，无法登录管理端')
+      return
+    }
     localStorage.setItem('token', access_token)
     localStorage.setItem('user', JSON.stringify(user))
     ElMessage.success('登录成功')
