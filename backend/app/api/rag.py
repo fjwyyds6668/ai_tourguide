@@ -317,6 +317,11 @@ async def generate_answer(request: GenerateRequest, background_tasks: Background
 async def generate_answer_stream(request: GenerateRequest, background_tasks: BackgroundTasks):
     async def generate_stream() -> AsyncGenerator[str, None]:
         session_id = _resolve_session_id(request)
+        yield f"data: {json.dumps({'type': 'session_id', 'content': session_id}, ensure_ascii=False)}\n\n"
+        if not rag_service.llm_client:
+            yield f"data: {json.dumps({'type': 'error', 'content': 'AI服务未配置'}, ensure_ascii=False)}\n\n"
+            return
+
         (character_prompt, voice), conversation_history = await asyncio.gather(
             _load_character_prompt_and_voice(request.character_id),
             asyncio.to_thread(session_service.get_conversation_history, session_id),
@@ -369,10 +374,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
         messages.append({"role": "user", "content": user_prompt})
         
         try:
-            if not rag_service.llm_client:
-                yield f"data: {json.dumps({'type': 'error', 'content': 'AI服务未配置'}, ensure_ascii=False)}\n\n"
-                return
-            
             stream = rag_service.llm_client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
                 messages=messages,
@@ -480,7 +481,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                             if text:
                                 yield f"data: {json.dumps({'type': 'tts', 'content': text}, ensure_ascii=False)}\n\n"
             
-            yield f"data: {json.dumps({'type': 'session_id', 'content': session_id}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'attraction_id', 'content': primary_attraction_id}, ensure_ascii=False)}\n\n"
             # 有界队列：防止上游生成过快导致内存增长
             chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=200)

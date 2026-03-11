@@ -1,78 +1,104 @@
 <template>
   <el-aside
-    :width="collapsed ? '64px' : '200px'"
+    width="200px"
     :class="['sidebar', { 'sidebar--collapsed': collapsed }]"
   >
-    <div class="logo">
-      <span class="logo-text">{{ collapsed ? 'AI' : 'AI 导游管理' }}</span>
-    </div>
-    <el-menu
-      :default-active="$route.path"
-      :collapse="collapsed"
-      router
-      class="sidebar-menu"
-    >
-      <el-menu-item index="/">
-        <el-icon><Odometer /></el-icon>
-        <span>仪表盘</span>
-      </el-menu-item>
-      <el-menu-item index="/characters">
-        <el-icon><User /></el-icon>
-        <span>角色管理</span>
-      </el-menu-item>
-      <el-menu-item index="/knowledge">
-        <el-icon><Folder /></el-icon>
-        <span>景区管理</span>
-      </el-menu-item>
-      <el-menu-item index="/analytics">
-        <el-icon><DataAnalysis /></el-icon>
-        <span>数据分析</span>
-      </el-menu-item>
-      <el-menu-item index="/tourist-entry">
-        <el-icon><Iphone /></el-icon>
-        <span>移动端入口</span>
-      </el-menu-item>
-      <el-menu-item index="/settings">
-        <el-icon><Setting /></el-icon>
-        <span>系统设置</span>
-      </el-menu-item>
-    </el-menu>
-    <div v-if="user" class="user-area">
-      <el-dropdown trigger="click" placement="top-start" @command="handleCommand">
-        <div class="user-trigger">
-          <el-avatar :size="32" :src="user.avatar_url">
-            <el-icon><UserFilled /></el-icon>
-          </el-avatar>
-          <span v-if="!collapsed" class="username">{{ user.username }}</span>
-        </div>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item disabled>
-              <div class="user-info">
-                <div class="bold">{{ user.username }}</div>
-                <div class="email">{{ user.email }}</div>
-              </div>
-            </el-dropdown-item>
-            <el-dropdown-item command="upload">
-              <el-icon><Upload /></el-icon> 上传头像
-            </el-dropdown-item>
-            <input
-              ref="avatarInputRef"
-              type="file"
-              accept="image/*"
-              style="display: none"
-              @change="onAvatarFileChange"
-            />
-            <el-dropdown-item divided command="logout">
-              <el-icon><SwitchButton /></el-icon>
-              退出登录
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
-    </div>
-    <div class="collapse-trigger" @click="$emit('toggle')">
-      <el-icon><Fold v-if="!collapsed" /><Expand v-else /></el-icon>
+    <div class="sidebar-inner" :class="{ 'sidebar-inner--collapsed': collapsed }">
+      <div class="logo">
+        <span class="logo-text">{{ collapsed ? 'AI' : 'AI 导游管理' }}</span>
+      </div>
+      <el-menu
+        :default-active="$route.path"
+        :collapse="collapsed"
+        router
+        class="sidebar-menu"
+      >
+        <el-menu-item index="/">
+          <el-tooltip content="仪表盘" placement="right" :disabled="!collapsed">
+            <div class="menu-item-inner">
+              <el-icon><Odometer /></el-icon>
+              <span class="menu-text">仪表盘</span>
+            </div>
+          </el-tooltip>
+        </el-menu-item>
+        <el-menu-item index="/characters">
+          <el-tooltip content="角色管理" placement="right" :disabled="!collapsed">
+            <div class="menu-item-inner">
+              <el-icon><User /></el-icon>
+              <span class="menu-text">角色管理</span>
+            </div>
+          </el-tooltip>
+        </el-menu-item>
+        <el-menu-item index="/knowledge">
+          <el-tooltip content="景区管理" placement="right" :disabled="!collapsed">
+            <div class="menu-item-inner">
+              <el-icon><Folder /></el-icon>
+              <span class="menu-text">景区管理</span>
+            </div>
+          </el-tooltip>
+        </el-menu-item>
+        <el-menu-item index="/analytics">
+          <el-tooltip content="数据分析" placement="right" :disabled="!collapsed">
+            <div class="menu-item-inner">
+              <el-icon><DataAnalysis /></el-icon>
+              <span class="menu-text">数据分析</span>
+            </div>
+          </el-tooltip>
+        </el-menu-item>
+        <el-menu-item index="/tourist-entry">
+          <el-tooltip content="移动端入口" placement="right" :disabled="!collapsed">
+            <div class="menu-item-inner">
+              <el-icon><Iphone /></el-icon>
+              <span class="menu-text">移动端入口</span>
+            </div>
+          </el-tooltip>
+        </el-menu-item>
+        <el-menu-item index="/settings">
+          <el-tooltip content="系统设置" placement="right" :disabled="!collapsed">
+            <div class="menu-item-inner">
+              <el-icon><Setting /></el-icon>
+              <span class="menu-text">系统设置</span>
+            </div>
+          </el-tooltip>
+        </el-menu-item>
+      </el-menu>
+      <div v-if="user" class="user-area">
+        <el-dropdown trigger="click" placement="top-start" @command="handleCommand">
+          <div class="user-trigger">
+            <el-avatar :size="32" :src="user.avatar_url">
+              <el-icon><UserFilled /></el-icon>
+            </el-avatar>
+            <span v-if="!collapsed" class="username">{{ user.username }}</span>
+          </div>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item disabled>
+                <div class="user-info">
+                  <div class="bold">{{ user.username }}</div>
+                  <div class="email">{{ user.email }}</div>
+                </div>
+              </el-dropdown-item>
+              <el-dropdown-item command="upload">
+                <el-icon><Upload /></el-icon> 上传头像
+              </el-dropdown-item>
+              <input
+                ref="avatarInputRef"
+                type="file"
+                accept="image/*"
+                style="display: none"
+                @change="onAvatarFileChange"
+              />
+              <el-dropdown-item divided command="logout">
+                <el-icon><SwitchButton /></el-icon>
+                退出登录
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
+      <div class="collapse-trigger" @click="$emit('toggle')">
+        <el-icon><Fold v-if="!collapsed" /><Expand v-else /></el-icon>
+      </div>
     </div>
   </el-aside>
 </template>
@@ -158,7 +184,46 @@ const onAvatarFileChange = async (e) => {
   bottom: 0;
   background: #fff;
   border-right: 1px solid #e5e7eb;
-  transition: width 0.2s ease;
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+  transition: transform 0.18s ease;
+}
+.sidebar--collapsed {
+  /* 200px -> 64px，只露出 64px（移动 136px） */
+  transform: translate3d(-136px, 0, 0);
+}
+.sidebar-inner {
+  height: 100%;
+  position: relative;
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+  transition: transform 0.18s ease;
+}
+.sidebar-inner--collapsed {
+  /* 把内容整体搬回可视的 64px 区域 */
+  transform: translate3d(136px, 0, 0);
+  width: 64px;
+  overflow: hidden;
+}
+
+/* 收起态：把顶部/底部的“居中元素”改为基于 64px 居中，否则会被偏移出可视区 */
+.sidebar-inner--collapsed .logo {
+  margin: 0;
+  width: 64px;
+  justify-content: center;
+}
+.sidebar-inner--collapsed .sidebar-menu {
+  width: 64px;
+}
+.sidebar-inner--collapsed .user-area {
+  width: 64px;
+  left: 0;
+  right: auto;
+}
+.sidebar-inner--collapsed .collapse-trigger {
+  width: 64px;
+  left: 0;
+  right: auto;
 }
 .logo {
   height: 56px;
@@ -186,6 +251,16 @@ const onAvatarFileChange = async (e) => {
   height: 44px;
   transition: background-color 0.12s ease, color 0.12s ease;
 }
+.menu-item-inner {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 12px;
+  height: 100%;
+}
+.menu-text {
+  white-space: nowrap;
+}
 .sidebar-menu .el-menu-item.is-active {
   background: rgba(64, 158, 255, 0.2);
   color: rgb(64, 158, 255);
@@ -200,6 +275,15 @@ const onAvatarFileChange = async (e) => {
   padding-right: 0;
   margin-left: 8px;
   margin-right: 8px;
+}
+.sidebar--collapsed .menu-item-inner {
+  width: 100%;
+  height: 100%;
+  justify-content: center;
+  gap: 0;
+}
+.sidebar--collapsed .menu-text {
+  display: none;
 }
 .sidebar--collapsed :deep(.sidebar-menu.el-menu--collapse .el-menu-item .el-icon) {
   margin-right: 0;
