@@ -383,6 +383,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             )
             
             full_answer = ""
+            last_delta: str = ""
             accumulated_text = ""  # 累积缓冲文本 T
             completed_audio: Dict[int, str] = {}
             fallback_tts: Dict[int, str] = {}  # TTS 失败时回退为文本由前端合成
@@ -532,6 +533,15 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                         content = _clean_special_symbols(content)
                         if not content:
                             continue
+                        # 防止流式重复片段导致“口吃”
+                        # 1) 连续重复：同一段 delta 连续出现两次，直接丢弃第二次
+                        if content == last_delta:
+                            continue
+                        # 2) 尾部重复：如果当前输出已经以本次 content 结尾，说明是重复补发
+                        if full_answer.endswith(content):
+                            last_delta = content
+                            continue
+                        last_delta = content
                         full_answer += content
                         accumulated_text += content
                         
