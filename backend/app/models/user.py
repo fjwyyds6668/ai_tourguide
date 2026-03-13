@@ -1,6 +1,4 @@
-"""
-用户数据模型
-"""
+"""用户数据模型"""
 from sqlalchemy import Column, Integer, String, DateTime, Boolean
 from sqlalchemy.sql import func
 from app.core.database import Base

@@ -1,6 +1,4 @@
-"""
-用户交互数据模型
-"""
+"""用户交互数据模型"""
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -12,7 +10,7 @@ class Interaction(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     session_id = Column(String(100), index=True, nullable=True)
-    character_id = Column(Integer, nullable=True)  # 角色ID，暂时不添加外键约束（因为Character表还未同步）
+    character_id = Column(Integer, nullable=True)  # 暂无外键约束（Character 表未同步到 SQLAlchemy）
     query_text = Column(Text, nullable=True)
     response_text = Column(Text, nullable=True)
     attraction_id = Column(Integer, ForeignKey("attractions.id"), nullable=True)

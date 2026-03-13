@@ -100,7 +100,7 @@ const scenicSpots = ref([])
 const selectedScenicId = ref(null)
 const loading = ref(false)
 const searchText = ref('')
-const searchKeyword = ref('') // 防抖后的关键词，减少输入时频繁过滤与重绘（移动端性能）
+const searchKeyword = ref('')
 let searchDebounceTimer = null
 watch(searchText, (val) => {
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
@@ -146,7 +146,7 @@ watch([selectedScenicId, searchKeyword, pageSize], () => {
   page.value = 1
 })
 
-// 简单缓存：同一景区短时间内重复进入/返回不必重新拉取
+// short-lived cache to avoid re-fetching the same scenic spot on back-navigation
 const _attractionsCache = new Map() // scenicId -> { ts, data }
 const CACHE_TTL_MS = 60_000
 let attractionsAbortController = null

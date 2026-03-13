@@ -252,6 +252,7 @@ Thumbs.db
 *.model
 *.bin
 models/
+!backend/app/models/
 
 # 音频文件（如果不想提交）
 *.wav

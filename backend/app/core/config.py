@@ -28,8 +28,7 @@ class Settings(BaseSettings):
         return url
     NEO4J_URI: str = "bolt://localhost:30001"
     NEO4J_USER: str = "neo4j"
-    # 出于安全考虑，默认密码留空，必须通过环境变量或 .env 显式配置
-    NEO4J_PASSWORD: str = ""
+    NEO4J_PASSWORD: str = ""  # 必须通过环境变量或 .env 显式配置
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: int = 30002
     OPENAI_API_KEY: str = ""
@@ -39,19 +38,16 @@ class Settings(BaseSettings):
     XFYUN_API_KEY: str = ""
     XFYUN_API_SECRET: str = ""
     XFYUN_VOICE: str = "x4_yezi"
-    # JWT 密钥：生产环境必须通过环境变量设置，默认值仅供本地开发调试使用
-    SECRET_KEY: str = "dev-change-me"
+    SECRET_KEY: str = "dev-change-me"  # 生产环境必须通过环境变量覆盖
     ALGORITHM: str = "HS256"
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5522"]
     AUTO_UPDATE_GRAPH_RAG: bool = True
-    # GraphRAG / 检索相关配置
     GRAPHRAG_COLLECTION_NAME: str = "tour_knowledge"
     GRAPHRAG_EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"
     GRAPHRAG_TOP_K: int = 5
     GRAPHRAG_RELEVANCE_THRESHOLD: float = 0.2
     GRAPHRAG_MILVUS_METRIC_TYPE: str = "L2"
     GRAPHRAG_MILVUS_NPROBE: int = 10
-    # 缓存与可观测性
     GRAPHRAG_EMBEDDING_CACHE_TTL_SECONDS: int = 1800
     GRAPHRAG_VECTOR_SEARCH_CACHE_TTL_SECONDS: int = 300
     GRAPHRAG_CACHE_STATS_LOG_EVERY_N_CALLS: int = 200
@@ -68,11 +64,10 @@ class Settings(BaseSettings):
     # 游客端访问地址（用于生成扫码入口二维码，如 http://192.168.1.100:5173）
     TOURIST_APP_URL: Optional[str] = None
 
-    # 管理端 / 上传等配置
     ADMIN_MAX_IMAGE_SIZE_MB: int = 10
     ADMIN_ALLOWED_IMAGE_EXTS: List[str] = [".png", ".jpg", ".jpeg", ".webp", ".gif"]
 
-    # 会话存储：配置后使用 Redis 持久化，多进程/重启不丢；不配置则使用内存
+    # 配置后使用 Redis 持久化会话，多进程/重启不丢；不配置则使用内存
     REDIS_URL: Optional[str] = None  # 例如 redis://localhost:6379/0
 
     class Config:

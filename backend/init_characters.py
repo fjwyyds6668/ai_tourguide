@@ -1,14 +1,9 @@
-"""
-初始化默认数字人角色
-"""
+"""初始化默认数字人角色"""
 import asyncio
 from app.core.prisma_client import get_prisma, disconnect_prisma
 
 async def init_characters():
-    """创建默认角色"""
     prisma = await get_prisma()
-    
-    # 默认角色配置
     default_characters = [
         {
             "name": "亲切导游",
@@ -16,7 +11,7 @@ async def init_characters():
             "style": "friendly",
             "prompt": "你是一位亲切友好的景区导游，性格温和、热情开朗。你的任务是：\n1. 用温暖、亲切的语气与游客交流\n2. 详细介绍景点的历史、文化和特色\n3. 耐心回答游客的各种问题\n4. 提供实用的游览建议和注意事项\n5. 让游客感受到宾至如归的体验\n\n请用轻松、友好的语调，适当使用一些幽默和鼓励的话语，让游客的旅行更加愉快。",
             "isActive": True,
-            "avatarUrl": None  # 可以后续添加头像URL
+            "avatarUrl": None,
         },
         {
             "name": "专业学者",
@@ -41,7 +36,6 @@ async def init_characters():
     
     for char_data in default_characters:
         try:
-            # 检查角色是否已存在（根据名称）
             existing = await prisma.character.find_first(
                 where={"name": char_data["name"]}
             )
@@ -50,7 +44,6 @@ async def init_characters():
                 print(f"角色「{char_data['name']}」已存在，跳过创建")
                 skipped_count += 1
             else:
-                # 创建新角色
                 new_char = await prisma.character.create(data=char_data)
                 print(f"✓ 成功创建角色：{new_char.name} (ID: {new_char.id})")
                 created_count += 1

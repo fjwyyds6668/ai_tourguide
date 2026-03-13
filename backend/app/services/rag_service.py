@@ -28,14 +28,12 @@ from app.services.rag_settings import (
 
 logger = logging.getLogger(__name__)
 
-# 线性融合评分的默认权重与上下文预算（字符数）
-# 用于把论文中的 S(c)=αsvec+βsgraph+γsent 落地到混合检索上下文构造中
+# 线性融合评分默认权重 S(c)=αsvec+βsgraph+γsent 与上下文字符预算
 DEFAULT_FUSION_ALPHA = 0.60
 DEFAULT_FUSION_BETA = 0.25
 DEFAULT_FUSION_GAMMA = 0.15
 DEFAULT_CONTEXT_BUDGET_CHARS = 2500
 
-# 与 rag.py 流式生成共用的系统提示，避免两处重复维护
 RAG_BASE_SYSTEM_PROMPT = """你是一个专业的景区AI导游助手。请根据提供的上下文信息，用友好、专业、准确的语言回答游客的问题。
 回答要求：
 1. 基于提供的上下文信息回答
@@ -52,17 +50,15 @@ RAG_BASE_SYSTEM_PROMPT = """你是一个专业的景区AI导游助手。请根�
 
 
 class QueryIntent(Enum):
-    """查询意图类型"""
-    ROUTE = "route"  # 路线/行程推荐
-    LISTING = "listing"  # 列表/数量查询
-    DETAIL = "detail"  # 详情/介绍查询
-    COMPARISON = "comparison"  # 比较类查询
-    LOCATION = "location"  # 位置/导航查询
-    FEATURE = "feature"  # 特色/功能查询
-    GENERAL = "general"  # 通用查询
+    ROUTE = "route"
+    LISTING = "listing"
+    DETAIL = "detail"
+    COMPARISON = "comparison"
+    LOCATION = "location"
+    FEATURE = "feature"
+    GENERAL = "general"
 
 
-# 意图分类 LLM 提示：仅用于意图判断，要求单词输出
 INTENT_CLASSIFY_SYSTEM = """你是景区导览问答系统的意图分类器。根据用户问题（及可选的知识库检索片段）判断用户意图，只输出一个英文单词，不要解释。
 
 意图定义：
@@ -406,7 +402,6 @@ class RAGService:
         return mapping.get(pos, 'KEYWORD')
     
     def generate_embedding(self, text: str) -> List[float]:
-        """生成文本嵌入向量"""
         if not self.embedding_model:
             raise ValueError("Embedding model not loaded")
 
@@ -428,7 +423,6 @@ class RAGService:
         return emb_list
 
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        """批量生成嵌入向量（比逐条 encode 更快）"""
         if not self.embedding_model:
             raise ValueError("Embedding model not loaded")
         if not texts:
@@ -451,7 +445,7 @@ class RAGService:
                 self._cache_stats["embedding_misses"] = int(self._cache_stats.get("embedding_misses", 0)) + 1
                 missing_indices.append(idx)
                 to_encode.append(key)
-                results.append([])  # 占位，后面填充
+                results.append([])
 
         if to_encode:
             embs = self.embedding_model.encode(to_encode, convert_to_numpy=True).tolist()
@@ -1157,13 +1151,11 @@ class RAGService:
             logger.warning("hybrid_search vector_search failed (fallback to empty): %s", e)
             vector_results = []
         
-        # 使用策略中的阈值过滤
         vector_results_relevant = [
             r
             for r in (vector_results or [])
             if (r.get("score") or 0) >= effective_threshold
         ]
-        # 根据策略决定是否强制保留至少一个结果
         if not vector_results_relevant and vector_results and strategy.get("force_at_least_one", True):
             vector_results_relevant = vector_results[:1]
         vector_results = vector_results_relevant
@@ -1197,7 +1189,6 @@ class RAGService:
                 unique_entities[text] = entity
         
         entity_names = [e["text"] for e in unique_entities.values()]
-        # 指代消解：将历史解析的实体补充进来（用于图检索），优先使用
         seen_set = set(entity_names)
         for name in resolved_entities:
             if name and name not in seen_set:
@@ -1213,12 +1204,10 @@ class RAGService:
         graph_results: List[Dict[str, Any]] = []
         subgraph_data = None
         if entity_names:
-            # 根据意图调整图查询参数
             per_entity_limit = 8 if intent == QueryIntent.ROUTE else 5
             tasks = [
                 self._graph_search_many(entity_names[:5], per_entity_limit=per_entity_limit),
             ]
-            # 根据策略中的 graph_depth 决定是否进行子图查询
             if len(entity_names) > 1 and graph_depth > 1:
                 tasks.append(self.graph_subgraph_search(entity_names[:3], depth=graph_depth))
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1252,7 +1241,6 @@ class RAGService:
             tid = (r.get("text_id") or "").strip()
             if tid and tid in text_contents:
                 r["content"] = text_contents[tid]
-        # 线性融合评分 + 预算内上下文构造
         enhanced_results, scored_candidates = self._build_scored_context(
             vector_results=vector_results or [],
             graph_results=graph_results or [],
@@ -1273,7 +1261,6 @@ class RAGService:
                 except ValueError:
                     pass
         
-        # 根据策略决定是否扩展同景区多景点
         should_expand = strategy.get("expand_scenic_attractions", False)
         max_attractions = strategy.get("max_attractions", 1)
         
@@ -1290,10 +1277,8 @@ class RAGService:
                             if sentence:
                                 enhanced_results = sentence + "\n\n" + (enhanced_results or "")
                         if scenic_aids:
-                            # 使用策略中的 max_attractions
                             clusters_ctx = await self._get_attraction_cluster_context(scenic_aids, max_items=max_attractions)
                             if clusters_ctx:
-                                # 根据意图添加不同的标题
                                 if intent == QueryIntent.ROUTE:
                                     enhanced_results = (enhanced_results or "") + "\n\n【路线可选景点】\n" + clusters_ctx
                                 else:
@@ -1320,21 +1305,16 @@ class RAGService:
             except Exception as e:
                 logger.warning(f"列举查询兜底查景区景点数量失败: {e}")
 
-        # 详情类问题（如门票、开放时间等）且前端已提供 scenic_name 时，
-        # 直接补充该景区一簇信息（包含 ticket_info / opening_hours 等结构化属性），
-        # 即使向量检索命中很弱也能给出实用答案。
+        # DETAIL 意图时直接补充景区结构化属性（ticket_info/opening_hours 等），弥补向量检索弱命中
         if intent == QueryIntent.DETAIL and scenic_name_str:
             try:
                 scenic_ctx_detail = await self._get_scenic_spot_cluster_context_by_name(scenic_name_str)
                 if scenic_ctx_detail:
-                    # 将景区簇信息放在上下文最前，便于大模型优先利用
                     enhanced_results = (scenic_ctx_detail + "\n\n" + (enhanced_results or "")).strip()
             except Exception as e:
                 logger.warning(f"DETAIL 查询补充景区簇上下文失败: {e}")
         query_about_scenic = bool(re.search(r"什么景区|哪个景区|是啥景区|这是什么景区|是哪个景区|啥景区|哪个景点.*景区|介绍.*景区|景区.*介绍|这个景区", (query or "").strip()))
         scenic_ctx_found = False
-        # 若已在 DETAIL + scenic_name 下前置拼入了完整景区簇（见上方 DETAIL 分支），
-        # 则无需在此分支再次拉取同一景区簇，避免出现重复的“【景区一簇信息】”块。
         if query_about_scenic and not (intent == QueryIntent.DETAIL and scenic_name_str):
             scenic_tasks = []
             if primary_attraction_id is not None:
@@ -1355,8 +1335,6 @@ class RAGService:
             if entity_names:
                 for entity_name in entity_names[:3]:
                     scenic_tasks.append(self._get_scenic_spot_cluster_by_entity_name(entity_name))
-            # 如果前端已提供当前景区名称（scenic_name），优先直接按名称拉取该景区一簇，
-            # 用于处理「介绍一下这个景区」这类纯指代问句。
             if scenic_name_str:
                 scenic_tasks.append(self._get_scenic_spot_cluster_context_by_name(scenic_name_str))
             
@@ -1382,9 +1360,7 @@ class RAGService:
                         enhanced_results = scenic_ctx + "\n\n" + (enhanced_results or "")
                         scenic_ctx_found = True
                         break
-        # 非扩展类意图且未扩展时，添加单景点簇信息。
-        # 但对于明显的票务/价格类问题（is_ticket_query=True），避免误注入与票价无关的景点一簇，
-        # 以免干扰 LLM 聚焦景区级 ticket_info/优惠信息。
+        # 票务类问题跳过景点簇注入，避免干扰 LLM 聚焦景区级 ticket_info
         if (
             not should_expand
             and primary_attraction_id is not None
@@ -1394,15 +1370,12 @@ class RAGService:
             cluster_ctx = await self._get_attraction_cluster_context([primary_attraction_id], max_items=1)
             if cluster_ctx:
                 enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
-        # 向量未命中景点 ID 时，用实体名或从问句显式抽取的景点名在图里查 Attraction，补上景点一簇（如「介绍一下忘忧谷」）。
-        # 对票务类问题同样跳过这一兜底逻辑，避免在「有学生票吗」「成人票多少钱」时扩展无关景点簇。
         if (
             not should_expand
             and primary_attraction_id is None
             and not (query_about_scenic and scenic_ctx_found)
             and not is_ticket_query
         ):
-            # 优先用「介绍/详情/说说 + 景点名」显式抽取的候选，再试实体名，避免 jieba 未切出忘忧谷
             intro_candidates = self._extract_attraction_candidates_from_query(query)
             names_to_try = list(dict.fromkeys([n.strip() for n in intro_candidates if n and n.strip()]))
             for n in entity_names[:5]:
@@ -1429,8 +1402,8 @@ class RAGService:
             "attraction_ids": attraction_ids,
             "primary_attraction_id": primary_attraction_id,
             "errors": errors,
-            "intent": intent.value,  # 返回意图类型，便于调试
-            "strategy": {k: v for k, v in strategy.items() if k not in ["expand_scenic_attractions"]},  # 返回策略（排除内部标志）
+            "intent": intent.value,
+            "strategy": {k: v for k, v in strategy.items() if k not in ["expand_scenic_attractions"]},
         }
 
     async def _build_scenic_attractions_context(
@@ -1478,7 +1451,6 @@ class RAGService:
         if not scenic_names:
             return ""
         parts: List[str] = []
-        # 并行查询多个景区的景点列表
         tasks = [self._get_scenic_attractions_sentence_by_name(name) for name in list(scenic_names)[:3]]
         sentences = await asyncio.gather(*tasks, return_exceptions=True)
         for sentence in sentences:
@@ -1790,7 +1762,6 @@ class RAGService:
         resolved = [str(x).strip() for x in (resolved_entities or []) if str(x).strip()]
         entities = [str(x).strip() for x in (entity_names or []) if str(x).strip()]
 
-        # 预处理图结果实体名，供 sgraph(c) 计算
         rel_pairs: List[tuple[str, str]] = []
         for r in graph_results or []:
             try:
@@ -1809,10 +1780,8 @@ class RAGService:
         for item in vector_results or []:
             c = dict(item)
             content = (c.get("content") or "").strip()
-            # svec：已有 score 字段；缺失则置 0
             svec = float(c.get("score") or 0.0)
 
-            # sgraph：候选片段中出现的图实体名数量（启发式），并做 0..1 归一化
             hits = 0
             if content and rel_pairs:
                 for an, bn in rel_pairs:
@@ -1822,7 +1791,6 @@ class RAGService:
                         hits += 1
             sgraph = min(1.0, hits / 3.0) if hits > 0 else 0.0
 
-            # sent：实体一致性支持（优先 scenic_name / resolved_entities，其次 entity_names）
             sent = 0.0
             if content:
                 if scenic_name and scenic_name in content:
@@ -1847,7 +1815,6 @@ class RAGService:
 
         scored.sort(key=lambda x: float(x.get("S") or 0.0), reverse=True)
 
-        # 在预算内组织“相关文本内容”部分（只对文本块计预算，图关系与实体列表通常较短）
         context_parts: List[str] = []
         if scored:
             context_parts.append("相关文本内容：")
@@ -1869,7 +1836,6 @@ class RAGService:
                 used += block_len
                 idx += 1
 
-        # 图关系摘要（复用原逻辑，控制数量）
         if graph_results:
             context_parts.append("\n相关实体关系：")
             seen_relations = set()
@@ -1929,8 +1895,6 @@ class RAGService:
             )
             primary_attraction_id = rag_results.get("primary_attraction_id")
             out_context = rag_results.get("enhanced_context", "") or ""
-            # 如果 hybrid_search 已经扩展了景区信息（通过策略），这里不再重复查询
-            # 只在 hybrid_search 未扩展但确实是 listing 意图时，才补充
             detected_intent = rag_results.get("intent")
             already_has_list = "根据图数据库，景区「" in (out_context or "")
             if detected_intent == "listing" and not already_has_list:
@@ -1962,8 +1926,8 @@ class RAGService:
                 "enhanced_context": out_context or "",
                 "entities": rag_results.get("entities", []),
                 "errors": rag_results.get("errors", {}),
-                "intent": rag_results.get("intent"),  # 包含意图信息
-                "strategy": rag_results.get("strategy"),  # 包含策略信息
+                "intent": rag_results.get("intent"),
+                "strategy": rag_results.get("strategy"),
             }
         if character_prompt:
             system_prompt = f"{RAG_BASE_SYSTEM_PROMPT}\n\n角色设定：{character_prompt}"
@@ -1972,7 +1936,6 @@ class RAGService:
         messages = [{"role": "system", "content": system_prompt}]
         if conversation_history:
             messages.extend(conversation_history)
-        # 根据意图添加针对性提示语
         intent_hint = ""
         if use_rag and rag_debug:
             detected_intent = rag_debug.get("intent") or (await self._classify_query_intent(query)).value
@@ -2050,11 +2013,10 @@ class RAGService:
                 except Exception as e:
                     logger.warning(f"Failed to schedule RAG context log write: {e}")
 
-            # 异步触发日志写入，不阻塞主请求流程
             try:
                 asyncio.create_task(_write_rag_log())
             except RuntimeError:
-                # 若当前无事件循环（例如被同步调用），退回同步写入
+                # 无事件循环时退回同步写入
                 try:
                     log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
                     os.makedirs(log_root, exist_ok=True)

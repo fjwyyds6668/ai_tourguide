@@ -1,7 +1,4 @@
-"""
-会话存储抽象：内存 / Redis 可选。
-配置 REDIS_URL 时使用 Redis，多进程与重启后会话不丢失；未配置则使用内存。
-"""
+"""会话存储抽象：内存 / Redis 可选。配置 REDIS_URL 时使用 Redis，未配置则使用内存。"""
 import json
 import re
 import uuid
@@ -13,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def _serialize_session(data: Dict) -> str:
-    """将会话 dict 转为 JSON，datetime 转为 isoformat。"""
+    """将会话 dict 序列化为 JSON（datetime → isoformat）。"""
     def _enc(obj: Any) -> Any:
         if isinstance(obj, datetime):
             return obj.isoformat()
@@ -26,7 +23,7 @@ def _serialize_session(data: Dict) -> str:
 
 
 def _deserialize_session(raw: str) -> Optional[Dict]:
-    """从 JSON 恢复会话，isoformat 转回 datetime。"""
+    """从 JSON 反序列化会话（isoformat → datetime）。"""
     try:
         data = json.loads(raw)
     except Exception as e:
@@ -145,9 +142,8 @@ class RedisSessionStore:
 
 
 def _sanitize_redis_url(url: str) -> str:
-    """去掉 REDIS_URL 末尾可能因 .env 换行丢失而拼接上的下一行变量（如 6379COSYVOICE2_MODEL_PATH=）。"""
+    """去掉因 .env 换行丢失而拼接到 port 后的下一行变量（如 6379COSYVOICE2_MODEL_PATH=）。"""
     u = url.strip()
-    # 合法形式: redis://host:port 或 redis://host:port/db；若 port 后拼上了下一行 env，只保留合法部分
     m = re.match(r"^(redis://[^:]*:\d+(?:/\d+)?)([A-Z_][A-Z0-9_]*=.*)?$", u, re.IGNORECASE)
     if m:
         return m.group(1)

@@ -55,7 +55,6 @@ def _trim_conversation_history(
 
     keep: set[int] = set()
     used = 0
-    # 先从后往前保留“命中消息”
     for i in range(len(recent) - 1, -1, -1):
         if not flags[i]:
             continue
@@ -64,7 +63,6 @@ def _trim_conversation_history(
             continue
         keep.add(i)
         used += ln
-    # 再补足未命中消息（仍从后往前）
     for i in range(len(recent) - 1, -1, -1):
         if i in keep:
             continue
@@ -89,7 +87,7 @@ class GenerateRequest(BaseModel):
     session_id: Optional[str] = None
     character_id: Optional[int] = None
     use_rag: bool = True
-    scenic_name: Optional[str] = None  # 指代消解用
+    scenic_name: Optional[str] = None
 
 class GenerateResponse(BaseModel):
     answer: str
@@ -165,16 +163,12 @@ def _save_interaction(
         from app.core.neo4j_client import neo4j_client
         db_local = SessionLocal()
         try:
-            # 优先使用 RAG 返回的主景点
             aid = primary_attraction_id
-
-            # 若无主景点，则按“问题+回答”做主关联景点打分（论文算法落地）
             if aid is None:
                 q = (query_text or "").strip()
                 r = (response_text or "").strip()
                 scenic = (scenic_name or "").strip()
 
-                # 权重：问题命中更重要，其次回答命中，最后景区一致性加成
                 wq, wr, ws = 1.0, 0.6, 0.8
 
                 best_id: Optional[int] = None
@@ -182,7 +176,6 @@ def _save_interaction(
 
                 scenic_aid_set: set[int] = set()
                 if scenic:
-                    # 一次性查询该景区下的景点集合，避免对每个候选景点都打一次 Neo4j
                     try:
                         rows = neo4j_client.execute_query(
                             """
@@ -316,6 +309,7 @@ async def generate_answer(request: GenerateRequest, background_tasks: Background
 @router.post("/generate-stream")
 async def generate_answer_stream(request: GenerateRequest, background_tasks: BackgroundTasks):
     async def generate_stream() -> AsyncGenerator[str, None]:
+        stream_future = None
         session_id = _resolve_session_id(request)
         yield f"data: {json.dumps({'type': 'session_id', 'content': session_id}, ensure_ascii=False)}\n\n"
         if not rag_service.llm_client:
@@ -384,26 +378,21 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             
             full_answer = ""
             last_delta: str = ""
-            accumulated_text = ""  # 累积缓冲文本 T
+            accumulated_text = ""
             completed_audio: Dict[int, str] = {}
-            fallback_tts: Dict[int, str] = {}  # TTS 失败时回退为文本由前端合成
+            fallback_tts: Dict[int, str] = {}
             next_audio_idx = 0
             tts_chunk_index = [0]
-            Lmin = 12  # 子句最小长度阈值 Lmin
-            TTS_SENTENCE_TIMEOUT = 25  # 单句TTS超时(秒)
-            TTS_MAX_CONCURRENCY = 3  # 并行合成上限，避免任务堆积
+            Lmin = 12
+            TTS_SENTENCE_TIMEOUT = 25
+            TTS_MAX_CONCURRENCY = 3
             tts_sema = asyncio.Semaphore(TTS_MAX_CONCURRENCY)
-            TTS_MAX_PENDING = 10  # 最大排队片段数，避免 create_task 堆积
+            TTS_MAX_PENDING = 10
             pending_tts = 0
             SENTENCE_PUNCT = ['。', '！', '？', '.', '!', '?']
             
             def _compute_cut(buf: str) -> Optional[int]:
-                """
-                计算切分位置 cut：
-                - 若存在句末标点集合 P，则 cut=max(P)+1
-                - 若 P 为空且 |T|>=Lmin，则 cut=|T|
-                - 否则不切分
-                """
+                """切分文本：有句末标点则在最后一个标点后切，否则满 Lmin 时强切。"""
                 if not buf:
                     return None
                 last = -1
@@ -416,14 +405,12 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 return None
 
             def _validate_wav_file(path: str) -> bool:
-                """对音频结果做基本校验：文件存在、大小合理、时长合理。"""
                 try:
                     if not path or not os.path.exists(path):
                         return False
                     size = os.path.getsize(path)
-                    if size < 800:  # 太小基本可视为无效
+                    if size < 800:
                         return False
-                    # 用标准库 wave 读取时长（本项目合成 wav）
                     import wave
                     with wave.open(path, "rb") as wf:
                         fr = wf.getframerate() or 0
@@ -438,7 +425,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                     return False
 
             async def synthesize_and_store(idx: int, original_txt: str) -> None:
-                """文本预处理→并行提交→音频校验→失败回退（重试由 voice_service 内部处理）。"""
                 nonlocal pending_tts
                 try:
                     txt = _normalize_tts_text(original_txt)
@@ -483,9 +469,8 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                                 yield f"data: {json.dumps({'type': 'tts', 'content': text}, ensure_ascii=False)}\n\n"
             
             yield f"data: {json.dumps({'type': 'attraction_id', 'content': primary_attraction_id}, ensure_ascii=False)}\n\n"
-            # 有界队列：防止上游生成过快导致内存增长
             chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             stream_sentinel = object()
             
             def put_stream_in_queue():
@@ -514,9 +499,9 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                             pass
                     loop.call_soon_threadsafe(_put_end)
             
-            loop.run_in_executor(None, put_stream_in_queue)
+            stream_future = loop.run_in_executor(None, put_stream_in_queue)
             DRAIN_INTERVAL = 0.05
-            
+
             while True:
                 try:
                     chunk = await asyncio.wait_for(chunk_queue.get(), timeout=DRAIN_INTERVAL)
@@ -533,11 +518,8 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                         content = _clean_special_symbols(content)
                         if not content:
                             continue
-                        # 防止流式重复片段导致“口吃”
-                        # 1) 连续重复：同一段 delta 连续出现两次，直接丢弃第二次
                         if content == last_delta:
                             continue
-                        # 2) 尾部重复：如果当前输出已经以本次 content 结尾，说明是重复补发
                         if full_answer.endswith(content):
                             last_delta = content
                             continue
@@ -556,7 +538,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                                 idx = tts_chunk_index[0]
                                 tts_chunk_index[0] += 1
                                 if pending_tts >= TTS_MAX_PENDING:
-                                    # 排队过多则回退为文本TTS事件，避免堆积导致延迟膨胀
                                     fallback_tts[idx] = tts_chunk.strip()
                                     completed_audio[idx] = ""
                                 else:
@@ -637,15 +618,13 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                         except Exception as e:
                             logger.warning(f"Failed to write RAG context log (stream): {e}")
 
-                    loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, _io_task)
+                    await asyncio.get_running_loop().run_in_executor(None, _io_task)
                 except Exception as e:
                     logger.warning(f"Failed to schedule RAG context log (stream) write: {e}")
 
             try:
                 asyncio.create_task(_write_stream_rag_log())
             except RuntimeError:
-                # 若没有事件循环可用，则回退为同步写入，保证不影响主逻辑
                 try:
                     log_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
                     os.makedirs(log_root, exist_ok=True)
@@ -666,7 +645,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             session_service.add_message(session_id, "user", request.query)
             session_service.add_message(session_id, "assistant", full_answer)
 
-            await asyncio.get_event_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None,
                 lambda: _save_interaction(
                     session_id,
@@ -691,6 +670,8 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             yield f"data: {json.dumps({'type': 'done', 'content': full_answer}, ensure_ascii=False)}\n\n"
             
         except Exception as e:
+            if stream_future is not None:
+                stream_future.cancel()
             logger.error(f"Stream generation failed: {e}")
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
     

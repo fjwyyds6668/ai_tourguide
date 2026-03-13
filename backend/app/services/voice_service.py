@@ -1,6 +1,4 @@
-"""
-语音识别和合成服务
-"""
+"""语音识别和合成服务"""
 import os
 import tempfile
 import re
@@ -18,16 +16,12 @@ class VoiceService:
         self.vosk_model = None
         self._ffmpeg_available = self._check_ffmpeg()
         self._init_models()
-        # TTS 是高成本 IO/CPU 混合任务，避免并发过高拖垮进程（默认 4，可用环境变量覆盖）
         self._tts_max_concurrency = int(getattr(settings, "XFYUN_TTS_MAX_CONCURRENCY", 4) or 4)
-        try:
-            import asyncio
-            self._tts_semaphore = asyncio.Semaphore(self._tts_max_concurrency)
-        except Exception:
-            self._tts_semaphore = None
+        # 懒初始化：asyncio.Semaphore 必须在运行中的事件循环创建，不能在 __init__ 中创建（Python 3.10+）
+        self._tts_semaphore: Optional[object] = None
     
     def _check_ffmpeg(self) -> bool:
-        """检查 ffmpeg 是否可用（Whisper 需要 ffmpeg）"""
+        """检查 ffmpeg 是否可用（Whisper 依赖 ffmpeg）"""
         try:
             import subprocess
             result = subprocess.run(
@@ -45,14 +39,13 @@ class VoiceService:
         return False
     
     def _init_models(self):
-        """初始化语音识别模型"""
         if not self._ffmpeg_available:
             logger.warning("ffmpeg 不可用，Whisper 语音识别功能将无法使用。请安装 ffmpeg：conda install -c conda-forge ffmpeg")
-        
+
         try:
             import warnings
             import whisper
-            # 抑制 FP16 在 CPU 上的警告（这是正常的回退行为）
+            # 抑制 FP16 在 CPU 上的警告（正常回退行为）
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
                 self.whisper_model = whisper.load_model("base")
@@ -99,7 +92,7 @@ class VoiceService:
                     result = self.whisper_model.transcribe(audio_file_path, language="zh")
                 return (result.get("text", "") or "").strip()
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             text = await loop.run_in_executor(None, _run_transcribe)
             if not text:
                 logger.warning("Whisper 识别结果为空")
@@ -163,17 +156,11 @@ class VoiceService:
                 except Exception:
                     pass
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _run_vosk)
     
     async def synthesize_xfyun(self, text: str, output_path: Optional[str] = None, voice: Optional[str] = None) -> str:
-        """使用科大讯飞 WebSocket TTS 进行语音合成（带重试机制）
-        
-        Args:
-            text: 要合成的文本
-            output_path: 输出文件路径（可选，默认生成 wav）
-            voice: 音色名称（可选，默认使用 settings.XFYUN_VOICE，如 x4_yezi、aisjiuxu 等）
-        """
+        """使用科大讯飞 WebSocket TTS 进行语音合成（带重试）。"""
         import asyncio
         import base64
         import hashlib
@@ -191,7 +178,6 @@ class VoiceService:
         import wave
 
         if not output_path:
-            # 安全创建临时文件，避免 mktemp 的竞态风险
             fd, path = tempfile.mkstemp(suffix=".wav")
             try:
                 os.close(fd)
@@ -212,11 +198,9 @@ class VoiceService:
         except Exception as e:
             logger.warning(f"文本清理失败: {e}")
             text = ''.join(char for char in text if ord(char) < 0x110000 and not (0xD800 <= ord(char) <= 0xDFFF))
-        
-        # 简化文本清理：只移除明显无效字符，保留更多内容以提升合成质量
-        # 移除控制字符和特殊符号，但保留常见标点
-        text = re.sub(r"[\x00-\x1F\x7F-\x9F]", "", text)  # 移除控制字符
-        text = re.sub(r"\s{2,}", " ", text)  # 合并多个空格
+
+        text = re.sub(r"[\x00-\x1F\x7F-\x9F]", "", text)
+        text = re.sub(r"\s{2,}", " ", text)
         text = text.strip()
         
         if not text:
@@ -244,12 +228,11 @@ class VoiceService:
         max_retries = 3
         last_error = None
 
-        semaphore = getattr(self, "_tts_semaphore", None)
-        sem_cm = semaphore if semaphore is not None else asyncio.Semaphore(10_000_000)
-        async with sem_cm:
+        if self._tts_semaphore is None:
+            self._tts_semaphore = asyncio.Semaphore(self._tts_max_concurrency)
+        async with self._tts_semaphore:
             for attempt in range(max_retries):
                 try:
-                    # 生成 WebSocket URL（参考 demo 的 Ws_Param.create_url）
                     url = 'wss://tts-api.xfyun.cn/v2/tts'
                     now = datetime.now()
                     date = format_date_time(mktime(now.timetuple()))
@@ -275,7 +258,6 @@ class VoiceService:
                     }
                     ws_url = url + '?' + urlencode(v)
 
-                    # 准备请求数据
                     common_args = {"app_id": settings.XFYUN_APPID}
                     business_args = {
                         "aue": "raw",
@@ -294,7 +276,6 @@ class VoiceService:
                         "data": data_args
                     }
 
-                    # 使用线程池运行同步 WebSocket（websocket-client 是同步的）
                     audio_data_list = []
                     error_occurred = [False]
                     error_message = [None]
@@ -354,24 +335,24 @@ class VoiceService:
                         ws.on_open = on_open
                         # ping_interval/ping_timeout 保活；ping_timeout 需足够大，否则合成期间服务端忙时无法及时 pong 会触发 "ping/pong timed out"
                         # 注意：ping_interval 必须大于 ping_timeout
+                        # ping_interval 必须大于 ping_timeout，否则合成期间服务端忙时会触发 "ping/pong timed out"
                         ws.run_forever(
                             sslopt={"cert_reqs": ssl.CERT_NONE},
                             ping_interval=30,
                             ping_timeout=25,
                             skip_utf8_validation=True,
                         )
-                
-                    # 在线程中运行 WebSocket（同步阻塞），并用 wait_for 让超时真正生效
+
                     text_len = len(text)
                     timeout_seconds = max(20.0, min(90.0, (text_len / 100) * 6))
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     try:
                         await asyncio.wait_for(
                             loop.run_in_executor(None, run_websocket),
                             timeout=timeout_seconds,
                         )
                     except asyncio.TimeoutError:
-                        # 超时后显式关闭 WebSocket，尽力让后台线程退出，避免线程/连接泄漏
+                        # 显式关闭 WebSocket，避免后台线程泄漏
                         try:
                             ws = ws_holder.get("ws")
                             if ws is not None:
@@ -384,7 +365,7 @@ class VoiceService:
                             pass
                         raise Exception(f"科大讯飞 TTS 请求超时（{timeout_seconds:.1f}秒）")
                     except asyncio.CancelledError:
-                        # 请求被取消时也要主动 close，避免后台线程继续跑
+                        # 取消时主动 close，避免后台线程继续跑
                         try:
                             ws = ws_holder.get("ws")
                             if ws is not None:
@@ -403,16 +384,12 @@ class VoiceService:
                     if not audio_data_list:
                         raise Exception("科大讯飞 TTS 返回空音频数据")
 
-                    # 合并所有音频块
                     pcm_data = b''.join(audio_data_list)
-                    # int16 对齐（避免奇数字节导致播放爆音/卡顿）
+                    # int16 对齐，避免奇数字节导致播放爆音/卡顿
                     if len(pcm_data) % 2 == 1:
                         pcm_data = pcm_data[:-1]
 
-                    # 将 PCM (16kHz, 16bit, mono) 转换为 numpy 数组
                     audio_array = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32) / 32768.0
-
-                    # 保存为 WAV 文件
                     sf.write(output_path, audio_array, 16000)
 
                     if _validate_wav_file(output_path):
@@ -456,6 +433,6 @@ class VoiceService:
 
         if last_error:
             raise last_error
-# 全局语音服务实例
+
 voice_service = VoiceService()
 

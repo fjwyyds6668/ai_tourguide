@@ -25,14 +25,13 @@ const sidebarCollapsed = ref(false)
   min-height: 100vh;
 }
 .admin-main-wrap {
-  /* 布局始终按 200px 计算，避免收起时触发整页重排 */
+  /* margin-left fixed at 200px; sidebar collapse uses transform instead to avoid layout reflow */
   margin-left: 200px;
   will-change: transform;
   transform: translate3d(0, 0, 0);
   transition: transform 0.18s ease;
 }
 .admin-main-wrap--collapsed {
-  /* 200px -> 64px 视觉效果，用 transform 合成层移动替代 margin-left 动画 */
   transform: translate3d(-136px, 0, 0);
 }
 .admin-main-content {

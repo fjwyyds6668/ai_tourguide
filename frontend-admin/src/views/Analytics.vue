@@ -105,7 +105,6 @@ const ragLogsLoading = ref(false)
 const interactionData = ref(null)
 const popularData = ref(null)
 const ragLogs = ref([])
-// 旧版：表格内直接展示上下文，不使用弹窗
 
 const formatTime = (val) => {
   if (!val) return '—'
@@ -155,7 +154,6 @@ const fetchAnalytics = async (silent = false) => {
     interactionData.value = data.interactions || null
     popularData.value = data.popular_attractions || null
   } catch (e) {
-    // 被取消的请求不算失败
     if (e?.name !== 'CanceledError' && e?.code !== 'ERR_CANCELED') {
       console.error('获取数据分析失败:', e)
       throw e
@@ -183,7 +181,6 @@ function startPolling() {
       await fetchAnalytics(true)
       pollDelayMs = 5000
     } catch (_) {
-      // 失败指数退避，最多60s
       pollDelayMs = Math.min(60000, Math.max(5000, pollDelayMs * 2))
     }
     refreshTimer = setTimeout(tick, pollDelayMs)
@@ -200,7 +197,7 @@ function stopPolling() {
 }
 
 onMounted(() => {
-  fetchAnalytics(false) // 首次加载显示 loading
+  fetchAnalytics(false)
   if (document.visibilityState === 'visible') startPolling()
   visibilityHandler = () => {
     if (document.visibilityState === 'visible') {

@@ -82,7 +82,7 @@ async def transcribe_audio(
             max_mb = int(getattr(settings, "VOICE_MAX_AUDIO_SIZE_MB", 15) or 15)
             max_bytes = max_mb * 1024 * 1024
             total = 0
-            chunk_size = 1024 * 1024  # 1MB
+            chunk_size = 1024 * 1024
             while True:
                 chunk = await file.read(chunk_size)
                 if not chunk:

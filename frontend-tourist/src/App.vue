@@ -1,6 +1,5 @@
 <template>
   <div id="app">
-    <!-- 首页：不显示侧边导航，只显示主界面 -->
     <el-container v-if="isHome" class="layout">
       <el-header class="header">
         <div class="header-title">AI 数字人导游系统</div>
@@ -14,7 +13,6 @@
       </el-main>
     </el-container>
 
-    <!-- 其他页面：左侧固定导航 + 右侧内容区（桌面）；移动端为全屏内容 + 底部导航 -->
     <el-container v-else class="layout layout-inner">
       <el-aside class="aside" :width="collapsed ? '64px' : '220px'">
         <div class="brand" :class="{ collapsed }">
@@ -63,7 +61,6 @@
         </el-main>
       </el-container>
 
-      <!-- 移动端底部导航：仅在小屏显示 -->
       <nav class="bottom-nav" aria-label="主导航">
         <router-link to="/voice-guide" class="nav-item" :class="{ active: activePath === '/voice-guide' }">
           <el-icon><Microphone /></el-icon>

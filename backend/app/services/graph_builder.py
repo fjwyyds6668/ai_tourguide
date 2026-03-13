@@ -14,9 +14,6 @@ class GraphBuilder:
         self.client = neo4j_client
 
     async def _execute_query_async(self, query: str, parameters: Dict[str, Any] | None = None):
-        """
-        在异步上下文中安全执行 Neo4j 查询，避免阻塞事件循环。
-        """
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             None,
@@ -26,7 +23,6 @@ class GraphBuilder:
         )
     
     async def create_attraction_node(self, attraction_data: Dict[str, Any]) -> bool:
-        """创建景点节点"""
         query = """
         MERGE (a:Attraction {id: $id})
         SET a.name = $name,
@@ -65,7 +61,6 @@ class GraphBuilder:
             return
         scenic_spot_id = attraction_data.get("scenic_spot_id")
 
-        # 从解析结果中尝试提取景区名称，作为补充的“簇中心”
         scenic_name_from_parsed = None
         if parsed and isinstance(parsed, dict) and parsed.get("scenic_spot"):
             try:
@@ -73,8 +68,7 @@ class GraphBuilder:
             except Exception:
                 scenic_name_from_parsed = None
 
-        # 硬性约束：若既没有景区 ID，也解析不出景区名称，则完全跳过图构建，
-        # 以避免出现“只有景点/特征的小游离簇”
+        # 若既无景区 ID 也无景区名称，跳过图构建以避免游离簇
         if not scenic_spot_id and not scenic_name_from_parsed:
             logger.warning(
                 "build_attraction_cluster: 缺少景区上下文(scenic_spot_id / scenic_spot 名称)，"
@@ -121,8 +115,7 @@ class GraphBuilder:
         """
         await self._execute_query_async(q_clean_orphans, {"id": int(att_id)})
 
-        # 统一约束：无论景区来自 PostgreSQL 还是解析结果，Attraction 必须挂到某个 ScenicSpot 上，
-        # 从而保证不会出现完全脱离景区簇的景点子图。
+        # Attraction 必须挂到某个 ScenicSpot，避免景点子图脱离景区簇
         if scenic_spot_id:
             q_scenic_rel = """
             MATCH (a:Attraction {id: $id})
@@ -134,18 +127,16 @@ class GraphBuilder:
                 "scenic_spot_id": int(scenic_spot_id)
             })
             logger.info(f"景点 '{name}' (Attraction, id={att_id}) 已关联到景区 (scenic_spot_id={scenic_spot_id})")
-            q_merge_spot = """
+            q_merge_spot = “””
             MATCH (s:ScenicSpot {scenic_spot_id: $scenic_spot_id})
             OPTIONAL MATCH (s)-[r:HAS_SPOT]->(sp:Spot {name: $name})
             WITH s, r, sp
             MATCH (a:Attraction {id: $id})
-            // 确保景区仍然通过 HAS_SPOT 指向“正式的景点”节点
             MERGE (s)-[:HAS_SPOT]->(a)
-            // 如果之前存在同名 Spot，则删除旧的 Spot 节点及其关系
             FOREACH (_ IN CASE WHEN sp IS NULL THEN [] ELSE [1] END |
               DETACH DELETE sp
             )
-            """
+            “””
             try:
                 await self._execute_query_async(q_merge_spot, {
                     "id": int(att_id),
@@ -155,9 +146,8 @@ class GraphBuilder:
             except Exception as e:
                 logger.warning(f"合并景区子景点 Spot -> Attraction 失败: {e}")
         elif scenic_name_from_parsed:
-            # 没有 scenic_spot_id，但解析出了景区名称：在图中按名称作为“景区主节点”挂接，
-            # 仍然保证整个簇围绕 ScenicSpot 汇聚，而不是形成独立小簇
-            q_ensure_scenic_by_name = """
+            # 无 scenic_spot_id 但有景区名称：按名称挂接，保证簇围绕 ScenicSpot 汇聚
+            q_ensure_scenic_by_name = “””
             MERGE (s:ScenicSpot {name: $name})
             ON CREATE SET s.scenic_spot_id = coalesce(s.scenic_spot_id, 0)
             RETURN s
@@ -282,14 +272,12 @@ class GraphBuilder:
         if isinstance(features, list):
             feats = [str(x).strip() for x in features if str(x).strip()]
             if feats:
-                q_f = """
+                q_f = “””
                 UNWIND $features AS fname
                 MATCH (a:Attraction {id: $id})
-                // 为避免景点之间因共用 Feature 节点而产生间接“连通”，
-                // 这里按 (name, attraction_id) 作为唯一键，为每个景点创建自己的 Feature 节点。
                 MERGE (f:Feature {name: fname, attraction_id: $id})
                 MERGE (a)-[:HAS_FEATURE]->(f)
-                """
+                “””
                 await self._execute_query_async(q_f, {"id": int(att_id), "features": feats})
         if isinstance(honors, list):
             hns = [str(x).strip() for x in honors if str(x).strip()]
@@ -297,16 +285,14 @@ class GraphBuilder:
                 q_h = """
                 UNWIND $honors AS hname
                 MATCH (a:Attraction {id: $id})
-                // 同理，按 (name, attraction_id) 唯一，避免不同景点通过共用 Honor 节点相连
                 MERGE (h:Honor {name: hname, attraction_id: $id})
                 MERGE (a)-[:HAS_HONOR]->(h)
                 """
                 await self._execute_query_async(q_h, {"id": int(att_id), "honors": hns})
     
-    async def create_relationship(self, from_entity: str, to_entity: str, 
+    async def create_relationship(self, from_entity: str, to_entity: str,
                                  relation_type: str, properties: Dict = None) -> bool:
-        """创建实体之间的关系"""
-        # 关系类型做简单的白名单校验，避免 Cypher 注入
+        # 关系类型白名单校验，避免 Cypher 注入
         import re
         rel = None
         if relation_type and isinstance(relation_type, str):
@@ -344,14 +330,7 @@ class GraphBuilder:
             return False
     
     async def build_attraction_graph(self, attractions: List[Dict[str, Any]]):
-        """
-        批量构建景点图谱。
-        要求：所有景点簇必须连接到某个景区簇，且景点之间**不再直接建立关系**。
-        因此，这里仅调用 build_attraction_cluster 为每个景点补全自身簇，
-        并确保通过“属于 / HAS_SPOT”挂接到对应 ScenicSpot。
-        Attraction 之间不再创建 NEARBY 等边。
-        """
-        # 为每个景点构建“以景区为中心”的景点簇
+        “””批量构建景点图谱（各景点簇均通过”属于/HAS_SPOT”挂接到 ScenicSpot，不在景点间建边）。”””
         for attraction in attractions:
             scenic_spot_id = attraction.get("scenic_spot_id")
             if not scenic_spot_id:
@@ -385,19 +364,13 @@ class GraphBuilder:
         scenic_spot_id: int | None = None,
         scenic_name: str | None = None,
     ):
-        """
-        从文本中提取实体并存储到图数据库。
-        必须围绕景区簇添加关系：所有节点（Text、Entity）均连接到 ScenicSpot，不得出现离散节点。
-        若未提供 scenic_spot_id 或 scenic_name，则不创建图（避免孤儿节点）。
-        """
-        # 必须有景区上下文，否则不创建图，避免离散节点
+        """提取实体并存入图数据库，所有节点必须连接到 ScenicSpot（无景区上下文时跳过）。"""
         use_id = scenic_spot_id is not None
         scenic_name_str = (scenic_name or "").strip() if scenic_name else None
         if not use_id and not scenic_name_str:
             logger.warning("extract_and_store_entities: 缺少景区上下文(scenic_spot_id/scenic_name)，跳过图构建，避免离散节点")
             return
 
-        # 先确保 ScenicSpot 存在
         if use_id:
             q_ensure_scenic = """
             MERGE (s:ScenicSpot {scenic_spot_id: $sid})
@@ -415,7 +388,6 @@ class GraphBuilder:
             """
             await self._execute_query_async(q_ensure_scenic_legacy, {"name": scenic_name_str})
 
-        # 创建文本节点，并立即连接到景区簇
         if use_id:
             q_text = """
             MERGE (t:Text {id: $text_id})
@@ -445,7 +417,6 @@ class GraphBuilder:
                 "name": scenic_name_str,
             })
 
-        # 创建实体节点并建立关系（Text -[:MENTIONS]-> Entity，Text 已连到 ScenicSpot）
         for entity in entities:
             entity_name = entity.get("text")
             if not entity_name:
@@ -472,20 +443,7 @@ class GraphBuilder:
         scenic_name_override: str | None = None,
         clear_existing: bool = False,
     ) -> None:
-        """
-        根据结构化的景区信息，在 Neo4j 中构建以景区为中心的一簇节点和关系。
-        确保所有节点都连接到 ScenicSpot 中心节点，形成一簇。
-        
-        预期 parsed 结构：
-        {
-          "scenic_spot": "蜀南竹海旅游度假区",
-          "location": ["四川省","宜宾市","长宁县"],
-          "area": "10.2平方公里",
-          "features": [...],
-          "spots": [...],
-          "awards": [...]
-        }
-        """
+        """根据结构化的景区信息，在 Neo4j 中构建以景区为中心的一簇节点和关系。"""
         scenic_name = scenic_name_override or parsed.get("scenic_spot")
         if not scenic_name:
             return
@@ -506,13 +464,11 @@ class GraphBuilder:
         features = parsed.get("features") or []
         spots = parsed.get("spots") or []
         awards = parsed.get("awards") or []
-        # 新增：票务、开放时间、交通、服务设施等结构化字段（字符串），作为 ScenicSpot 的属性存储
         ticket_info = parsed.get("ticket_info")
         opening_hours = parsed.get("opening_hours")
         transport_info = parsed.get("transport_info")
         service_facilities = parsed.get("service_facilities")
-        # clear_existing=False（默认）时，不会清空原有簇，只做增量合并；
-        # 只有在“重建簇”类工具中才会传 True，触发清理逻辑。
+        # clear_existing=True 时清空原有簇再重建，默认只做增量合并
         if clear_existing:
             if text_id:
                 q_clean_text = """

@@ -225,7 +225,7 @@ class ImportAttractionsRequest(BaseModel):
     collection_name: str = "tour_knowledge"
     build_graph: bool = True
     build_attraction_graph: bool = True
-    active_only: bool = False  # 预留：如后续 attractions 增加 isActive 字段
+    active_only: bool = False
     limit: Optional[int] = None
 
 
@@ -305,9 +305,7 @@ async def create_scenic_spot(req: ScenicSpotCreateRequest, current_user: User = 
         }
     )
 
-    # 若填写了“简介”，则自动将简介作为该景区的首条知识上传到向量库和图数据库，
-    # 避免前端再额外填一遍“景区知识”字段。
-    if (created.description or "").strip():
+    if (created.description or “”).strip():
         intro_text = str(created.description).strip()
         text_id = f"scenic_intro_{created.id}"
         item = KnowledgeBaseItem(
@@ -398,11 +396,7 @@ async def delete_scenic_spot(
     cascade: bool = False,
     current_user: User = Depends(get_current_user),
 ):
-    """
-    删除景区（仅管理员）
-    - 默认：若景区下仍有景点/知识，阻止删除
-    - cascade=true：级联删除该景区下所有知识与景点（含 Neo4j/Milvus 清理），再删除景区
-    """
+    """删除景区；cascade=true 时级联删除下属知识、景点及 Neo4j/Milvus 数据。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
 
@@ -751,13 +745,6 @@ async def delete_attraction_admin(attraction_id: int, current_user: User = Depen
     return {"message": "deleted"}
 
 async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "upsert"):
-    """
-    同步单个景点到 GraphRAG（Milvus + Neo4j）
-    
-    Args:
-        attraction_dict: 景点字典，包含 id, name, description 等字段
-        operation: "upsert"（创建/更新）或 "delete"（删除）
-    """
     if not settings.AUTO_UPDATE_GRAPH_RAG:
         logger.debug("GraphRAG 自动更新已禁用，跳过同步")
         return
@@ -817,7 +804,6 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                 if utility.has_collection(collection_name):
                     expr = f'text_id == "{text_id}"'
                     collection.delete(expr)
-                # embedding 计算是CPU重活，放线程池避免阻塞事件循环
                 embedding = await asyncio.to_thread(rag_service.generate_embedding, text)
                 entities = [
                     [text_id],
@@ -863,14 +849,9 @@ def _deserialize_metadata(metadata_str: str | None) -> dict:
 
 
 async def _delete_knowledge_from_milvus(text_id: str, collection_name: str = "tour_knowledge") -> None:
-    """
-    从 Milvus 精确删除某个 text_id 对应的向量。
-    保证在调用 utility/collection 之前已经建立连接，避免 ConnectionNotExistException。
-    """
     try:
         from pymilvus import utility
 
-        # 确保已连接到 Milvus（lazy connect）
         if not milvus_client.connected:
             milvus_client.connect()
         if not milvus_client.connected:
@@ -900,7 +881,6 @@ async def _delete_text_ids_from_milvus(text_ids: List[str], collection_name: str
     try:
         from pymilvus import utility
 
-        # 确保已连接到 Milvus（lazy connect）
         if not milvus_client.connected:
             milvus_client.connect()
         if not milvus_client.connected:
@@ -982,11 +962,9 @@ async def _delete_knowledge_from_neo4j(text_id: str) -> None:
                     if scenic_id is not None:
                         query_delete_cluster = """
                         MATCH (s:ScenicSpot {scenic_spot_id: $sid})
-                        // 1) 先断开位置关系（位置节点可能共享）
                         OPTIONAL MATCH (s)-[r_loc:位于]->(loc)
                         DELETE r_loc
                         WITH s
-                        // 2) 删除簇内节点（Spot/Feature/Honor）仅当它们不再与任何其他节点相连
                         OPTIONAL MATCH (s)-[r1:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n)
                         WITH s, collect(DISTINCT n) AS nodes
                         FOREACH (x IN nodes |
@@ -995,7 +973,6 @@ async def _delete_knowledge_from_neo4j(text_id: str) -> None:
                           )
                         )
                         WITH s
-                        // 3) 删除剩余关系并删除景区节点
                         OPTIONAL MATCH (s)-[r2:HAS_SPOT|HAS_FEATURE|HAS_HONOR]->(n2)
                         DELETE r2
                         WITH s
@@ -1238,10 +1215,7 @@ async def rebuild_knowledge_cluster(
     text_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """
-    重建某个知识条目的图簇（先删除旧簇，再根据当前文本重新构建）
-    用于修复"节点没有聚成一簇"的问题
-    """
+    """重建指定知识条目的图簇（先清旧簇，再按文本重建）。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     
@@ -1259,7 +1233,6 @@ async def rebuild_knowledge_cluster(
             metadata=_deserialize_metadata(knowledge.metadata),
         )
         
-        # 重建簇：需要在构图时清理原有 ScenicSpot 簇的旧节点/关系
         result = await _upload_items_to_graphrag(
             [item],
             "tour_knowledge",
@@ -1282,9 +1255,7 @@ async def rebuild_knowledge_cluster(
 async def clear_graph_database(
     current_user: User = Depends(get_current_user),
 ):
-    """
-    清空整个 Neo4j 图数据库（危险操作，仅管理员）
-    """
+    """清空整个 Neo4j 图数据库（危险操作，仅管理员）。"""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     

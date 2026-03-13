@@ -1,6 +1,5 @@
 <template>
   <div class="voice-guide">
-    <!-- 角色选择 -->
     <el-card class="section-card role-card">
       <template #header>
         <span class="card-title">选择数字人角色</span>
@@ -17,7 +16,6 @@
     </el-card>
 
     <el-row :gutter="20" class="main-row">
-      <!-- 左侧：数字人展示区 -->
       <el-col :xs="24" :sm="24" :md="14" :lg="14">
         <el-card class="section-card avatar-card">
           <template #header>
@@ -76,7 +74,6 @@
         </el-card>
       </el-col>
 
-      <!-- 右侧：对话记录 -->
       <el-col :xs="24" :sm="24" :md="10" :lg="10">
         <el-card class="section-card chat-card">
           <template #header>
@@ -133,7 +130,7 @@ let scrollRaf = 0
 let mediaRecorder = null
 let audioChunks = []
 
-const audioQueue = [] // { url: string, blob?: Blob }
+const audioQueue = [] // { url: string, blob?: Blob } — blob preferred to avoid re-fetch
 let isPlayingQueue = false
 let currentAudio = null
 let ttsRequestQueue = Promise.resolve()
@@ -348,7 +345,6 @@ const stopSpeaking = () => {
   isPlayingQueue = false
   isSpeaking.value = false
   ttsSessionId += 1
-  // 取消所有在途请求，避免弱网下继续占用资源/触发无用更新
   try { ttsAbortController?.abort() } catch (_) {}
   try { ragStreamAbortController?.abort() } catch (_) {}
   ttsAbortController = null
@@ -454,7 +450,6 @@ const playAudioQueue = async () => {
       await new Promise((resolve, reject) => {
         const toArrayBuffer = () => {
           if (item?.blob && typeof item.blob.arrayBuffer === 'function') return item.blob.arrayBuffer()
-          // 兼容旧数据（仅 url）
           return fetch(audioUrl).then(r => r.arrayBuffer())
         }
         toArrayBuffer()
@@ -553,7 +548,6 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
 
   const synthesizeUrl = useStreamApi ? '/voice/synthesize-stream' : '/voice/synthesize'
   ttsRequestQueue = ttsRequestQueue.then(async () => {
-    // 如果在真正发请求前 session 已经变化，直接跳过
     if (sessionId !== ttsSessionId) {
       return
     }
@@ -569,9 +563,7 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
         },
         { responseType: 'blob', timeout: 30000, signal: ttsAbortController?.signal }
       )
-      // 请求返回时再次检查，会话是否已经失效（例如用户点了“停止播报”或者开始新对话）
       if (sessionId !== ttsSessionId) {
-        console.warn('TTS 结果已过期，丢弃本次音频')
         return
       }
 
@@ -712,7 +704,6 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
         }
       } catch (_) {}
     }
-    // 最后再 flush 一次
     if (pendingText && msgRef) {
       msgRef.content = (msgRef.content || '') + pendingText
       pendingText = ''
@@ -771,7 +762,6 @@ const addAssistantStreamMessage = (fullText, characterId = null) => {
       rafId = 0
       return
     }
-    // 每帧追加一小段，减少响应式更新次数（比10ms setInterval更省渲染）
     const chunkSize = Math.min(12, textLength - i)
     msg.content += fullText.substring(i, i + chunkSize)
     i += chunkSize

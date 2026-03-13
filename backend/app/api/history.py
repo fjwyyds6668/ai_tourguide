@@ -40,7 +40,6 @@ async def _resolve_attraction_names(attraction_ids: List[int]) -> dict[int, str]
         try:
             rows = await prisma.attraction.find_many(where={"id": {"in": ids}})
             m = {int(r.id): (getattr(r, "name", "") or "") for r in (rows or []) if r and getattr(r, "id", None) is not None}
-            # 若批量查询异常返回空（或兼容性问题），降级为逐个查询
             if m:
                 return m
         except Exception as e:

@@ -189,7 +189,6 @@ const onAvatarFileChange = async (e) => {
   transition: transform 0.18s ease;
 }
 .sidebar--collapsed {
-  /* 200px -> 64px，只露出 64px（移动 136px） */
   transform: translate3d(-136px, 0, 0);
 }
 .sidebar-inner {
@@ -200,13 +199,11 @@ const onAvatarFileChange = async (e) => {
   transition: transform 0.18s ease;
 }
 .sidebar-inner--collapsed {
-  /* 把内容整体搬回可视的 64px 区域 */
   transform: translate3d(136px, 0, 0);
   width: 64px;
   overflow: hidden;
 }
 
-/* 收起态：把顶部/底部的“居中元素”改为基于 64px 居中，否则会被偏移出可视区 */
 .sidebar-inner--collapsed .logo {
   margin: 0;
   width: 64px;

@@ -1,6 +1,4 @@
-"""
-景点数据模型
-"""
+"""景点数据模型"""
 from sqlalchemy import Column, Integer, String, Text, Float, DateTime
 from sqlalchemy.sql import func
 from app.core.database import Base

@@ -124,7 +124,6 @@
       </div>
     </el-card>
 
-    <!-- 景区 新增/编辑 -->
     <el-dialog v-model="scenicVisible" :title="scenicEditing ? '编辑景区' : '新增景区'" width="560px" :close-on-click-modal="false" @closed="scenicFormRef?.resetFields()">
       <el-form ref="scenicFormRef" :model="scenicForm" label-position="top" @submit.prevent="submitScenic">
         <el-form-item label="景区名称" prop="name" required>
@@ -150,7 +149,6 @@
       </template>
     </el-dialog>
 
-    <!-- 添加知识 -->
     <el-dialog v-model="knowledgeVisible" title="添加景区知识" width="560px" :close-on-click-modal="false" @closed="knowledgeFormRef?.resetFields()">
       <el-form ref="knowledgeFormRef" :model="knowledgeForm" :rules="knowledgeRules" label-position="top" @submit.prevent="submitKnowledge">
         <el-form-item label="知识ID" prop="text_id">
@@ -166,7 +164,6 @@
       </template>
     </el-dialog>
 
-    <!-- 添加景点 -->
     <el-dialog v-model="attractionVisible" title="添加景点" width="560px" :close-on-click-modal="false" @closed="attractionFormRef?.resetFields()">
       <el-form ref="attractionFormRef" :model="attractionForm" :rules="attractionRules" label-position="top" @submit.prevent="submitAttraction">
         <el-form-item label="景点名称" prop="name" required>

@@ -1,8 +1,4 @@
-"""
-清空 Milvus 中指定集合的全部向量数据。
-
-默认使用项目统一的配置（settings + RAG_COLLECTION_NAME），避免与主服务不一致。
-"""
+"""清空 Milvus 中指定集合的全部向量数据。"""
 
 import argparse
 

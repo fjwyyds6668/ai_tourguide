@@ -1,12 +1,4 @@
-"""
-批量导入数据到 Neo4j（图数据库）与 Milvus（向量数据库）。
-
-当前支持：
-- 从 PostgreSQL 的 attractions 表导入（通过 Prisma）
-
-用法（在 backend 目录下执行）：
-  python import_graphrag_data.py --source attractions --collection tour_knowledge --build-graph --build-attraction-graph
-"""
+"""批量导入数据到 Neo4j 与 Milvus（当前支持：从 PostgreSQL attractions 表导入）。"""
 
 import argparse
 import asyncio
@@ -20,10 +12,6 @@ from app.utils.attraction_utils import attraction_to_text
 
 
 async def upload_texts_to_graphrag(items: List[Dict[str, Any]], collection_name: str, build_graph: bool):
-    """
-    items: [{"text_id": "...", "text": "...", "scenic_spot_id": int|None, "scenic_name": str|None}]
-    必须有景区上下文才创建图，避免离散节点脱离景区簇。
-    """
     collection = milvus_client.create_collection_if_not_exists(collection_name, dimension=384)
     texts = [it["text"] for it in items]
     embeddings = [rag_service.generate_embedding(t) for t in texts]
@@ -41,7 +29,7 @@ async def upload_texts_to_graphrag(items: List[Dict[str, Any]], collection_name:
             scenic_spot_id = it.get("scenic_spot_id")
             scenic_name = it.get("scenic_name")
             if scenic_spot_id is None and not (scenic_name and str(scenic_name).strip()):
-                continue  # 无景区上下文，跳过图构建
+                continue
             extracted = rag_service.extract_entities(it["text"])
             total_entities += len(extracted)
             await graph_builder.extract_and_store_entities(

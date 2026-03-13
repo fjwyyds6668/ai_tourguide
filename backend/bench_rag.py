@@ -127,7 +127,6 @@ async def main():
 
     def summarize(name: str, results: list[tuple[float | None, int | str]]):
         total = len(results)
-        # 论文结论更建议按“2xx”为成功口径
         ok_times = [
             dt
             for dt, code in results
@@ -159,7 +158,6 @@ async def main():
                 f"吞吐量={tps:.2f}/s（无成功样本，无法统计耗时分位）"
             )
 
-        # 打印失败分布，便于定位“超时/连接问题/后端500”等原因
         if code_counter:
             top_codes = ", ".join(f"{k}={v}" for k, v in code_counter.most_common(8))
             print(f"状态码分布(Top): {top_codes}")
