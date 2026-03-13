@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo \"exit:$?\")",
+      "Bash(where python3:*)",
+      "Bash(where python:*)",
+      "Bash(python3 -c \"print\\(''hello''\\)\")",
+      "Bash(C:/Users/GGBond/anaconda3/envs/ai_tourguide/python.exe -c \"print\\(''hello''\\)\")",
+      "Bash(C:/Users/GGBond/anaconda3/envs/ai_tourguide/python.exe -c \":*)"
+    ]
+  }
+}

@@ -305,7 +305,7 @@ async def create_scenic_spot(req: ScenicSpotCreateRequest, current_user: User = 
         }
     )
 
-    if (created.description or “”).strip():
+    if (created.description or "").strip():
         intro_text = str(created.description).strip()
         text_id = f"scenic_intro_{created.id}"
         item = KnowledgeBaseItem(
@@ -1343,7 +1343,7 @@ async def migrate_neo4j_scenic_spots(
       DELETE r_h
     )
 
-    // 4) 迁移旧的“子景点”关系：HAS_ATTRACTION -> HAS_SPOT，并把节点 label 统一为 :Spot
+    // 4) 迁移旧的"子景点"关系：HAS_ATTRACTION -> HAS_SPOT，并把节点 label 统一为 :Spot
     OPTIONAL MATCH (old)-[r_a:HAS_ATTRACTION]->(a)
     FOREACH (_ IN CASE WHEN a IS NULL THEN [] ELSE [1] END |
       FOREACH (__ IN CASE WHEN 'Attraction' IN labels(a) THEN [1] ELSE [] END |

@@ -127,7 +127,7 @@ class GraphBuilder:
                 "scenic_spot_id": int(scenic_spot_id)
             })
             logger.info(f"景点 '{name}' (Attraction, id={att_id}) 已关联到景区 (scenic_spot_id={scenic_spot_id})")
-            q_merge_spot = “””
+            q_merge_spot = """
             MATCH (s:ScenicSpot {scenic_spot_id: $scenic_spot_id})
             OPTIONAL MATCH (s)-[r:HAS_SPOT]->(sp:Spot {name: $name})
             WITH s, r, sp
@@ -136,7 +136,7 @@ class GraphBuilder:
             FOREACH (_ IN CASE WHEN sp IS NULL THEN [] ELSE [1] END |
               DETACH DELETE sp
             )
-            “””
+            """
             try:
                 await self._execute_query_async(q_merge_spot, {
                     "id": int(att_id),
@@ -147,7 +147,7 @@ class GraphBuilder:
                 logger.warning(f"合并景区子景点 Spot -> Attraction 失败: {e}")
         elif scenic_name_from_parsed:
             # 无 scenic_spot_id 但有景区名称：按名称挂接，保证簇围绕 ScenicSpot 汇聚
-            q_ensure_scenic_by_name = “””
+            q_ensure_scenic_by_name = """
             MERGE (s:ScenicSpot {name: $name})
             ON CREATE SET s.scenic_spot_id = coalesce(s.scenic_spot_id, 0)
             RETURN s
@@ -272,12 +272,12 @@ class GraphBuilder:
         if isinstance(features, list):
             feats = [str(x).strip() for x in features if str(x).strip()]
             if feats:
-                q_f = “””
+                q_f = """
                 UNWIND $features AS fname
                 MATCH (a:Attraction {id: $id})
                 MERGE (f:Feature {name: fname, attraction_id: $id})
                 MERGE (a)-[:HAS_FEATURE]->(f)
-                “””
+                """
                 await self._execute_query_async(q_f, {"id": int(att_id), "features": feats})
         if isinstance(honors, list):
             hns = [str(x).strip() for x in honors if str(x).strip()]
@@ -330,7 +330,7 @@ class GraphBuilder:
             return False
     
     async def build_attraction_graph(self, attractions: List[Dict[str, Any]]):
-        “””批量构建景点图谱（各景点簇均通过”属于/HAS_SPOT”挂接到 ScenicSpot，不在景点间建边）。”””
+        """批量构建景点图谱（各景点簇均通过"属于/HAS_SPOT"挂接到 ScenicSpot，不在景点间建边）。"""
         for attraction in attractions:
             scenic_spot_id = attraction.get("scenic_spot_id")
             if not scenic_spot_id:

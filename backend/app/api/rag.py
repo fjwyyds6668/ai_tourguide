@@ -31,7 +31,7 @@ def _trim_conversation_history(
     budget_chars: int = _HISTORY_BUDGET_CHARS,
     prefer_terms: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
-    """按“最近几轮+长度预算”裁剪会话历史，优先保留包含关键实体的消息。"""
+    """按"最近几轮+长度预算"裁剪会话历史，优先保留包含关键实体的消息。"""
     if not history:
         return []
     budget = max(0, int(budget_chars or 0))
