@@ -14,6 +14,13 @@
     </el-container>
 
     <el-container v-else class="layout layout-inner">
+      <!-- 景区背景图（带透明遮罩） -->
+      <div
+        v-if="scenicBgImage"
+        class="scenic-bg-overlay"
+        :style="{ backgroundImage: `url(${scenicBgImage})` }"
+      ></div>
+
       <el-aside class="aside" :width="collapsed ? '64px' : '220px'">
         <div class="brand" :class="{ collapsed }">
           <span class="brand-text">{{ collapsed ? 'AI' : 'AI 数字人导游系统' }}</span>
@@ -36,7 +43,7 @@
           </el-menu-item>
           <el-menu-item index="/history">
             <el-icon><Document /></el-icon>
-            <template #title>历史记录</template>
+            <template #title>对话记录</template>
           </el-menu-item>
         </el-menu>
 
@@ -52,6 +59,7 @@
         <el-main
           class="main main-no-header"
           :class="{ 'main-no-scroll': route.path === '/voice-guide' }"
+          :style="scenicBgImage ? { background: 'transparent' } : {}"
         >
           <router-view v-slot="{ Component }" :key="route.fullPath">
             <transition name="tourist-fade" mode="out-in">
@@ -72,7 +80,7 @@
         </router-link>
         <router-link to="/history" class="nav-item" :class="{ active: activePath === '/history' }">
           <el-icon><Document /></el-icon>
-          <span>历史记录</span>
+          <span>对话记录</span>
         </router-link>
       </nav>
     </el-container>
@@ -80,14 +88,16 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Microphone, Location, Document, Fold, Expand } from '@element-plus/icons-vue'
+import api from './api'
 
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
 const updateWidth = () => { windowWidth.value = window.innerWidth }
 onMounted(() => {
   window.addEventListener('resize', updateWidth)
+  if (route.path !== '/') loadScenicBackground()
 })
 onUnmounted(() => {
   window.removeEventListener('resize', updateWidth)
@@ -99,6 +109,45 @@ const router = useRouter()
 
 const activePath = computed(() => route.path)
 const isHome = computed(() => route.path === '/')
+
+// ── 景区背景图 ──
+const scenicBgImage = ref('')
+const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
+const resolveUrl = (url) => {
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) return url
+  if (url.startsWith('/')) return url
+  return `${backendOrigin}${url}`
+}
+
+let lastLoadedScenicId = null
+const loadScenicBackground = async () => {
+  try {
+    const savedId = localStorage.getItem('current_scenic_spot_id')
+    if (!savedId || savedId === lastLoadedScenicId) return
+    lastLoadedScenicId = savedId
+    const res = await api.get('/attractions', { params: { scenic_spot_id: savedId } })
+    const list = (res.data || []).filter(a => a.image_url)
+    if (list.length === 0) {
+      scenicBgImage.value = ''
+      return
+    }
+    const random = list[Math.floor(Math.random() * list.length)]
+    scenicBgImage.value = resolveUrl(random.image_url)
+  } catch (e) {
+    console.warn('加载景区背景图片失败:', e)
+  }
+}
+
+// 进入内页时加载背景
+watch(isHome, (val) => {
+  if (!val) loadScenicBackground()
+})
+
+// 路由切换时检测景区是否变化（用户可能从首页改选了景区）
+watch(() => route.path, () => {
+  if (route.path !== '/') loadScenicBackground()
+})
 
 const contentMargin = computed(() => {
   if (windowWidth.value <= 768) return { marginLeft: '0' }
@@ -290,6 +339,22 @@ html, body {
   .bottom-nav {
     display: flex !important;
   }
+}
+
+/* ── 景区背景图叠层 ── */
+.scenic-bg-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  opacity: 0.18;
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity 0.4s ease;
 }
 
 .bottom-nav {

@@ -53,7 +53,7 @@
             @click="navigateIfSelected('/history')"
           >
             <el-icon :size="48"><Document /></el-icon>
-            <h3>历史记录</h3>
+            <h3>对话记录</h3>
             <p>查看在当前景区的对话记录</p>
           </el-card>
         </el-col>

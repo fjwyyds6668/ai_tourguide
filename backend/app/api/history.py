@@ -1,4 +1,4 @@
-"""历史记录 API"""
+"""对话记录 API"""
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional
 from sqlalchemy.orm import Session

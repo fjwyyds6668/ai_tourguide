@@ -1,9 +1,8 @@
 <template>
   <div class="voice-guide">
-    <el-card class="section-card role-card">
-      <template #header>
-        <span class="card-title">请选择你喜欢的导游角色</span>
-      </template>
+    <!-- Role selection strip -->
+    <div class="role-strip">
+      <span class="role-label">选择导游角色：</span>
       <el-radio-group v-model="selectedCharacterId" @change="handleCharacterChange" class="role-group">
         <el-radio-button
           v-for="character in characters"
@@ -13,98 +12,91 @@
           {{ character.name }}
         </el-radio-button>
       </el-radio-group>
-    </el-card>
+    </div>
 
-    <el-row :gutter="20" class="main-row">
-      <el-col :xs="24" :sm="24" :md="14" :lg="14">
-        <el-card class="section-card avatar-card">
-          <template #header>
-            <div class="card-header">
-              <span class="card-title">数字人导游</span>
+    <div class="main-area">
+      <!-- Left: Avatar -->
+      <div class="avatar-panel">
+        <div class="avatar-wrapper" :style="scenicBackgroundStyle">
+          <Live2DCanvas
+            :character-name="currentLive2DName"
+            :character-group="currentLive2DGroup"
+          />
+        </div>
+      </div>
+
+      <!-- Right: Chat -->
+      <div class="chat-panel">
+        <!-- Messages -->
+        <div class="chat-messages" ref="conversationListRef">
+          <div v-if="conversationHistory.length === 0" class="empty-chat">
+            <el-icon class="empty-icon"><ChatDotRound /></el-icon>
+            <p class="empty-title">开始与 AI 导游对话吧</p>
+            <p class="empty-desc">输入文字或点击麦克风语音提问</p>
+          </div>
+
+          <template v-for="(msg, index) in conversationHistory" :key="`${msg.timestamp}-${index}`">
+            <!-- User message: right-aligned -->
+            <div v-if="msg.role === 'user'" class="message-row user-row">
+              <div class="bubble user-bubble">
+                <div class="bubble-text">{{ msg.content }}</div>
+                <div class="bubble-time">{{ formatTime(msg.timestamp) }}</div>
+              </div>
+              <div class="avatar-dot user-dot">您</div>
+            </div>
+
+            <!-- Assistant message: left-aligned -->
+            <div v-else class="message-row ai-row">
+              <div class="avatar-dot ai-dot">导</div>
+              <div class="bubble ai-bubble">
+                <div class="bubble-text">{{ msg.content }}<span v-if="msg.content === '' && index === conversationHistory.length - 1" class="typing-cursor">|</span></div>
+                <div class="bubble-time">{{ formatTime(msg.timestamp) }}</div>
+              </div>
             </div>
           </template>
-          
-          <div class="avatar-wrapper" :style="scenicBackgroundStyle">
-            <Live2DCanvas
-              :character-name="currentLive2DName"
-              :character-group="currentLive2DGroup"
+        </div>
+
+        <!-- Input area -->
+        <div class="input-area">
+          <div class="textarea-wrapper" :class="{ focused: inputFocused }">
+            <el-input
+              v-model="textInput"
+              type="textarea"
+              :rows="2"
+              placeholder="在此输入问题… (Enter 发送，Ctrl+Enter 换行)"
+              @keyup.enter.exact.prevent="handleSendText"
+              @keyup.ctrl.enter.prevent="() => textInput += '\n'"
+              @focus="inputFocused = true"
+              @blur="inputFocused = false"
+              class="chat-input"
             />
-          </div>
-
-          <div class="text-input-area">
-            <p class="input-hint">支持语音或文字，与数字人对话</p>
-            <div class="textarea-wrapper">
-              <el-input
-                v-model="textInput"
-                type="textarea"
-                :rows="3"
-                placeholder="在此输入要对数字人说的话（Enter 发送，Ctrl+Enter 换行）"
-                @keyup.enter.exact.prevent="handleSendText"
-                @keyup.ctrl.enter.prevent="handleSendText"
-                class="textarea-input"
+            <div class="input-buttons">
+              <el-button
+                :type="isRecording ? 'danger' : 'primary'"
+                :icon="isRecording ? 'VideoPause' : 'Microphone'"
+                @click="toggleRecording"
+                :loading="processing && !isRecording"
+                circle
+                size="default"
+                :title="isRecording ? '停止录音' : '开始录音'"
               />
-              <div class="input-buttons">
-                <el-button
-                  type="primary"
-                  :icon="isRecording ? 'VideoPause' : 'Microphone'"
-                  @click="toggleRecording"
-                  :loading="processing"
-                  circle
-                  size="large"
-                  :title="isRecording ? '停止录音' : '开始录音'"
-                  style="min-width:44px;min-height:44px"
-                />
-                <el-button
-                  type="primary"
-                  @click="handleSendText"
-                  :disabled="!textInput.trim() || processing"
-                  size="large"
-                  style="min-height:44px"
-                >
-                  发送
-                </el-button>
-                <el-button
-                  v-if="isSpeaking"
-                  @click="stopSpeaking"
-                  size="large"
-                  style="min-height:44px"
-                >
-                  停止播报
-                </el-button>
-              </div>
+              <el-button
+                v-if="isSpeaking"
+                @click="stopSpeaking"
+                size="default"
+                plain
+              >停止播报</el-button>
+              <el-button
+                type="primary"
+                @click="handleSendText"
+                :disabled="!textInput.trim() || processing"
+                size="default"
+              >发送</el-button>
             </div>
           </div>
-        </el-card>
-      </el-col>
-
-      <el-col :xs="24" :sm="24" :md="10" :lg="10">
-        <el-card class="section-card chat-card">
-          <template #header>
-            <span class="card-title">对话记录</span>
-          </template>
-          
-          <div class="conversation-list" ref="conversationListRef">
-            <div
-              v-for="(msg, index) in conversationHistory"
-              :key="`${msg.timestamp}-${index}`"
-              :class="['message-item', msg.role]"
-            >
-              <div class="message-header">
-                <strong>{{ msg.role === 'user' ? '您' : 'AI导游' }}</strong>
-                <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
-              </div>
-              <div class="message-content">{{ msg.content }}</div>
-            </div>
-            <div v-if="conversationHistory.length === 0" class="empty-message">
-              <el-icon class="empty-icon"><ChatDotRound /></el-icon>
-              <p>还没有对话记录</p>
-              <p class="empty-desc">在左侧输入或点击麦克风开始与 AI 导游交流</p>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
-
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -127,6 +119,7 @@ const characters = ref([])
 const MAX_HISTORY_LENGTH = 50
 const conversationHistory = ref([])
 const textInput = ref('')
+const inputFocused = ref(false)
 const conversationListRef = ref(null)
 let scrollRaf = 0
 
@@ -241,17 +234,17 @@ const startRecording = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     mediaRecorder = new MediaRecorder(stream)
     audioChunks = []
-    
+
     mediaRecorder.ondataavailable = (event) => {
       audioChunks.push(event.data)
     }
-    
+
     mediaRecorder.onstop = async () => {
       const audioBlob = new Blob(audioChunks, { type: 'audio/wav' })
       await processAudio(audioBlob)
       stream.getTracks().forEach(track => track.stop())
     }
-    
+
     mediaRecorder.start()
     isRecording.value = true
   } catch (error) {
@@ -273,18 +266,18 @@ const processAudio = async (audioBlob) => {
     const formData = new FormData()
     formData.append('file', audioBlob, 'audio.wav')
     formData.append('method', 'whisper')
-    
+
     const transcribeRes = await api.post('/voice/transcribe', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
-    
+
     const queryText = transcribeRes.data.text
-    
+
     addMessage('user', queryText)
     scrollToBottom()
-    
+
     initAudioAnalyzer().catch(() => {})
-    
+
     await streamGenerateAndSpeak(queryText, selectedCharacterId.value)
     scrollToBottom()
   } catch (error) {
@@ -376,7 +369,7 @@ const stopSpeaking = () => {
   try { ragStreamAbortController?.abort() } catch (_) {}
   ttsAbortController = null
   ragStreamAbortController = null
-  
+
   try {
     const manager = Live2dManager.getInstance()
     if (manager) {
@@ -474,7 +467,7 @@ const playAudioQueue = async () => {
 
   isPlayingQueue = true
   isSpeaking.value = true
-  
+
   try {
     await initAudioAnalyzer()
   } catch (e) {
@@ -500,14 +493,14 @@ const playAudioQueue = async () => {
                 }
                 audioSource = audioContext.createBufferSource()
                 audioSource.buffer = audioBuffer
-                
+
                 audioSource.connect(analyser)
                 analyser.connect(audioContext.destination)
-                
+
                 audioSource.start(0)
                 if (lipSyncRafId) cancelAnimationFrame(lipSyncRafId)
                 lipSyncRafId = requestAnimationFrame(updateLipSync)
-                
+
                 const timeout = setTimeout(() => {
                   console.warn('音频播放超时，强制结束，是否最后一段:', isLastChunk)
                   if (audioSource) {
@@ -519,7 +512,7 @@ const playAudioQueue = async () => {
                   URL.revokeObjectURL(audioUrl)
                   resolve()
                 }, audioBuffer.duration * 1000 + 2000)
-                
+
                 audioSource.onended = () => {
                   clearTimeout(timeout)
                   URL.revokeObjectURL(audioUrl)
@@ -531,7 +524,7 @@ const playAudioQueue = async () => {
                     resolve()
                   }
                 }
-                
+
                 currentAudio = {
                   pause: () => {
                     clearTimeout(timeout)
@@ -598,9 +591,9 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
       }
       const synthesizeRes = await api.post(
         synthesizeUrl,
-        { 
-          text: cleanedText, 
-          character_id: characterId 
+        {
+          text: cleanedText,
+          character_id: characterId
         },
         { responseType: 'blob', timeout: 30000, signal: ttsAbortController?.signal }
       )
@@ -690,6 +683,14 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
           const content = data.content
           if (type === 'session_id' && content) {
             sessionId.value = content
+            // 保存 session_id 到 localStorage，用于历史记录按用户过滤
+            try {
+              const savedIds = JSON.parse(localStorage.getItem('tourguide_session_ids') || '[]')
+              if (!savedIds.includes(content)) {
+                savedIds.push(content)
+                localStorage.setItem('tourguide_session_ids', JSON.stringify(savedIds))
+              }
+            } catch (_) {}
           } else if (type === 'text' && content && msgRef) {
             pendingText += content
             scheduleFlush()
@@ -846,20 +847,20 @@ const triggerSpeakingMotion = () => {
   try {
     const delegate = LAppDelegate.getInstance()
     if (!delegate) return
-    
+
     const subdelegates = delegate._subdelegates
     if (!subdelegates || subdelegates.getSize() === 0) return
-    
+
     const subdelegate = subdelegates.at(0)
     const live2dManager = subdelegate?._live2dManager
     if (!live2dManager) return
-    
+
     const models = live2dManager._models
     if (!models || models.getSize() === 0) return
-    
+
     const model = models.at(0)
     if (!model) return
-    
+
     const motionGroup = 'TapBody'
     const modelSetting = model._modelSetting
     if (modelSetting) {
@@ -868,7 +869,7 @@ const triggerSpeakingMotion = () => {
         const motionNo = Math.floor(Math.random() * motionCount)
         model.startMotion(motionGroup, motionNo, 2)
       }
-      
+
       const expressionCount = modelSetting.getExpressionCount() || 0
       if (expressionCount > 0) {
         let smileIndex = -1
@@ -899,208 +900,269 @@ const triggerSpeakingMotion = () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  gap: 10px;
 }
 
-.section-card {
-  margin-bottom: 12px;
-  border-radius: 12px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+/* ── Role strip ── */
+.role-strip {
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.section-card :deep(.el-card__header) {
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  background: #fff;
+  border-radius: 10px;
   padding: 10px 16px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  border: 1px solid #f0f0f0;
+}
+
+.role-label {
+  font-size: 14px;
   font-weight: 600;
-  border-bottom: 1px solid #f0f0f0;
-  flex-shrink: 0;
-}
-
-.section-card :deep(.el-card__body) {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 12px;
-}
-
-.card-title {
-  font-size: 15px;
   color: #303133;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-}
-
-.history-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.role-card {
-  margin-bottom: 12px;
-  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .role-group {
   flex-wrap: wrap;
 }
 
-.main-row {
-  margin-bottom: 0;
-  flex: 1;
+/* ── Main area ── */
+.main-area {
   display: flex;
-  overflow: hidden;
+  gap: 12px;
+  flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
-.main-row :deep(.el-col) {
+/* ── Avatar panel ── */
+.avatar-panel {
+  flex: 0 0 42%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  height: 100%;
 }
 
 .avatar-wrapper {
   width: 100%;
-  flex: 0 0 min(460px, 45vh);
-  margin-bottom: 12px;
-  border-radius: 12px;
+  flex: 1;
+  border-radius: 14px;
   overflow: hidden;
   background: #1a1a1a;
   border: 1px solid #e4e7ed;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
 
-.text-input-area {
-  margin-top: 0;
-  padding: 8px 0 0;
-  border-top: 1px solid #f0f0f0;
-  flex-shrink: 0;
-}
-
-.input-hint {
-  margin: 0 0 6px 0;
-  font-size: 13px;
-  font-weight: 500;
-  color: #303133;
-  line-height: 1.5;
-}
-
-.textarea-wrapper {
-  position: relative;
-  border: 1px solid #dcdfe6;
-  border-radius: 8px;
-  overflow: hidden;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.textarea-wrapper:focus-within {
-  border-color: #409eff;
-  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.1);
-}
-
-.textarea-input :deep(.el-textarea__inner) {
-  padding-right: 160px;
-  padding-bottom: 52px;
-  border: none;
-  box-shadow: none;
-  min-height: 140px;
-  font-size: 14px;
-  color: #303133;
-  line-height: 1.6;
-  resize: none;
-}
-
-.textarea-input :deep(.el-textarea__inner::placeholder) {
-  color: #909399;
-  opacity: 1;
-}
-
-.input-buttons {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  z-index: 10;
-}
-
-.chat-card {
-  height: 100%;
+/* ── Chat panel ── */
+.chat-panel {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid #f0f0f0;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  overflow: hidden;
 }
 
-.conversation-list {
-  flex: 1 1 auto;
+/* ── Messages area ── */
+.chat-messages {
+  flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: 16px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   -webkit-overflow-scrolling: touch;
 }
 
-.message-item {
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  content-visibility: auto;
-  contain-intrinsic-size: auto 80px;
+.chat-messages::-webkit-scrollbar {
+  width: 4px;
+}
+.chat-messages::-webkit-scrollbar-thumb {
+  background: #dcdfe6;
+  border-radius: 4px;
 }
 
-.message-item.user {
-  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-  text-align: right;
-}
-
-.message-item.assistant {
-  background: linear-gradient(135deg, #f5f5f5 0%, #eeeeee 100%);
-  text-align: left;
-}
-
-.message-header {
+/* Empty state */
+.empty-chat {
+  flex: 1;
   display: flex;
-  justify-content: space-between;
-  margin-bottom: 4px;
-  font-size: 12px;
-  color: #606266;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #c0c4cc;
+  padding: 40px 20px;
+  gap: 8px;
 }
 
-.message-content {
-  word-break: break-word;
-  line-height: 1.5;
-  font-size: 14px;
+.empty-chat .empty-icon {
+  font-size: 48px;
+  color: #dcdfe6;
 }
 
-.empty-message {
-  text-align: center;
-  color: #303133;
-  padding: 32px 24px;
+.empty-chat .empty-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #909399;
 }
 
-.empty-message .empty-icon {
-  font-size: 40px;
-  margin-bottom: 10px;
+.empty-chat .empty-desc {
+  margin: 0;
+  font-size: 13px;
   color: #c0c4cc;
 }
 
-.empty-message p {
-  margin: 0 0 4px 0;
-  font-size: 16px;
-  font-weight: 600;
+/* Message rows */
+.message-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 
-.empty-message .empty-desc {
+.user-row {
+  align-self: flex-end;
+  flex-direction: row;
+  max-width: 88%;
+}
+
+.ai-row {
+  align-self: flex-start;
+  flex-direction: row;
+  max-width: 88%;
+}
+
+/* Avatar dots */
+.avatar-dot {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.user-dot {
+  background: linear-gradient(135deg, #409eff, #66b1ff);
+  color: #fff;
+}
+
+.ai-dot {
+  background: linear-gradient(135deg, #67c23a, #85ce61);
+  color: #fff;
+}
+
+/* Bubbles */
+.bubble {
+  padding: 10px 14px;
+  border-radius: 16px;
+  max-width: 100%;
+  word-break: break-word;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+.user-bubble {
+  background: linear-gradient(135deg, #409eff, #66b1ff);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.ai-bubble {
+  background: #f4f6f8;
+  color: #303133;
+  border-bottom-left-radius: 4px;
+  border: 1px solid #ebeef5;
+}
+
+.bubble-text {
   font-size: 14px;
-  color: #606266;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  min-height: 1.65em;
 }
 
+.bubble-time {
+  font-size: 11px;
+  margin-top: 5px;
+  opacity: 0.65;
+}
+
+.user-bubble .bubble-time {
+  color: rgba(255,255,255,0.85);
+  text-align: right;
+}
+
+.ai-bubble .bubble-time {
+  color: #909399;
+  text-align: left;
+}
+
+/* Typing cursor animation */
+.typing-cursor {
+  display: inline-block;
+  animation: blink 0.8s step-end infinite;
+  color: #409eff;
+  font-weight: 700;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ── Input area ── */
+.input-area {
+  flex-shrink: 0;
+  padding: 10px 12px 12px;
+  border-top: 1px solid #f0f0f0;
+  background: #fafafa;
+}
+
+.textarea-wrapper {
+  border: 1.5px solid #dcdfe6;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: #fff;
+}
+
+.textarea-wrapper.focused {
+  border-color: #409eff;
+  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.1);
+}
+
+.chat-input :deep(.el-textarea__inner) {
+  border: none;
+  box-shadow: none;
+  resize: none;
+  padding: 10px 12px 6px;
+  font-size: 14px;
+  color: #303133;
+  line-height: 1.6;
+  background: transparent;
+}
+
+.chat-input :deep(.el-textarea__inner::placeholder) {
+  color: #c0c4cc;
+}
+
+.input-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 10px 8px;
+  background: #fff;
+  border-top: 1px solid #f5f5f5;
+}
+
+/* ── Responsive ── */
 @media (max-width: 768px) {
   .voice-guide {
     padding: 8px;
@@ -1108,45 +1170,47 @@ const triggerSpeakingMotion = () => {
     min-height: calc(100vh - 16px);
     overflow: visible;
   }
-  .voice-guide .main-row {
-    flex: none;
+
+  .main-area {
+    flex-direction: column;
     overflow: visible;
-    min-height: 0;
+    flex: none;
   }
+
+  .avatar-panel {
+    flex: none;
+    height: min(42vh, 340px);
+  }
+
   .avatar-wrapper {
-    flex: 0 0 auto;
-    min-height: 240px;
-    height: min(42vh, 360px);
+    height: 100%;
+  }
+
+  .chat-panel {
+    min-height: 420px;
+  }
+
+  .chat-messages {
     max-height: 50vh;
-  }
-  .textarea-input :deep(.el-textarea__inner) {
-    padding-right: 10px;
-    padding-bottom: 56px;
-    min-height: 80px;
-    font-size: 16px;
-  }
-  .input-buttons {
-    gap: 6px;
-  }
-  .input-buttons .el-button {
-    min-width: 44px;
-    min-height: 44px;
   }
 }
 
 @media (max-width: 480px) {
   .voice-guide {
     padding: 4px;
+    gap: 6px;
   }
-  .avatar-wrapper {
-    min-height: 200px;
+
+  .role-strip {
+    padding: 8px 12px;
+  }
+
+  .avatar-panel {
     height: min(38vh, 280px);
   }
-  .textarea-input :deep(.el-textarea__inner) {
-    min-height: 60px;
-  }
-  .role-card {
-    margin-bottom: 8px;
+
+  .user-row, .ai-row {
+    max-width: 95%;
   }
 }
 
@@ -1154,22 +1218,10 @@ const triggerSpeakingMotion = () => {
   .voice-guide {
     height: auto;
     overflow: auto;
-    min-height: 100vh;
   }
-  .avatar-wrapper {
-    flex: 0 0 auto;
-    min-height: 150px;
-    height: min(80vw, 220px);
-    max-height: 220px;
-  }
-  .role-card {
-    display: none;
-  }
-  .conversation-list {
-    max-height: 180px;
-  }
-  .main-row :deep(.el-row) {
-    flex-direction: row !important;
+
+  .avatar-panel {
+    flex: 0 0 38%;
   }
 }
 </style>
