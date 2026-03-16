@@ -207,7 +207,7 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   min-height: 300px;
-  background: #0b0f18;
+  background: transparent;
   border-radius: 12px;
   overflow: hidden;
 }
@@ -225,7 +225,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(11, 15, 24, 0.7);
+  background: rgba(0, 0, 0, 0.5);
   color: #aaa;
   font-size: 14px;
   pointer-events: none;

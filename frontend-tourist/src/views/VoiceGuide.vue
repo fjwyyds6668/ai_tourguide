@@ -17,7 +17,7 @@
     <div class="main-area">
       <!-- Left: Avatar -->
       <div class="avatar-panel">
-        <div class="avatar-wrapper" :style="scenicBackgroundStyle">
+        <div class="avatar-wrapper">
           <Live2DCanvas
             :character-name="currentLive2DName"
             :character-group="currentLive2DGroup"
@@ -101,9 +101,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, ChatDotRound } from '@element-plus/icons-vue'
+import { ChatDotRound } from '@element-plus/icons-vue'
 import Live2DCanvas from '../components/Live2DCanvas.vue'
 import api from '../api'
 import { formatTime } from '../utils/format'
@@ -135,13 +135,6 @@ let ttsAbortController = null
 let ragStreamAbortController = null
 
 const currentScenic = ref(null)
-const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
-const getImageUrl = (url) => {
-  if (!url) return ''
-  if (url.startsWith('http://') || url.startsWith('https://')) return url
-  if (url.startsWith('/')) return url
-  return `${backendOrigin}${url}`
-}
 
 let previousBodyOverflow = ''
 
@@ -379,16 +372,6 @@ const stopSpeaking = () => {
   }
 }
 
-const scenicBackgroundStyle = computed(() => {
-  const full = getImageUrl(currentScenic.value?.cover_image_url)
-  if (!full) return {}
-  return {
-    backgroundImage: `url(${full})`,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center center',
-    backgroundRepeat: 'no-repeat',
-  }
-})
 
 const addMessage = (role, content) => {
   conversationHistory.value.push({
@@ -909,18 +892,21 @@ const triggerSpeakingMotion = () => {
   align-items: center;
   gap: 12px;
   flex-shrink: 0;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(16px) saturate(1.8);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
   border-radius: 10px;
   padding: 10px 16px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-  border: 1px solid #f0f0f0;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+  border: 1px solid rgba(255,255,255,0.65);
 }
 
 .role-label {
   font-size: 14px;
-  font-weight: 600;
-  color: #303133;
+  font-weight: 700;
+  color: #1a1a1a;
   white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(255,255,255,0.6);
 }
 
 .role-group {
@@ -949,9 +935,9 @@ const triggerSpeakingMotion = () => {
   flex: 1;
   border-radius: 14px;
   overflow: hidden;
-  background: #1a1a1a;
-  border: 1px solid #e4e7ed;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.3);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.12);
 }
 
 /* ── Chat panel ── */
@@ -960,10 +946,12 @@ const triggerSpeakingMotion = () => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(16px) saturate(1.8);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
   border-radius: 14px;
-  border: 1px solid #f0f0f0;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  border: 1px solid rgba(255,255,255,0.65);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.10);
   overflow: hidden;
 }
 
@@ -1000,20 +988,20 @@ const triggerSpeakingMotion = () => {
 
 .empty-chat .empty-icon {
   font-size: 48px;
-  color: #dcdfe6;
+  color: #606266;
 }
 
 .empty-chat .empty-title {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #909399;
+  color: #303133;
 }
 
 .empty-chat .empty-desc {
   margin: 0;
   font-size: 13px;
-  color: #c0c4cc;
+  color: #606266;
 }
 
 /* Message rows */
@@ -1074,10 +1062,10 @@ const triggerSpeakingMotion = () => {
 }
 
 .ai-bubble {
-  background: #f4f6f8;
+  background: rgba(244, 246, 248, 0.85);
   color: #303133;
   border-bottom-left-radius: 4px;
-  border: 1px solid #ebeef5;
+  border: 1px solid rgba(235, 238, 245, 0.7);
 }
 
 .bubble-text {
@@ -1120,8 +1108,8 @@ const triggerSpeakingMotion = () => {
 .input-area {
   flex-shrink: 0;
   padding: 10px 12px 12px;
-  border-top: 1px solid #f0f0f0;
-  background: #fafafa;
+  border-top: 1px solid rgba(0,0,0,0.06);
+  background: rgba(255, 255, 255, 0.80);
 }
 
 .textarea-wrapper {
@@ -1129,7 +1117,7 @@ const triggerSpeakingMotion = () => {
   border-radius: 12px;
   overflow: hidden;
   transition: border-color 0.2s, box-shadow 0.2s;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .textarea-wrapper.focused {
@@ -1149,7 +1137,7 @@ const triggerSpeakingMotion = () => {
 }
 
 .chat-input :deep(.el-textarea__inner::placeholder) {
-  color: #c0c4cc;
+  color: #909399;
 }
 
 .input-buttons {
@@ -1158,8 +1146,8 @@ const triggerSpeakingMotion = () => {
   justify-content: flex-end;
   gap: 8px;
   padding: 6px 10px 8px;
-  background: #fff;
-  border-top: 1px solid #f5f5f5;
+  background: rgba(255, 255, 255, 0.60);
+  border-top: 1px solid rgba(255,255,255,0.4);
 }
 
 /* ── Responsive ── */

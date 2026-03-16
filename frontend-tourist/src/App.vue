@@ -351,7 +351,7 @@ html, body {
   background-size: cover;
   background-position: center center;
   background-repeat: no-repeat;
-  opacity: 0.18;
+  opacity: 0.90;
   pointer-events: none;
   z-index: 0;
   transition: opacity 0.4s ease;
