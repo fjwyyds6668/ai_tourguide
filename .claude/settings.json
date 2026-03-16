@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \":*)",
+      "Bash(C:/Users/GGBond/anaconda3/envs/ai_tourguide/python.exe -c \":*)",
+      "Read(//c/毕業设计/项目代码/ai_tourguide/backend/app/services/**)"
+    ]
+  }
+}

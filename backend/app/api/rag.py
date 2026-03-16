@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import time
+import threading
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _HISTORY_BUDGET_CHARS = 1200  # 发送给LLM前的对话历史字符预算（仅裁剪历史，不含本轮问题）
+MAX_RECENT_HISTORY = 20  # 裁剪前保留的最近消息条数
 
 
 def _trim_conversation_history(
@@ -50,7 +52,7 @@ def _trim_conversation_history(
         return any(t in c for t in terms)
 
     recent = [m for m in history if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
-    recent = recent[-20:]
+    recent = recent[-MAX_RECENT_HISTORY:]
     flags = [_hit(m) for m in recent]
 
     keep: set[int] = set()
@@ -124,29 +126,31 @@ async def _load_character_prompt_and_voice(character_id: Optional[int]) -> Tuple
 _attraction_id_name_cache: Optional[List[Tuple[int, str]]] = None
 _attraction_cache_time: float = 0
 _ATTRACTION_CACHE_TTL = 60.0
+_attraction_cache_lock = threading.Lock()  # _save_interaction 在线程池中执行，需加锁保护全局缓存
 
 
 def _get_attraction_id_name_list() -> List[Tuple[int, str]]:
     global _attraction_id_name_cache, _attraction_cache_time
     now = time.time()
-    if _attraction_id_name_cache is not None and (now - _attraction_cache_time) < _ATTRACTION_CACHE_TTL:
-        return _attraction_id_name_cache
-    from app.core.database import SessionLocal
-    from app.models.attraction import Attraction as AttractionModel
-    db_local = SessionLocal()
-    try:
-        rows = (
-            db_local.query(AttractionModel.id, AttractionModel.name)
-            .filter(AttractionModel.name.isnot(None), AttractionModel.name != "")
-            .limit(200)
-            .all()
-        )
-        out = [(row[0], row[1] if len(row) > 1 else "") for row in rows]
-        _attraction_id_name_cache = out
-        _attraction_cache_time = now
-        return out
-    finally:
-        db_local.close()
+    with _attraction_cache_lock:
+        if _attraction_id_name_cache is not None and (now - _attraction_cache_time) < _ATTRACTION_CACHE_TTL:
+            return _attraction_id_name_cache
+        from app.core.database import SessionLocal
+        from app.models.attraction import Attraction as AttractionModel
+        db_local = SessionLocal()
+        try:
+            rows = (
+                db_local.query(AttractionModel.id, AttractionModel.name)
+                .filter(AttractionModel.id.isnot(None), AttractionModel.name.isnot(None), AttractionModel.name != "")
+                .limit(200)
+                .all()
+            )
+            out = [(int(row[0]), str(row[1])) for row in rows if row[0] is not None]
+            _attraction_id_name_cache = out
+            _attraction_cache_time = now
+            return out
+        finally:
+            db_local.close()
 
 
 def _save_interaction(
@@ -377,14 +381,14 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             )
             
             full_answer = ""
-            last_delta: str = ""
+            prev_content: str = ""
             accumulated_text = ""
             completed_audio: Dict[int, str] = {}
             fallback_tts: Dict[int, str] = {}
             next_audio_idx = 0
             tts_chunk_index = [0]
             Lmin = 12
-            TTS_SENTENCE_TIMEOUT = 25
+            TTS_SENTENCE_TIMEOUT = settings.XFYUN_TTS_TIMEOUT
             TTS_MAX_CONCURRENCY = 3
             tts_sema = asyncio.Semaphore(TTS_MAX_CONCURRENCY)
             TTS_MAX_PENDING = 10
@@ -518,12 +522,12 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                         content = _clean_special_symbols(content)
                         if not content:
                             continue
-                        if content == last_delta:
+                        if content == prev_content:
                             continue
                         if full_answer.endswith(content):
-                            last_delta = content
+                            prev_content = content
                             continue
-                        last_delta = content
+                        prev_content = content
                         full_answer += content
                         accumulated_text += content
                         

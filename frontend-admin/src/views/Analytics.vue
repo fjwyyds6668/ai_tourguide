@@ -97,6 +97,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import api, { withAbort, cancelInflight } from '../api'
 
@@ -171,6 +172,7 @@ let refreshTimer = null
 let visibilityHandler = null
 let pollDelayMs = 5000
 let stopped = false
+let pollFailCount = 0
 
 function startPolling() {
   if (refreshTimer) return
@@ -180,8 +182,13 @@ function startPolling() {
     try {
       await fetchAnalytics(true)
       pollDelayMs = 5000
+      pollFailCount = 0
     } catch (_) {
+      pollFailCount++
       pollDelayMs = Math.min(60000, Math.max(5000, pollDelayMs * 2))
+      if (pollFailCount === 3) {
+        ElMessage.warning('数据刷新失败，将自动重试')
+      }
     }
     refreshTimer = setTimeout(tick, pollDelayMs)
   }

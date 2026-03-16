@@ -341,6 +341,7 @@ class VoiceService:
                             ping_interval=30,
                             ping_timeout=25,
                             skip_utf8_validation=True,
+                            http_proxy_host="",  # 强制直连，不走系统代理
                         )
 
                     text_len = len(text)

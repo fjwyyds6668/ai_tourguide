@@ -2,6 +2,10 @@
 import os
 import warnings
 
+# 清除系统代理环境变量，确保所有外部请求直连，不受 VPN/代理软件影响
+for _proxy_key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+    os.environ.pop(_proxy_key, None)
+
 # 必须在其他模块导入前配置：抑制第三方库的已知警告
 warnings.filterwarnings("ignore", category=UserWarning, module="jieba._compat")
 warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub.file_download")

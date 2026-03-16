@@ -64,7 +64,7 @@
       </div>
     </el-card>
     
-    <el-dialog v-model="detailVisible" title="景点详情" width="600px">
+    <el-dialog v-model="detailVisible" title="景点详情" :width="dialogWidth">
       <div v-if="selectedAttraction">
         <h3>{{ selectedAttraction.name }}</h3>
         <p v-if="selectedAttraction.location"><strong>位置：</strong>{{ selectedAttraction.location }}</p>
@@ -112,6 +112,7 @@ watch(searchText, (val) => {
 
 const detailVisible = ref(false)
 const selectedAttraction = ref(null)
+const dialogWidth = computed(() => window.innerWidth <= 600 ? '92%' : '600px')
 
 const page = ref(1)
 const pageSize = ref(12)

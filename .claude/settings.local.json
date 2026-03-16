@@ -6,7 +6,11 @@
       "Bash(where python:*)",
       "Bash(python3 -c \"print\\(''hello''\\)\")",
       "Bash(C:/Users/GGBond/anaconda3/envs/ai_tourguide/python.exe -c \"print\\(''hello''\\)\")",
-      "Bash(C:/Users/GGBond/anaconda3/envs/ai_tourguide/python.exe -c \":*)"
+      "Bash(C:/Users/GGBond/anaconda3/envs/ai_tourguide/python.exe -c \":*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python -c \":*)",
+      "Bash(LANG=en_US.UTF-8 grep -rPn '\\\\x{201c}|\\\\x{201d}' \"c:/毕业设计/项目代码/ai_tourguide/backend\" --include=\"*.py\")",
+      "Bash(find frontend-tourist/src -type f \\\\\\(-name *.css -o -name *.scss \\\\\\))"
     ]
   }
 }

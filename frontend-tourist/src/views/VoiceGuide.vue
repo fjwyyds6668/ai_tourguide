@@ -50,21 +50,24 @@
                   @click="toggleRecording"
                   :loading="processing"
                   circle
-                  size="default"
+                  size="large"
                   :title="isRecording ? '停止录音' : '开始录音'"
+                  style="min-width:44px;min-height:44px"
                 />
                 <el-button
                   type="primary"
                   @click="handleSendText"
                   :disabled="!textInput.trim() || processing"
-                  size="default"
+                  size="large"
+                  style="min-height:44px"
                 >
                   发送
                 </el-button>
                 <el-button
                   v-if="isSpeaking"
                   @click="stopSpeaking"
-                  size="default"
+                  size="large"
+                  style="min-height:44px"
                 >
                   停止播报
                 </el-button>
@@ -175,6 +178,23 @@ onUnmounted(() => {
   if (typeof document !== 'undefined') {
     document.body.style.overflow = previousBodyOverflow || ''
   }
+  if (lipSyncRafId) {
+    cancelAnimationFrame(lipSyncRafId)
+    lipSyncRafId = 0
+  }
+  ttsSessionId = 0
+  audioQueue.forEach(item => {
+    try {
+      const url = item?.url || (typeof item === 'string' ? item : null)
+      if (url) URL.revokeObjectURL(url)
+    } catch (_) {}
+  })
+  audioQueue.length = 0
+  try { ragStreamAbortController?.abort() } catch (_) {}
+  try { ttsAbortController?.abort() } catch (_) {}
+  try {
+    Live2dManager.getInstance().setLipFactor(0)
+  } catch (_) {}
 })
 
 const loadCharacters = async (retries = 2) => {
@@ -331,19 +351,26 @@ const extractErrorMessage = async (error) => {
 }
 
 const stopSpeaking = () => {
+  isSpeaking.value = false
+  if (lipSyncRafId) {
+    cancelAnimationFrame(lipSyncRafId)
+    lipSyncRafId = 0
+  }
   if (currentAudio) {
     currentAudio.pause()
     currentAudio = null
   }
   if (audioSource) {
-    audioSource.stop()
+    try { audioSource.stop() } catch (_) {}
     audioSource.disconnect()
     audioSource = null
+  }
+  if (analyser) {
+    try { analyser.disconnect() } catch (_) {}
   }
   audioQueue.forEach(item => URL.revokeObjectURL(item?.url || item))
   audioQueue.length = 0
   isPlayingQueue = false
-  isSpeaking.value = false
   ttsSessionId += 1
   try { ttsAbortController?.abort() } catch (_) {}
   try { ragStreamAbortController?.abort() } catch (_) {}
@@ -385,50 +412,58 @@ let audioContext = null
 let analyser = null
 let audioSource = null
 let lipDataArray = null
+let lipSyncRafId = 0
 
 const initAudioAnalyzer = async () => {
+  // 重建已关闭的 AudioContext
+  if (audioContext && audioContext.state === 'closed') {
+    audioContext = null
+    analyser = null
+    lipDataArray = null
+  }
   if (!audioContext) {
     try {
       audioContext = new (window.AudioContext || window.webkitAudioContext)()
       analyser = audioContext.createAnalyser()
       analyser.fftSize = 256
       analyser.smoothingTimeConstant = 0.8
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume()
-      }
     } catch (e) {
       console.warn('音频上下文初始化失败:', e)
       throw e
     }
   }
+  if (audioContext.state === 'suspended') {
+    await audioContext.resume()
+  }
 }
 
 const updateLipSync = () => {
+  lipSyncRafId = 0
   if (!analyser || !isSpeaking.value) {
     return
   }
-  
+
   if (!lipDataArray || lipDataArray.length !== analyser.frequencyBinCount) {
     lipDataArray = new Uint8Array(analyser.frequencyBinCount)
   }
   analyser.getByteFrequencyData(lipDataArray)
-  
+
   let sum = 0
   for (let i = 0; i < lipDataArray.length; i++) {
     sum += lipDataArray[i] * lipDataArray[i]
   }
   const rms = Math.sqrt(sum / lipDataArray.length) / 255
-  
+
   try {
     const manager = Live2dManager.getInstance()
     if (manager && manager.isReady()) {
-      manager.setLipFactor(Math.min(rms * 2, 1.0))
+      manager.setLipFactor(Math.min(rms * 1.5, 1.0))
     }
   } catch (e) {
   }
-  
+
   if (isSpeaking.value) {
-    requestAnimationFrame(updateLipSync)
+    lipSyncRafId = requestAnimationFrame(updateLipSync)
   }
 }
 
@@ -440,7 +475,11 @@ const playAudioQueue = async () => {
   isPlayingQueue = true
   isSpeaking.value = true
   
-  initAudioAnalyzer()
+  try {
+    await initAudioAnalyzer()
+  } catch (e) {
+    console.warn('音频上下文初始化失败，将使用降级播放:', e)
+  }
 
   while (audioQueue.length > 0) {
     const item = audioQueue.shift()
@@ -466,7 +505,8 @@ const playAudioQueue = async () => {
                 analyser.connect(audioContext.destination)
                 
                 audioSource.start(0)
-                updateLipSync()
+                if (lipSyncRafId) cancelAnimationFrame(lipSyncRafId)
+                lipSyncRafId = requestAnimationFrame(updateLipSync)
                 
                 const timeout = setTimeout(() => {
                   console.warn('音频播放超时，强制结束，是否最后一段:', isLastChunk)
@@ -524,6 +564,7 @@ const playAudioQueue = async () => {
         })
       } catch (fallbackError) {
         console.error('回退播放也失败:', fallbackError)
+        try { URL.revokeObjectURL(audioUrl) } catch (_) {}
       }
     }
   }
@@ -660,7 +701,7 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
               for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
               const blob = new Blob([bytes], { type: 'audio/wav' })
               const audioUrl = URL.createObjectURL(blob)
-              audioQueue.push(audioUrl)
+              audioQueue.push({ url: audioUrl, blob })
               playAudioQueue()
             } catch (e) {
               console.warn('解析流式音频失败:', e)
@@ -695,7 +736,7 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
             const blob = new Blob([bytes], { type: 'audio/wav' })
             const audioUrl = URL.createObjectURL(blob)
-            audioQueue.push(audioUrl)
+            audioQueue.push({ url: audioUrl, blob })
             playAudioQueue()
           } catch (_) {}
         }
@@ -928,7 +969,7 @@ const triggerSpeakingMotion = () => {
 
 .avatar-wrapper {
   width: 100%;
-  flex: 0 0 460px;
+  flex: 0 0 min(460px, 45vh);
   margin-bottom: 12px;
   border-radius: 12px;
   overflow: hidden;
@@ -1074,8 +1115,8 @@ const triggerSpeakingMotion = () => {
   }
   .avatar-wrapper {
     flex: 0 0 auto;
-    min-height: 280px;
-    height: 42vh;
+    min-height: 240px;
+    height: min(42vh, 360px);
     max-height: 50vh;
   }
   .textarea-input :deep(.el-textarea__inner) {
@@ -1086,6 +1127,49 @@ const triggerSpeakingMotion = () => {
   }
   .input-buttons {
     gap: 6px;
+  }
+  .input-buttons .el-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  .voice-guide {
+    padding: 4px;
+  }
+  .avatar-wrapper {
+    min-height: 200px;
+    height: min(38vh, 280px);
+  }
+  .textarea-input :deep(.el-textarea__inner) {
+    min-height: 60px;
+  }
+  .role-card {
+    margin-bottom: 8px;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  .voice-guide {
+    height: auto;
+    overflow: auto;
+    min-height: 100vh;
+  }
+  .avatar-wrapper {
+    flex: 0 0 auto;
+    min-height: 150px;
+    height: min(80vw, 220px);
+    max-height: 220px;
+  }
+  .role-card {
+    display: none;
+  }
+  .conversation-list {
+    max-height: 180px;
+  }
+  .main-row :deep(.el-row) {
+    flex-direction: row !important;
   }
 }
 </style>

@@ -72,23 +72,27 @@ async def upload_image(
     if len(content) > max_mb * 1024 * 1024:
         raise HTTPException(status_code=400, detail="图片大小不能超过 10MB")
 
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    allowed_exts = getattr(
-        settings,
-        "ADMIN_ALLOWED_IMAGE_EXTS",
-        [".png", ".jpg", ".jpeg", ".webp", ".gif"],
-    )
+    # 通过文件头魔数确定真实格式，防止伪造 content-type
+    _MAGIC = [
+        (b"\x89PNG\r\n\x1a\n", ".png"),
+        (b"\xff\xd8\xff", ".jpg"),
+        (b"GIF87a", ".gif"),
+        (b"GIF89a", ".gif"),
+        (b"RIFF", ".webp"),  # RIFF....WEBP
+    ]
+    ext = ""
+    for sig, candidate_ext in _MAGIC:
+        if content[:len(sig)] == sig:
+            if candidate_ext == ".webp" and content[8:12] != b"WEBP":
+                continue
+            ext = candidate_ext
+            break
+    if not ext:
+        raise HTTPException(status_code=400, detail="文件不是有效的图片（PNG/JPG/GIF/WebP）")
+
+    allowed_exts = getattr(settings, "ADMIN_ALLOWED_IMAGE_EXTS", [".png", ".jpg", ".jpeg", ".webp", ".gif"])
     if ext not in allowed_exts:
-        if file.content_type == "image/png":
-            ext = ".png"
-        elif file.content_type in ("image/jpg", "image/jpeg"):
-            ext = ".jpg"
-        elif file.content_type == "image/webp":
-            ext = ".webp"
-        elif file.content_type == "image/gif":
-            ext = ".gif"
-        else:
-            raise HTTPException(status_code=400, detail="不支持的图片格式")
+        raise HTTPException(status_code=400, detail="不支持的图片格式")
     uploads_root = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
     images_dir = os.path.join(uploads_root, "images")
     os.makedirs(images_dir, exist_ok=True)
@@ -523,7 +527,7 @@ async def list_scenic_spot_knowledge(
     rows = await prisma.knowledge.find_many(
         where={"scenicSpotId": scenic_spot_id},
         order={"id": "asc"},
-        take=10000,
+        take=500,
     )
     return [
         KnowledgeBaseItem(

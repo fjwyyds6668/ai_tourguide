@@ -5,6 +5,7 @@ import json
 import asyncio
 import os
 import time
+import threading
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
 from enum import Enum
@@ -144,9 +145,11 @@ class RAGService:
             "vector_hits": 0,
             "vector_misses": 0,
         }
-        self._init_embedding_model()
+        self._model_ready = threading.Event()  # RAG 请求到来时等待模型加载完毕
         self._init_ner()
         self._init_llm_client()
+        # 后台线程加载 embedding 模型，不阻塞服务器启动
+        threading.Thread(target=self._init_embedding_model, daemon=True).start()
 
     def _log_cache_stats_if_needed(self) -> None:
         every = max(1, int(CACHE_STATS_LOG_EVERY_N_CALLS))
@@ -328,12 +331,21 @@ class RAGService:
             return None
     
     def _init_embedding_model(self):
+        import os as _os
+        _os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        _os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        _proxy_keys = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                       "http_proxy", "https_proxy", "all_proxy")
+        _saved = {k: _os.environ.pop(k) for k in _proxy_keys if k in _os.environ}
         try:
             self.embedding_model = SentenceTransformer(RAG_EMBEDDING_MODEL_NAME)
             logger.info("Embedding model loaded: %s", RAG_EMBEDDING_MODEL_NAME)
         except Exception as e:
-            logger.error(f"Failed to load embedding model: {e}")
+            logger.error("Failed to load embedding model: %s", e)
             self.embedding_model = None
+        finally:
+            _os.environ.update(_saved)
+            self._model_ready.set()  # 无论成败都解除等待
     
     def _init_ner(self):
         if JIEBA_AVAILABLE:
@@ -346,12 +358,14 @@ class RAGService:
     def _init_llm_client(self):
         try:
             if settings.OPENAI_API_KEY:
-                import openai
+                import openai, httpx
                 client_kwargs = {"api_key": settings.OPENAI_API_KEY}
                 if settings.OPENAI_API_BASE:
                     client_kwargs["base_url"] = settings.OPENAI_API_BASE
-                
-                self.llm_client = openai.OpenAI(**client_kwargs)
+                self.llm_client = openai.OpenAI(
+                    http_client=httpx.Client(trust_env=False),
+                    **client_kwargs,
+                )
                 logger.info(f"LLM client initialized (base_url: {settings.OPENAI_API_BASE or 'default'})")
             else:
                 logger.warning("OpenAI API key not configured, LLM generation disabled")
@@ -402,6 +416,7 @@ class RAGService:
         return mapping.get(pos, 'KEYWORD')
     
     def generate_embedding(self, text: str) -> List[float]:
+        self._model_ready.wait()  # 后台线程尚未加载完时阻塞，通常几秒内完成
         if not self.embedding_model:
             raise ValueError("Embedding model not loaded")
 
@@ -423,6 +438,7 @@ class RAGService:
         return emb_list
 
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        self._model_ready.wait()
         if not self.embedding_model:
             raise ValueError("Embedding model not loaded")
         if not texts:

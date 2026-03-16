@@ -314,15 +314,17 @@ html, body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 8px 4px;
+  padding: 10px 4px;
+  min-height: 44px;
   color: #909399;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 13px;
   gap: 4px;
   -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
 }
 .bottom-nav .nav-item .el-icon {
-  font-size: 22px;
+  font-size: 24px;
 }
 .bottom-nav .nav-item.active {
   color: #409eff;

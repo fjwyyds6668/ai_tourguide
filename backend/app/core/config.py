@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     XFYUN_API_KEY: str = ""
     XFYUN_API_SECRET: str = ""
     XFYUN_VOICE: str = "x4_yezi"
+    XFYUN_TTS_TIMEOUT: int = 25  # 单句 TTS 合成超时（秒），弱网可适当调大
     SECRET_KEY: str = "dev-change-me"  # 生产环境必须通过环境变量覆盖
     ALGORITHM: str = "HS256"
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5522"]
