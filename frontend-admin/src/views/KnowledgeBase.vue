@@ -143,7 +143,7 @@
           <el-input v-model="scenicForm.location" placeholder="位置" />
         </el-form-item>
         <el-form-item label="简介" prop="description">
-          <el-input v-model="scenicForm.description" type="textarea" :rows="3" placeholder="简介" />
+          <el-input v-model="scenicForm.description" type="textarea" :rows="6" placeholder="简介" />
         </el-form-item>
         <el-form-item label="封面图片" prop="cover_image_url">
           <el-input-group>
