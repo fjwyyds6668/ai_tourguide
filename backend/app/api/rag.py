@@ -451,8 +451,8 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                                 except OSError:
                                     pass
                                 return
-                        except Exception:
-                            pass
+                        except Exception as _tts_err:
+                            logger.warning("TTS synthesis failed for chunk %d: %s", idx, _tts_err)
                         fallback_tts[idx] = original_txt.strip()
                         completed_audio[idx] = ""
                 finally:
@@ -525,6 +525,10 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                         if content == prev_content:
                             continue
                         if full_answer.endswith(content):
+                            prev_content = content
+                            continue
+                        # 防止短片段在最近生成文本中重复出现（如同一句话被多次追加）
+                        if len(content) >= 3 and content in full_answer[-80:]:
                             prev_content = content
                             continue
                         prev_content = content
@@ -614,9 +618,9 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                             try:
                                 with open(log_path, "r", encoding="utf-8") as f:
                                     lines = [ln for ln in f.readlines() if ln.strip()]
-                                if len(lines) > 5:
+                                if len(lines) > 20:
                                     with open(log_path, "w", encoding="utf-8") as f:
-                                        f.writelines(lines[-5:])
+                                        f.writelines(lines[-20:])
                             except Exception:
                                 pass
                         except Exception as e:

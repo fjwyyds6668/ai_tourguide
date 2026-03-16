@@ -46,7 +46,27 @@ async def lifespan(_app: FastAPI):
             except Exception as e:
                 _logger.warning("Session cleanup error: %s", e)
 
+    async def _warmup_llm() -> None:
+        """预热 LLM 连接，避免第一次问答因 TCP 握手导致延迟。"""
+        await asyncio.sleep(3)  # 等待 rag_service 初始化完成
+        try:
+            from app.services.rag_service import rag_service
+            if rag_service.llm_client is None:
+                return
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: rag_service.llm_client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=1,
+                ),
+            )
+            _logger.info("LLM connection warmed up")
+        except Exception as e:
+            _logger.warning("LLM warmup failed (non-critical): %s", e)
+
     task = asyncio.create_task(_cleanup_loop())
+    asyncio.create_task(_warmup_llm())
     yield
     task.cancel()
     try:

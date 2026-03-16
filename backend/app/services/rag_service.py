@@ -6,6 +6,7 @@ import asyncio
 import os
 import time
 import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
 from enum import Enum
@@ -133,10 +134,8 @@ class RAGService:
         self.embedding_model = None
         self.llm_client = None
         self._milvus_loaded_collections: set[str] = set()
-        self._embedding_cache: Dict[str, Tuple[List[float], float]] = {}
-        self._vector_search_cache: Dict[
-            Tuple[str, str, int], Tuple[List[Dict[str, Any]], float]
-        ] = {}
+        self._embedding_cache: OrderedDict = OrderedDict()
+        self._vector_search_cache: OrderedDict = OrderedDict()
         self._cache_stats: Dict[str, int] = {
             "embedding_calls": 0,
             "embedding_hits": 0,
@@ -184,22 +183,21 @@ class RAGService:
         if expires_at > 0 and _monotonic() >= expires_at:
             self._embedding_cache.pop(key, None)
             return None
+        # LRU：命中时移到队尾（最近使用）
+        self._embedding_cache.move_to_end(key)
         return payload
 
     def _cache_set_embedding(self, key: str, payload: List[float]) -> None:
         ttl = max(0, int(EMBEDDING_CACHE_TTL_SECONDS))
         expires_at = _monotonic() + ttl if ttl > 0 else 0.0
-        if len(self._embedding_cache) >= EMBEDDING_CACHE_MAX_SIZE:
-            try:
-                first_key = next(iter(self._embedding_cache))
-                self._embedding_cache.pop(first_key, None)
-            except StopIteration:
-                pass
+        if key in self._embedding_cache:
+            self._embedding_cache.move_to_end(key)
+        elif len(self._embedding_cache) >= EMBEDDING_CACHE_MAX_SIZE:
+            # LRU：驱逐队首（最久未使用）
+            self._embedding_cache.popitem(last=False)
         self._embedding_cache[key] = (payload, expires_at)
 
-    def _cache_get_vector(
-        self, key: Tuple[str, str, int]
-    ) -> Optional[List[Dict[str, Any]]]:
+    def _cache_get_vector(self, key) -> Optional[List[Dict[str, Any]]]:
         item = self._vector_search_cache.get(key)
         if not item:
             return None
@@ -207,19 +205,18 @@ class RAGService:
         if expires_at > 0 and _monotonic() >= expires_at:
             self._vector_search_cache.pop(key, None)
             return None
+        # LRU：命中时移到队尾
+        self._vector_search_cache.move_to_end(key)
         return payload
 
-    def _cache_set_vector(
-        self, key: Tuple[str, str, int], payload: List[Dict[str, Any]]
-    ) -> None:
+    def _cache_set_vector(self, key, payload: List[Dict[str, Any]]) -> None:
         ttl = max(0, int(VECTOR_SEARCH_CACHE_TTL_SECONDS))
         expires_at = _monotonic() + ttl if ttl > 0 else 0.0
-        if len(self._vector_search_cache) >= VECTOR_SEARCH_CACHE_MAX_SIZE:
-            try:
-                first_key = next(iter(self._vector_search_cache))
-                self._vector_search_cache.pop(first_key, None)
-            except StopIteration:
-                pass
+        if key in self._vector_search_cache:
+            self._vector_search_cache.move_to_end(key)
+        elif len(self._vector_search_cache) >= VECTOR_SEARCH_CACHE_MAX_SIZE:
+            # LRU：驱逐队首（最久未使用）
+            self._vector_search_cache.popitem(last=False)
         self._vector_search_cache[key] = (payload, expires_at)
 
     async def parse_scenic_text(self, text: str) -> Optional[Dict[str, Any]]:
@@ -485,7 +482,7 @@ class RAGService:
         if not query or not collection_name or top_k <= 0:
             return []
 
-        cache_key = (query, collection_name, top_k)
+        cache_key = (query.strip(), collection_name, top_k, RAG_EMBEDDING_MODEL_NAME)
         self._cache_stats["vector_calls"] = int(self._cache_stats.get("vector_calls", 0)) + 1
         cached = self._cache_get_vector(cache_key)
         if cached is not None:
@@ -826,7 +823,7 @@ class RAGService:
         names = []
         for e in entities:
             t = (e.get("text") or "").strip()
-            if not t or len(t) < 2 or len(t) > 10 or t in generic:
+            if not t or len(t) < 2 or len(t) > 15 or t in generic:
                 continue
             names.append(t)
         return names[:5]
@@ -1805,7 +1802,8 @@ class RAGService:
                         hits += 1
                     if bn and bn in content:
                         hits += 1
-            sgraph = min(1.0, hits / 3.0) if hits > 0 else 0.0
+            # 除数取 max(3, 实际关系对数×2)，避免关系多时分数被钳制在 1.0 失去区分度
+            sgraph = min(1.0, hits / max(3, len(rel_pairs) * 2)) if hits > 0 else 0.0
 
             sent = 0.0
             if content:

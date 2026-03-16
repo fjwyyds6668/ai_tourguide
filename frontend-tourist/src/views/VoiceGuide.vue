@@ -2,7 +2,7 @@
   <div class="voice-guide">
     <el-card class="section-card role-card">
       <template #header>
-        <span class="card-title">选择数字人角色</span>
+        <span class="card-title">请选择你喜欢的导游角色</span>
       </template>
       <el-radio-group v-model="selectedCharacterId" @change="handleCharacterChange" class="role-group">
         <el-radio-button

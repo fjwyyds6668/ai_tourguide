@@ -16,24 +16,15 @@
                 <el-button type="danger" :icon="Delete" :loading="loading">清空向量数据库</el-button>
               </template>
             </el-popconfirm>
-            <el-button type="primary" :icon="Plus" @click="openScenicModal(null)">新增景区</el-button>
-            <el-button :disabled="!selectedScenicId" @click="openScenicModal(selectedScenic)">编辑景区</el-button>
-            <el-popconfirm title="确定要删除当前景区吗？" confirm-button-text="删除" cancel-button-text="取消" @confirm="deleteScenic(false)">
-              <template #reference>
-                <el-button type="danger" :disabled="!selectedScenicId">删除景区</el-button>
-              </template>
-            </el-popconfirm>
-            <el-popconfirm title="确定要级联删除当前景区吗？会删除该景区下所有知识/景点" confirm-button-text="级联删除" cancel-button-text="取消" @confirm="deleteScenic(true)">
-              <template #reference>
-                <el-button type="danger" :disabled="!selectedScenicId">级联删除</el-button>
-              </template>
-            </el-popconfirm>
           </el-space>
         </div>
       </template>
       <div class="knowledge-layout">
         <div class="scenic-list">
-          <div class="list-title">景区列表</div>
+          <div class="list-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>景区列表</span>
+            <el-button type="primary" :icon="Plus" size="small" @click="openScenicModal(null)">添加景区</el-button>
+          </div>
           <el-scrollbar max-height="400">
             <div
               v-for="item in scenicSpots"
@@ -42,11 +33,23 @@
               :class="{ active: item.id === selectedScenicId }"
               @click="selectedScenicId = item.id"
             >
-              <div class="scenic-name">{{ item.name }}</div>
-              <div class="scenic-meta">知识 {{ item.knowledge_count }} / 景点 {{ item.attractions_count }}</div>
+              <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                  <div class="scenic-name">{{ item.name }}</div>
+                  <div class="scenic-meta">知识 {{ item.knowledge_count }} / 景点 {{ item.attractions_count }}</div>
+                </div>
+                <div class="scenic-actions" @click.stop>
+                  <el-button size="small" @click="openScenicModal(item)">编辑</el-button>
+                  <el-popconfirm title="级联删除该景区及所有知识/景点？" confirm-button-text="级联删除" cancel-button-text="取消" @confirm="deleteScenicById(item.id, true)">
+                    <template #reference>
+                      <el-button type="danger" size="small">级联删除</el-button>
+                    </template>
+                  </el-popconfirm>
+                </div>
+              </div>
             </div>
           </el-scrollbar>
-          <el-empty v-if="!scenicSpots.length && !loading" description="暂无景区，请点击「新增景区」添加" />
+          <el-empty v-if="!scenicSpots.length && !loading" description="暂无景区，请点击「添加景区」新增" />
         </div>
         <div class="content-area">
           <div class="current-title">{{ selectedScenic ? `当前景区：${selectedScenic.name}` : '请选择景区' }}</div>
@@ -62,8 +65,9 @@
                     <div class="text-cell">{{ row.text }}</div>
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="100">
+                <el-table-column label="操作" width="140">
                   <template #default="{ row }">
+                    <el-button type="primary" size="small" @click="openEditKnowledgeModal(row)">编辑</el-button>
                     <el-popconfirm title="确定要删除这条知识吗？" confirm-button-text="删除" cancel-button-text="取消" @confirm="deleteKnowledge(row)">
                       <template #reference>
                         <el-button type="danger" size="small">删除</el-button>
@@ -106,9 +110,15 @@
               >
                 <el-table-column type="selection" width="40" />
                 <el-table-column prop="id" label="ID" width="80" />
-                <el-table-column prop="name" label="名称" />
-                <el-table-column label="操作" width="100">
+                <el-table-column prop="name" label="名称" width="160" />
+                <el-table-column prop="description" label="描述" show-overflow-tooltip>
                   <template #default="{ row }">
+                    <div class="text-cell">{{ row.description || '—' }}</div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="140">
+                  <template #default="{ row }">
+                    <el-button type="primary" size="small" @click="openEditAttractionModal(row)">编辑</el-button>
                     <el-popconfirm title="确定要删除这个景点吗？" @confirm="deleteAttraction(row)">
                       <template #reference>
                         <el-button type="danger" size="small">删除</el-button>
@@ -164,7 +174,22 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="attractionVisible" title="添加景点" width="560px" :close-on-click-modal="false" @closed="attractionFormRef?.resetFields()">
+    <el-dialog v-model="editKnowledgeVisible" title="编辑知识" width="560px" :close-on-click-modal="false">
+      <el-form label-position="top">
+        <el-form-item label="知识ID">
+          <el-input :value="editKnowledgeForm.text_id" readonly />
+        </el-form-item>
+        <el-form-item label="知识内容" required>
+          <el-input v-model="editKnowledgeForm.text" type="textarea" :rows="8" placeholder="输入知识内容..." />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editKnowledgeVisible = false">取消</el-button>
+        <el-button type="primary" :loading="loading" @click="submitEditKnowledge">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="attractionVisible" :title="attractionEditing ? '编辑景点' : '添加景点'" width="560px" :close-on-click-modal="false" @closed="attractionFormRef?.resetFields()">
       <el-form ref="attractionFormRef" :model="attractionForm" :rules="attractionRules" label-position="top" @submit.prevent="submitAttraction">
         <el-form-item label="景点名称" prop="name" required>
           <el-input v-model="attractionForm.name" placeholder="景点名称" />
@@ -204,11 +229,14 @@ const coverInputRef = ref(null)
 const knowledgeVisible = ref(false)
 const knowledgeFormRef = ref(null)
 const knowledgeData = ref([])
+const editKnowledgeVisible = ref(false)
+const editKnowledgeForm = reactive({ text_id: '', text: '' })
 const attractionsData = ref([])
 const selectedAttractionRows = ref([])
 const attractionVisible = ref(false)
 const attractionFormRef = ref(null)
 const attractionImageRef = ref(null)
+const attractionEditing = ref(null)
 
 const scenicForm = reactive({
   name: '',
@@ -358,12 +386,12 @@ const submitScenic = async () => {
   }
 }
 
-const deleteScenic = async (cascade) => {
-  if (!selectedScenicId.value) return
+const deleteScenicById = async (id, cascade) => {
   loading.value = true
   try {
-    await api.delete(`/admin/scenic-spots/${selectedScenicId.value}`, { params: { cascade } })
+    await api.delete(`/admin/scenic-spots/${id}`, { params: { cascade } })
     ElMessage.success(cascade ? '已级联删除' : '删除成功')
+    if (selectedScenicId.value === id) selectedScenicId.value = null
     await loadScenicSpots(null)
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '删除失败')
@@ -405,6 +433,34 @@ const submitKnowledge = async () => {
   }
 }
 
+const openEditKnowledgeModal = (row) => {
+  editKnowledgeForm.text_id = row.text_id
+  editKnowledgeForm.text = row.text
+  editKnowledgeVisible.value = true
+}
+
+const submitEditKnowledge = async () => {
+  if (!editKnowledgeForm.text.trim()) {
+    ElMessage.error('请输入知识内容')
+    return
+  }
+  loading.value = true
+  try {
+    await api.put(
+      `/admin/knowledge/${encodeURIComponent(editKnowledgeForm.text_id)}`,
+      { text_id: editKnowledgeForm.text_id, text: editKnowledgeForm.text, metadata: {} },
+      { timeout: 120000 }
+    )
+    ElMessage.success('更新成功')
+    editKnowledgeVisible.value = false
+    loadScenicKnowledge(selectedScenicId.value)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '更新失败')
+  } finally {
+    loading.value = false
+  }
+}
+
 const deleteKnowledge = async (row) => {
   loading.value = true
   try {
@@ -419,9 +475,18 @@ const deleteKnowledge = async (row) => {
 }
 
 const openAttractionModal = () => {
+  attractionEditing.value = null
   attractionForm.name = ''
   attractionForm.description = ''
   attractionForm.image_url = ''
+  attractionVisible.value = true
+}
+
+const openEditAttractionModal = (row) => {
+  attractionEditing.value = row
+  attractionForm.name = row.name || ''
+  attractionForm.description = row.description || ''
+  attractionForm.image_url = row.image_url || ''
   attractionVisible.value = true
 }
 
@@ -448,12 +513,17 @@ const submitAttraction = async () => {
   }
   loading.value = true
   try {
-    await api.post(`/admin/scenic-spots/${selectedScenicId.value}/attractions`, attractionForm)
-    ElMessage.success('创建成功')
+    if (attractionEditing.value) {
+      await api.put(`/admin/attractions/${attractionEditing.value.id}`, attractionForm)
+      ElMessage.success('更新成功')
+    } else {
+      await api.post(`/admin/scenic-spots/${selectedScenicId.value}/attractions`, attractionForm)
+      ElMessage.success('创建成功')
+    }
     attractionVisible.value = false
     loadScenicAttractions(selectedScenicId.value)
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '创建失败')
+    ElMessage.error(e.response?.data?.detail || (attractionEditing.value ? '更新失败' : '创建失败'))
   } finally {
     loading.value = false
   }
@@ -538,6 +608,12 @@ onMounted(() => {
 }
 .scenic-name {
   font-weight: 600;
+}
+.scenic-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 8px;
 }
 .scenic-meta {
   font-size: 12px;
