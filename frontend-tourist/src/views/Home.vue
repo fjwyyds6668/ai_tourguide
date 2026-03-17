@@ -138,6 +138,12 @@ const navigateIfSelected = (path) => {
     ElMessage.error('请先选择您所在的景区')
     return
   }
+  // 每次从首页进入均视为新访客，清除上一次的会话数据
+  try {
+    sessionStorage.removeItem('vg_chat_history')
+    sessionStorage.removeItem('vg_session_id')
+    localStorage.removeItem('tourguide_session_ids')
+  } catch (_) {}
   router.push(path)
 }
 </script>

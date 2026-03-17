@@ -33,7 +33,16 @@ from app.api import router
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """启动时开启会话清理后台任务，关闭时取消。"""
+    """启动时建表、开启会话清理后台任务，关闭时取消。"""
+    # 自动创建 SQLAlchemy 管理的表（若已存在则跳过）
+    try:
+        from app.core.database import engine, Base
+        from app.models import Attraction, User, Interaction  # noqa: F401 — 注册模型
+        Base.metadata.create_all(bind=engine)
+        _logger.info("Database tables ensured.")
+    except Exception as _e:
+        _logger.error("Failed to create database tables: %s", _e)
+
     from app.services.session_service import session_service
 
     async def _cleanup_loop() -> None:

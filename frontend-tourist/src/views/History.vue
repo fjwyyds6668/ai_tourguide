@@ -92,8 +92,23 @@ const loadHistory = async () => {
       )
     )
 
-    // 合并、去重、按时间降序排列
-    const merged = results.flat()
+    let merged = results.flat()
+
+    // 回退：若 session_id 过滤无结果，加载全部记录（兜底）
+    if (merged.length === 0) {
+      const fallback = await api.get('/history/history', {
+        params: { only_qa: true, skip: 0, limit: 200 }
+      }).then(res => res.data?.data ?? res.data ?? []).catch(() => [])
+      merged = fallback
+    }
+
+    // 合并、去重（按 id）、按时间降序排列
+    const seen = new Set()
+    merged = merged.filter(r => {
+      if (seen.has(r.id)) return false
+      seen.add(r.id)
+      return true
+    })
     merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 
     total.value = merged.length

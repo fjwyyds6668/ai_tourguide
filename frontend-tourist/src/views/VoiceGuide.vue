@@ -123,6 +123,26 @@ const inputFocused = ref(false)
 const conversationListRef = ref(null)
 let scrollRaf = 0
 
+// ── sessionStorage 持久化（页面切换不丢失对话）──
+const SESSION_CHAT_KEY = 'vg_chat_history'
+const SESSION_ID_KEY = 'vg_session_id'
+
+const saveToSession = () => {
+  try {
+    sessionStorage.setItem(SESSION_CHAT_KEY, JSON.stringify(conversationHistory.value))
+    if (sessionId.value) sessionStorage.setItem(SESSION_ID_KEY, sessionId.value)
+  } catch (_) {}
+}
+
+const restoreFromSession = () => {
+  try {
+    const chat = sessionStorage.getItem(SESSION_CHAT_KEY)
+    if (chat) conversationHistory.value = JSON.parse(chat)
+    const sid = sessionStorage.getItem(SESSION_ID_KEY)
+    if (sid) sessionId.value = sid
+  } catch (_) {}
+}
+
 let mediaRecorder = null
 let audioChunks = []
 
@@ -143,6 +163,8 @@ onMounted(async () => {
     previousBodyOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
   }
+  // 恢复上次对话记录
+  restoreFromSession()
   await loadCharacters()
   if (characters.value.length > 0) {
     selectedCharacterId.value = characters.value[0].id
@@ -164,20 +186,11 @@ onUnmounted(() => {
   if (typeof document !== 'undefined') {
     document.body.style.overflow = previousBodyOverflow || ''
   }
+  // 只停止口型同步动画，不中止音频播放（切换页面时继续播放）
   if (lipSyncRafId) {
     cancelAnimationFrame(lipSyncRafId)
     lipSyncRafId = 0
   }
-  ttsSessionId = 0
-  audioQueue.forEach(item => {
-    try {
-      const url = item?.url || (typeof item === 'string' ? item : null)
-      if (url) URL.revokeObjectURL(url)
-    } catch (_) {}
-  })
-  audioQueue.length = 0
-  try { ragStreamAbortController?.abort() } catch (_) {}
-  try { ttsAbortController?.abort() } catch (_) {}
   try {
     Live2dManager.getInstance().setLipFactor(0)
   } catch (_) {}
@@ -382,6 +395,7 @@ const addMessage = (role, content) => {
   if (conversationHistory.value.length > MAX_HISTORY_LENGTH) {
     conversationHistory.value = conversationHistory.value.slice(-MAX_HISTORY_LENGTH)
   }
+  saveToSession()
 }
 
 let audioContext = null
@@ -666,13 +680,14 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
           const content = data.content
           if (type === 'session_id' && content) {
             sessionId.value = content
-            // 保存 session_id 到 localStorage，用于历史记录按用户过滤
+            // 保存 session_id 到 localStorage（历史记录过滤）和 sessionStorage（页面切换恢复）
             try {
               const savedIds = JSON.parse(localStorage.getItem('tourguide_session_ids') || '[]')
               if (!savedIds.includes(content)) {
                 savedIds.push(content)
                 localStorage.setItem('tourguide_session_ids', JSON.stringify(savedIds))
               }
+              sessionStorage.setItem(SESSION_ID_KEY, content)
             } catch (_) {}
           } else if (type === 'text' && content && msgRef) {
             pendingText += content
@@ -698,6 +713,7 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
               pendingText = ''
             }
             if (msgRef && content) msgRef.content = content
+            saveToSession()
             scrollToBottom()
           } else if (type === 'error' && content) {
             ElMessage.error(content)
@@ -735,6 +751,10 @@ const streamGenerateAndSpeak = async (queryText, characterId) => {
     }
     scrollToBottom()
   } catch (err) {
+    if (err?.name === 'AbortError' || err?.message?.includes('aborted')) {
+      // 用户主动中止，静默处理
+      return
+    }
     if (msgRef) msgRef.content = (msgRef.content || '') + '\n[ 生成出错：' + (err.message || '未知错误') + ' ]'
     scrollToBottom()
     throw err
@@ -1108,46 +1128,49 @@ const triggerSpeakingMotion = () => {
 .input-area {
   flex-shrink: 0;
   padding: 10px 12px 12px;
-  border-top: 1px solid rgba(0,0,0,0.06);
-  background: rgba(255, 255, 255, 0.80);
+  border-top: 1px solid rgba(255,255,255,0.4);
+  background: transparent;
 }
 
 .textarea-wrapper {
-  border: 1.5px solid #dcdfe6;
+  position: relative;
+  border: 1.5px solid rgba(255,255,255,0.65);
   border-radius: 12px;
   overflow: hidden;
   transition: border-color 0.2s, box-shadow 0.2s;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(16px) saturate(1.8);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
 }
 
 .textarea-wrapper.focused {
   border-color: #409eff;
-  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.1);
+  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.15);
 }
 
 .chat-input :deep(.el-textarea__inner) {
   border: none;
   box-shadow: none;
   resize: none;
-  padding: 10px 12px 6px;
+  padding: 10px 12px 48px;
   font-size: 14px;
-  color: #303133;
+  color: #1a1a1a;
   line-height: 1.6;
   background: transparent;
 }
 
 .chat-input :deep(.el-textarea__inner::placeholder) {
-  color: #909399;
+  color: #606266;
 }
 
 .input-buttons {
+  position: absolute;
+  bottom: 8px;
+  right: 10px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
-  padding: 6px 10px 8px;
-  background: rgba(255, 255, 255, 0.60);
-  border-top: 1px solid rgba(255,255,255,0.4);
+  background: transparent;
 }
 
 /* ── Responsive ── */

@@ -64,7 +64,7 @@ async def _resolve_attraction_names(attraction_ids: List[int]) -> dict[int, str]
 async def get_interaction_history(
     session_id: Optional[str] = Query(None, description="会话ID"),
     only_qa: bool = Query(False, description="仅返回问答记录（有问题/回答或交互类型为 text_query/voice_query）"),
-    limit: int = Query(5, ge=1, le=100, description="返回数量限制，默认最近5条"),
+    limit: int = Query(5, ge=1, le=500, description="返回数量限制，默认最近5条"),
     skip: int = Query(0, ge=0, description="跳过数量"),
     db: Session = Depends(get_db)
 ):

@@ -370,7 +370,9 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
 
 请基于以上信息回答用户的问题。"""
         messages.append({"role": "user", "content": user_prompt})
-        
+
+        full_answer = ""
+        _interaction_saved = False
         try:
             stream = rag_service.llm_client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
@@ -379,8 +381,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 max_tokens=1000,
                 stream=True
             )
-            
-            full_answer = ""
+
             prev_content: str = ""
             accumulated_text = ""
             completed_audio: Dict[int, str] = {}
@@ -665,7 +666,8 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                     "voice_query",
                 ),
             )
-            
+            _interaction_saved = True
+
             wait_start = time.monotonic()
             while next_audio_idx < tts_chunk_index[0] or completed_audio:
                 if time.monotonic() - wait_start > 60:
@@ -682,6 +684,23 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 stream_future.cancel()
             logger.error(f"Stream generation failed: {e}")
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
-    
+        finally:
+            # 客户端提前断连（导航切页）时，生成器会被取消，此处确保记录仍被保存
+            if not _interaction_saved and full_answer.strip():
+                try:
+                    session_service.add_message(session_id, "user", request.query)
+                    session_service.add_message(session_id, "assistant", full_answer)
+                    _save_interaction(
+                        session_id,
+                        request.character_id,
+                        request.query,
+                        full_answer,
+                        primary_attraction_id,
+                        request.scenic_name,
+                        "voice_query",
+                    )
+                except Exception as fe:
+                    logger.error("Failed to save interaction in finally: %s", fe)
+
     return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
