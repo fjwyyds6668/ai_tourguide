@@ -18,8 +18,31 @@
         </el-input>
       </div>
       
-      <div v-loading="loading" class="attractions-body">
-        <el-row v-if="pagedAttractions.length > 0" :gutter="20">
+      <div class="attractions-body">
+        <!-- 骨架屏：加载中 -->
+        <el-row v-if="loading" :gutter="20">
+          <el-col
+            :xs="24" :sm="12" :md="8"
+            v-for="n in pageSize" :key="'sk-' + n"
+            class="attraction-col"
+          >
+            <el-card class="attraction-card skeleton-card">
+              <el-skeleton animated>
+                <template #template>
+                  <el-skeleton-item variant="image" style="width:100%;height:200px;border-radius:4px" />
+                  <div style="padding:8px 0 4px">
+                    <el-skeleton-item variant="h3" style="width:60%" />
+                    <el-skeleton-item variant="text" style="margin-top:8px" />
+                    <el-skeleton-item variant="text" style="width:80%" />
+                  </div>
+                </template>
+              </el-skeleton>
+            </el-card>
+          </el-col>
+        </el-row>
+
+        <!-- 正常展示 -->
+        <el-row v-else-if="pagedAttractions.length > 0" :gutter="20">
           <el-col
             :xs="24"
             :sm="12"
@@ -30,11 +53,12 @@
           >
             <el-card shadow="hover" class="attraction-card" @click="viewDetails(attraction)">
               <img
-                v-if="attraction.image_url"
+                v-if="attraction.image_url && !failedImages.has(attraction.id)"
                 :src="imageSrc(attraction.image_url)"
                 class="attraction-image"
                 alt="景点图片"
                 loading="lazy"
+                @error="failedImages.add(attraction.id)"
               />
               <div v-else class="placeholder-image">
                 <el-icon :size="48"><Picture /></el-icon>
@@ -46,7 +70,7 @@
           </el-col>
         </el-row>
         <el-empty
-          v-else-if="!loading"
+          v-else
           :description="selectedScenicId ? '该景区暂无景点' : '请先选择景区'"
           style="padding: 40px 0"
         />
@@ -90,7 +114,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Picture } from '@element-plus/icons-vue'
 import api from '../api'
@@ -100,6 +124,7 @@ const scenicSpots = ref([])
 const selectedScenicId = ref(null)
 const loading = ref(false)
 const searchText = ref('')
+const failedImages = reactive(new Set())
 const searchKeyword = ref('')
 let searchDebounceTimer = null
 watch(searchText, (val) => {
@@ -220,6 +245,7 @@ onMounted(async () => {
 watch(selectedScenicId, async (id) => {
   if (!id) return
   localStorage.setItem('current_scenic_spot_id', String(id))
+  failedImages.clear()
   await fetchAttractions()
 })
 </script>
@@ -232,17 +258,24 @@ watch(selectedScenicId, async (id) => {
 }
 
 .page-card {
+  --el-card-bg-color: rgba(255, 255, 255, 0.45);
   border-radius: 12px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(18px) saturate(1.8);
+  -webkit-backdrop-filter: blur(18px) saturate(1.8);
+  border: 1px solid rgba(255, 255, 255, 0.60) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
 }
 .page-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
 }
-
+.page-card :deep(.el-card__body) {
+  background: transparent !important;
+}
 .page-card :deep(.el-card__header) {
   padding: 14px 20px;
   font-weight: 600;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+  background: transparent !important;
 }
 
 .search-row {
@@ -253,6 +286,17 @@ watch(selectedScenicId, async (id) => {
 
 .search-input {
   width: 300px;
+}
+.search-row :deep(.el-input__wrapper) {
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: none !important;
+}
+.search-row :deep(.el-input__wrapper:hover),
+.search-row :deep(.el-input__wrapper.is-focus) {
+  background: rgba(255, 255, 255, 0.60);
 }
 @media (max-width: 768px) {
   .attractions {
@@ -268,7 +312,8 @@ watch(selectedScenicId, async (id) => {
 
 .card-title {
   font-size: 16px;
-  color: #303133;
+  color: #1a1a1a;
+  font-weight: 700;
 }
 
 .attractions-body {
@@ -285,15 +330,31 @@ watch(selectedScenicId, async (id) => {
 }
 
 .attraction-card {
-  border-radius: 8px;
+  --el-card-bg-color: rgba(255, 255, 255, 0.48);
+  border-radius: 10px;
   cursor: pointer;
-  transition: transform 0.12s ease;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  backdrop-filter: blur(12px) saturate(1.6);
+  -webkit-backdrop-filter: blur(12px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
+}
+.attraction-card :deep(.el-card__body) {
+  background: transparent !important;
+}
+.attraction-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.15);
+  --el-card-bg-color: rgba(255, 255, 255, 0.60);
+}
+.skeleton-card {
+  cursor: default;
+  pointer-events: none;
+}
+.skeleton-card:hover {
+  transform: none !important;
+  box-shadow: none !important;
 }
 
-.attraction-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
 @media (prefers-reduced-motion: reduce) {
   .attraction-card { transition: none; }
   .attraction-card:hover { transform: none; }
@@ -312,7 +373,7 @@ watch(selectedScenicId, async (id) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f5f7fa;
+  background: rgba(255, 255, 255, 0.3);
   border-radius: 4px;
 }
 

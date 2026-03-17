@@ -36,8 +36,13 @@
           </div>
 
           <template v-for="(msg, index) in conversationHistory" :key="`${msg.timestamp}-${index}`">
+            <!-- System hint: centered warning -->
+            <div v-if="msg.role === 'system'" class="message-row system-row">
+              <div class="system-bubble">{{ msg.content }}</div>
+            </div>
+
             <!-- User message: right-aligned -->
-            <div v-if="msg.role === 'user'" class="message-row user-row">
+            <div v-else-if="msg.role === 'user'" class="message-row user-row">
               <div class="bubble user-bubble">
                 <div class="bubble-text">{{ msg.content }}</div>
                 <div class="bubble-time">{{ formatTime(msg.timestamp) }}</div>
@@ -51,6 +56,12 @@
               <div class="bubble ai-bubble">
                 <div class="bubble-text">{{ msg.content }}<span v-if="msg.content === '' && index === conversationHistory.length - 1" class="typing-cursor">|</span></div>
                 <div class="bubble-time">{{ formatTime(msg.timestamp) }}</div>
+                <button
+                  v-if="isSpeaking && index === conversationHistory.length - 1"
+                  class="stop-speak-btn"
+                  @click="stopSpeaking"
+                  title="停止播报"
+                ><svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/></svg></button>
               </div>
             </div>
           </template>
@@ -80,13 +91,7 @@
                 size="default"
                 :title="isRecording ? '停止录音' : '开始录音'"
               />
-              <el-button
-                v-if="isSpeaking"
-                @click="stopSpeaking"
-                size="default"
-                plain
-              >停止播报</el-button>
-              <el-button
+<el-button
                 type="primary"
                 @click="handleSendText"
                 :disabled="!textInput.trim() || processing"
@@ -159,7 +164,7 @@ const currentScenic = ref(null)
 let previousBodyOverflow = ''
 
 onMounted(async () => {
-  if (typeof document !== 'undefined') {
+  if (typeof document !== 'undefined' && window.innerWidth > 768) {
     previousBodyOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
   }
@@ -183,7 +188,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (typeof document !== 'undefined') {
+  if (typeof document !== 'undefined' && window.innerWidth > 768) {
     document.body.style.overflow = previousBodyOverflow || ''
   }
   // 只停止口型同步动画，不中止音频播放（切换页面时继续播放）
@@ -277,7 +282,17 @@ const processAudio = async (audioBlob) => {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
 
-    const queryText = transcribeRes.data.text
+    const queryText = (transcribeRes.data.text || '').trim()
+
+    if (!queryText) {
+      conversationHistory.value.push({
+        role: 'system',
+        content: '抱歉，您刚才似乎没有讲话，请重新讲一遍。',
+        timestamp: new Date().toISOString()
+      })
+      scrollToBottom()
+      return
+    }
 
     addMessage('user', queryText)
     scrollToBottom()
@@ -615,6 +630,9 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
 }
 
 const streamGenerateAndSpeak = async (queryText, characterId) => {
+  // 如果有旧音频正在播放，先停止
+  if (isSpeaking.value) stopSpeaking()
+
   const msgIndex = conversationHistory.value.length
   conversationHistory.value.push({
     role: 'assistant',
@@ -1111,12 +1129,65 @@ const triggerSpeakingMotion = () => {
   text-align: left;
 }
 
+/* System hint bubble */
+.system-row {
+  justify-content: center;
+}
+.system-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 20px;
+  background: rgba(255, 186, 73, 0.15);
+  border: 1px solid rgba(255, 186, 73, 0.45);
+  color: #b45309;
+  font-size: 13px;
+  backdrop-filter: blur(6px);
+  max-width: 88%;
+  text-align: center;
+  line-height: 1.5;
+}
+
 /* Typing cursor animation */
 .typing-cursor {
   display: inline-block;
   animation: blink 0.8s step-end infinite;
   color: #409eff;
   font-weight: 700;
+}
+
+.stop-speak-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  margin-left: auto;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border: 1px solid rgba(245, 108, 108, 0.45);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.6);
+  color: #f56c6c;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background 0.15s, transform 0.1s;
+  box-shadow: 0 1px 4px rgba(245, 108, 108, 0.15);
+  /* 扩大手机触控区 */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.stop-speak-btn:hover {
+  background: rgba(245, 108, 108, 0.15);
+  transform: scale(1.08);
+}
+@media (max-width: 768px) {
+  .stop-speak-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+  }
 }
 
 @keyframes blink {
@@ -1178,7 +1249,7 @@ const triggerSpeakingMotion = () => {
   .voice-guide {
     padding: 8px;
     height: auto;
-    min-height: calc(100vh - 16px);
+    min-height: 100svh;
     overflow: visible;
   }
 
@@ -1190,7 +1261,7 @@ const triggerSpeakingMotion = () => {
 
   .avatar-panel {
     flex: none;
-    height: min(42vh, 340px);
+    height: min(38vh, 300px);
   }
 
   .avatar-wrapper {
@@ -1198,11 +1269,15 @@ const triggerSpeakingMotion = () => {
   }
 
   .chat-panel {
-    min-height: 420px;
+    min-height: 360px;
   }
 
   .chat-messages {
-    max-height: 50vh;
+    max-height: 45vh;
+  }
+
+  .bubble-text {
+    font-size: 15px;
   }
 }
 

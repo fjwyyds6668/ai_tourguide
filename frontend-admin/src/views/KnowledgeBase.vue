@@ -134,7 +134,7 @@
       </div>
     </el-card>
 
-    <el-dialog v-model="scenicVisible" :title="scenicEditing ? '编辑景区' : '新增景区'" width="560px" :close-on-click-modal="false" @closed="scenicFormRef?.resetFields()">
+    <el-dialog v-model="scenicVisible" :title="scenicEditing ? '编辑景区' : '新增景区'" width="560px" :close-on-click-modal="false" append-to-body @closed="scenicFormRef?.resetFields()">
       <el-form ref="scenicFormRef" :model="scenicForm" label-position="top" @submit.prevent="submitScenic">
         <el-form-item label="景区名称" prop="name" required>
           <el-input v-model="scenicForm.name" placeholder="景区名称" />
@@ -159,7 +159,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="knowledgeVisible" title="添加景区知识" width="560px" :close-on-click-modal="false" @closed="knowledgeFormRef?.resetFields()">
+    <el-dialog v-model="knowledgeVisible" title="添加景区知识" width="560px" :close-on-click-modal="false" append-to-body @closed="knowledgeFormRef?.resetFields()">
       <el-form ref="knowledgeFormRef" :model="knowledgeForm" :rules="knowledgeRules" label-position="top" @submit.prevent="submitKnowledge">
         <el-form-item label="知识ID" prop="text_id">
           <el-input v-model="knowledgeForm.text_id" placeholder="留空自动生成" />
@@ -174,7 +174,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editKnowledgeVisible" title="编辑知识" width="560px" :close-on-click-modal="false">
+    <el-dialog v-model="editKnowledgeVisible" title="编辑知识" width="560px" :close-on-click-modal="false" append-to-body>
       <el-form label-position="top">
         <el-form-item label="知识ID">
           <el-input :value="editKnowledgeForm.text_id" readonly />
@@ -189,7 +189,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="attractionVisible" :title="attractionEditing ? '编辑景点' : '添加景点'" width="560px" :close-on-click-modal="false" @closed="attractionFormRef?.resetFields()">
+    <el-dialog v-model="attractionVisible" :title="attractionEditing ? '编辑景点' : '添加景点'" width="560px" :close-on-click-modal="false" append-to-body @closed="attractionFormRef?.resetFields()">
       <el-form ref="attractionFormRef" :model="attractionForm" :rules="attractionRules" label-position="top" @submit.prevent="submitAttraction">
         <el-form-item label="景点名称" prop="name" required>
           <el-input v-model="attractionForm.name" placeholder="景点名称" />

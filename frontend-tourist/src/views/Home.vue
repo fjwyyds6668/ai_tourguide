@@ -110,8 +110,11 @@ onMounted(async () => {
     import(/* webpackChunkName: "voice-guide" */ './VoiceGuide.vue').catch(() => {})
     import(/* webpackChunkName: "attractions" */ './Attractions.vue').catch(() => {})
     import(/* webpackChunkName: "history" */ './History.vue').catch(() => {})
+    // 预请求数字人模型主体（最大的文件），进入语音导览时从缓存读取，加快显示
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
-    fetch(`${origin}/sentio/characters/free/Mao/Mao.model3.json`).catch(() => {})
+    const base = `${origin}/sentio/characters/free/Mao/`
+    fetch(`${base}Mao.moc3`).catch(() => {})
+    fetch(`${base}Mao.physics3.json`).catch(() => {})
   }
   if (typeof requestIdleCallback !== 'undefined') {
     requestIdleCallback(prefetch, { timeout: 150 })

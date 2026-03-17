@@ -15,7 +15,6 @@
             :data="historyList"
             v-loading="loading"
             style="width: 100%; min-width: 600px"
-            stripe
             :row-key="(row) => row.id"
           >
             <el-table-column prop="id" label="ID" width="80" />
@@ -36,17 +35,6 @@
           </el-table>
         </div>
 
-        <div class="pagination-wrap">
-          <el-pagination
-            v-model:current-page="currentPage"
-            v-model:page-size="pageSize"
-            :total="total"
-            :page-sizes="[5, 10, 20, 50, 100]"
-            layout="total, sizes, prev, pager, next, jumper"
-            @size-change="loadHistory"
-            @current-change="loadHistory"
-          />
-        </div>
       </template>
     </el-card>
   </div>
@@ -60,9 +48,6 @@ import { formatTime } from '../utils/format'
 
 const historyList = ref([])
 const loading = ref(false)
-const currentPage = ref(1)
-const pageSize = ref(5)
-const total = ref(0)
 
 // 从 localStorage 读取当前用户的 session IDs
 const getUserSessionIds = () => {
@@ -111,9 +96,7 @@ const loadHistory = async () => {
     })
     merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 
-    total.value = merged.length
-    const start = (currentPage.value - 1) * pageSize.value
-    historyList.value = merged.slice(start, start + pageSize.value)
+    historyList.value = merged
   } catch (error) {
     ElMessage.error('加载对话记录失败')
     console.error(error)
@@ -143,20 +126,41 @@ onMounted(() => {
 .history-page :deep(.el-table__cell),
 .history-page :deep(.el-table__cell .cell),
 .history-page :deep(.el-card__header),
-.history-page :deep(.el-card__body),
-.history-page :deep(.el-pagination),
-.history-page :deep(.el-pagination__total),
-.history-page :deep(.el-pagination__sizes),
-.history-page :deep(.el-pagination__jump) {
+.history-page :deep(.el-card__body) {
   color: var(--rag-black);
+}
+
+/* 表格背景透明，让毛玻璃卡片背景透出 */
+.history-page :deep(.el-table),
+.history-page :deep(.el-table__inner-wrapper),
+.history-page :deep(.el-table__header-wrapper),
+.history-page :deep(.el-table__body-wrapper),
+.history-page :deep(tr),
+.history-page :deep(th.el-table__cell),
+.history-page :deep(td.el-table__cell) {
+  background: transparent !important;
+}
+.history-page :deep(.el-table__row:hover > td) {
+  background: rgba(255, 255, 255, 0.35) !important;
+}
+.history-page :deep(.el-table__border-left-patch),
+.history-page :deep(.el-table__border-bottom-patch) {
+  background: transparent !important;
 }
 
 .page-card {
   border-radius: 12px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.55) !important;
+  backdrop-filter: blur(16px) saturate(1.8);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10);
 }
 .page-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.13);
+}
+.page-card :deep(.el-card__body) {
+  background: transparent !important;
 }
 .history-page :deep(.el-table__row) {
   transition: background-color 0.1s ease;
@@ -168,7 +172,8 @@ onMounted(() => {
 .page-card :deep(.el-card__header) {
   padding: 14px 20px;
   font-weight: 600;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.4);
+  background: transparent !important;
 }
 
 .card-title {
@@ -187,13 +192,6 @@ onMounted(() => {
   line-height: 1.5;
 }
 
-.pagination-wrap {
-  margin-top: 20px;
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-}
 
 .no-session-tip {
   padding: 40px 0;

@@ -5,6 +5,7 @@ import path from 'path'
 export default defineConfig({
   plugins: [vue()],
   build: {
+    target: 'esnext',
     rollupOptions: {
       output: {
         manualChunks: {

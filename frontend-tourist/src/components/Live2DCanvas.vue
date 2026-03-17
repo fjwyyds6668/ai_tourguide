@@ -74,15 +74,17 @@ function ensureLive2DCore() {
     const src = `${origin}/sentio/core/live2dcubismcore.min.js`
     const existing = document.querySelector('script[src*="live2dcubismcore.min.js"]')
     if (existing) {
-      const done = () => resolve()
-      if (window.Live2DCubismCore) {
-        done()
-        return
-      }
-      existing.addEventListener('load', done)
-      setTimeout(() => {
-        if (window.Live2DCubismCore) done()
+      if (window.Live2DCubismCore) { resolve(); return }
+      // defer 脚本可能已下载完但 load 事件已过，用轮询兜底（最多 10s）
+      let elapsed = 0
+      const poll = setInterval(() => {
+        elapsed += 50
+        if (window.Live2DCubismCore || elapsed >= 10000) {
+          clearInterval(poll)
+          resolve()
+        }
       }, 50)
+      existing.addEventListener('load', () => { clearInterval(poll); resolve() })
       return
     }
     const script = document.createElement('script')
@@ -99,8 +101,9 @@ let resizeObserver = null
 const isMobileDevice = () => /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent)
 
 function applyDPR(canvas) {
-  // 按设备像素比设置 canvas 物理尺寸，避免高分屏（Retina/AMOLED）模糊
-  const dpr = Math.min(window.devicePixelRatio || 1, 2) // 超过 2x 收益递减
+  // 手机端限制 1.5x，桌面端限制 2x，降低 WebGL 渲染压力加快显示
+  const maxDPR = isMobileDevice() ? 1.5 : 2
+  const dpr = Math.min(window.devicePixelRatio || 1, maxDPR)
   const w = canvas.clientWidth || canvas.offsetWidth || 0
   const h = canvas.clientHeight || canvas.offsetHeight || 0
   if (w > 0 && h > 0) {

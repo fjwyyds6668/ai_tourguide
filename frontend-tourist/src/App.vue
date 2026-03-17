@@ -120,20 +120,20 @@ const resolveUrl = (url) => {
   return `${backendOrigin}${url}`
 }
 
+// 用景区列表接口（体积远小于景点列表）取封面图
 let lastLoadedScenicId = null
+let _scenicSpotsCache = null
 const loadScenicBackground = async () => {
   try {
     const savedId = localStorage.getItem('current_scenic_spot_id')
     if (!savedId || savedId === lastLoadedScenicId) return
     lastLoadedScenicId = savedId
-    const res = await api.get('/attractions', { params: { scenic_spot_id: savedId } })
-    const list = (res.data || []).filter(a => a.image_url)
-    if (list.length === 0) {
-      scenicBgImage.value = ''
-      return
+    if (!_scenicSpotsCache) {
+      const res = await api.get('/attractions/scenic-spots')
+      _scenicSpotsCache = res.data || []
     }
-    const random = list[Math.floor(Math.random() * list.length)]
-    scenicBgImage.value = resolveUrl(random.image_url)
+    const spot = _scenicSpotsCache.find(s => String(s.id) === savedId)
+    scenicBgImage.value = resolveUrl(spot?.cover_image_url || '')
   } catch (e) {
     console.warn('加载景区背景图片失败:', e)
   }
@@ -144,9 +144,11 @@ watch(isHome, (val) => {
   if (!val) loadScenicBackground()
 })
 
-// 路由切换时检测景区是否变化（用户可能从首页改选了景区）
+// scenic_spot_id 变化时才重新加载（避免每次路由切换都检查）
 watch(() => route.path, () => {
-  if (route.path !== '/') loadScenicBackground()
+  if (route.path === '/') return
+  const currentId = localStorage.getItem('current_scenic_spot_id')
+  if (currentId !== lastLoadedScenicId) loadScenicBackground()
 })
 
 const contentMargin = computed(() => {
