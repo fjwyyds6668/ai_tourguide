@@ -941,11 +941,11 @@ class RAGService:
             },
             QueryIntent.DETAIL: {
                 "top_k": 3,  # 详情查询精准即可
-                "relevance_threshold": 0.3,  # 提高阈值，只要高相关
+                "relevance_threshold": 0.1,  # 非归一化L2距离分数较小，降低阈值
                 "graph_depth": 1,  # 浅查询，只查直接关系
                 "expand_scenic_attractions": False,  # 不扩展，专注单点
                 "max_attractions": 1,
-                "force_at_least_one": False,
+                "force_at_least_one": True,
             },
             QueryIntent.COMPARISON: {
                 "top_k": 8,  # 比较需要多个实体
@@ -1205,7 +1205,10 @@ class RAGService:
         vector_results = (vector_results_raw or [])[:effective_top_k]
 
         logger.debug(f"查询意图: {intent.value}, top_k={effective_top_k}, threshold={effective_threshold}, graph_depth={graph_depth}")
-        
+        if vector_results:
+            score_info = [(r.get("text_id"), round(r.get("score", 0), 4)) for r in vector_results]
+            logger.info(f"向量检索原始结果({len(vector_results)}条): {score_info}")
+
         vector_results_relevant = [
             r
             for r in (vector_results or [])
