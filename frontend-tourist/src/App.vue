@@ -120,20 +120,24 @@ const resolveUrl = (url) => {
   return `${backendOrigin}${url}`
 }
 
-// 用景区列表接口（体积远小于景点列表）取封面图
+// 内页背景：随机取该景区某个景点的图片，每次刷新重新随机
 let lastLoadedScenicId = null
-let _scenicSpotsCache = null
 const loadScenicBackground = async () => {
   try {
     const savedId = localStorage.getItem('current_scenic_spot_id')
     if (!savedId || savedId === lastLoadedScenicId) return
     lastLoadedScenicId = savedId
-    if (!_scenicSpotsCache) {
-      const res = await api.get('/attractions/scenic-spots')
-      _scenicSpotsCache = res.data || []
+    const res = await api.get('/attractions', { params: { scenic_spot_id: Number(savedId), limit: 100 } })
+    const images = (res.data || []).map(a => a.image_url).filter(Boolean)
+    if (images.length > 0) {
+      const pick = images[Math.floor(Math.random() * images.length)]
+      scenicBgImage.value = resolveUrl(pick)
+    } else {
+      // 无景点图片时降级用景区封面
+      const spotsRes = await api.get('/attractions/scenic-spots')
+      const spot = (spotsRes.data || []).find(s => String(s.id) === savedId)
+      scenicBgImage.value = resolveUrl(spot?.cover_image_url || '')
     }
-    const spot = _scenicSpotsCache.find(s => String(s.id) === savedId)
-    scenicBgImage.value = resolveUrl(spot?.cover_image_url || '')
   } catch (e) {
     console.warn('加载景区背景图片失败:', e)
   }
