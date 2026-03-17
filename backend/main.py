@@ -57,7 +57,7 @@ async def lifespan(_app: FastAPI):
 
     async def _warmup_llm() -> None:
         """预热 LLM 连接，避免第一次问答因 TCP 握手导致延迟。"""
-        await asyncio.sleep(3)  # 等待 rag_service 初始化完成
+        await asyncio.sleep(0.5)  # 仅等待 rag_service 完成同步初始化
         try:
             from app.services.rag_service import rag_service
             if rag_service.llm_client is None:

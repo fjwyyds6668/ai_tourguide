@@ -360,7 +360,10 @@ class RAGService:
                 if settings.OPENAI_API_BASE:
                     client_kwargs["base_url"] = settings.OPENAI_API_BASE
                 self.llm_client = openai.OpenAI(
-                    http_client=httpx.Client(trust_env=False),
+                    http_client=httpx.Client(
+                        trust_env=False,
+                        timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0),
+                    ),
                     **client_kwargs,
                 )
                 logger.info(f"LLM client initialized (base_url: {settings.OPENAI_API_BASE or 'default'})")
@@ -834,21 +837,39 @@ class RAGService:
         q = query.strip()
         if not q:
             return QueryIntent.GENERAL
-        route_kw = ("路线", "行程", "规划", "怎么玩", "怎么游", "游览顺序", "先去哪", "先看哪", "游玩路线", "一日游", "半日游")
+        route_kw = ("路线", "行程", "规划", "怎么玩", "怎么游", "游览顺序", "先去哪", "先看哪",
+                    "游玩路线", "一日游", "半日游", "游览路线", "参观顺序", "怎么安排", "如何安排",
+                    "游览计划", "旅游路线", "建议路线")
         if any(k in q for k in route_kw):
             return QueryIntent.ROUTE
-        listing_kw = ("有哪些", "有什么景点", "景点有哪", "哪些景点", "列一下", "列举", "所有景点", "全部景点", "包含哪些")
+        listing_kw = ("有哪些", "有什么景点", "景点有哪", "哪些景点", "列一下", "列举",
+                      "所有景点", "全部景点", "包含哪些", "有几个", "景点列表", "都有什么",
+                      "有什么地方", "有哪些地方", "包括哪些", "有什么好玩",
+                      "多少个景点", "几个景点", "有多少景点", "共有多少", "一共多少",
+                      "有多少个", "总共有多少", "景点数量")
         if any(k in q for k in listing_kw):
             return QueryIntent.LISTING
-        detail_kw = ("介绍", "详情", "说说", "讲讲", "是什么", "是啥", "开放时间", "营业时间", "门票", "票价", "怎么去", "交通")
+        detail_kw = ("介绍", "详情", "说说", "讲讲", "是什么", "是啥", "开放时间", "营业时间",
+                     "门票", "票价", "怎么去", "交通", "简介", "历史", "来历", "背景",
+                     "特点", "有名", "著名", "出名", "闻名", "故事", "传说", "文化")
         if any(k in q for k in detail_kw):
             return QueryIntent.DETAIL
-        comparison_kw = ("和", "与", "比较", "对比", "区别", "哪个好", "哪个更", "还是")
+        comparison_kw = ("和", "与", "比较", "对比", "区别", "哪个好", "哪个更", "还是",
+                         "相比", "比起", "差异", "不同")
         if sum(1 for k in comparison_kw if k in q) >= 2:
             return QueryIntent.COMPARISON
-        location_kw = ("在哪", "在哪里", "怎么走", "位置", "地址", "地点", "地图")
+        location_kw = ("在哪", "在哪里", "怎么走", "位置", "地址", "地点", "地图",
+                       "怎么到", "如何到", "路怎么走", "导航", "距离")
         if any(k in q for k in location_kw):
             return QueryIntent.LOCATION
+        feature_kw = ("特色", "特产", "美食", "好吃", "推荐", "值得", "适合", "适宜",
+                      "最好", "最美", "最值", "打卡", "网红", "拍照", "风景", "景色",
+                      "季节", "最佳时间", "几月", "什么时候去")
+        if any(k in q for k in feature_kw):
+            return QueryIntent.FEATURE
+        # 短句直接问景点名 → DETAIL
+        if len(q) <= 12 and not any(c in q for c in ("？", "?", "吗", "呢", "啊")):
+            return QueryIntent.DETAIL
         return None  # 不确定，交给 LLM
 
     async def _classify_query_intent(self, query: str) -> QueryIntent:
@@ -869,44 +890,17 @@ class RAGService:
             logger.debug("LLM 未配置，意图默认为 general")
             return QueryIntent.GENERAL
 
-        rag_context = ""
-        try:
-            vector_results = await self.vector_search(q, top_k=2)
-            if vector_results:
-                text_ids_to_fetch = [
-                    (r.get("text_id") or "").strip()
-                    for r in (vector_results or [])[:2]
-                    if (r.get("text_id") or "").strip()
-                    and not (r.get("text_id") or "").strip().startswith("attraction_")
-                ]
-                if text_ids_to_fetch:
-                    loop = asyncio.get_event_loop()
-                    text_contents = await loop.run_in_executor(
-                        None,
-                        self._get_text_contents_from_neo4j,
-                        text_ids_to_fetch,
-                    )
-                    parts = []
-                    for r in (vector_results or [])[:2]:
-                        tid = (r.get("text_id") or "").strip()
-                        content = (text_contents.get(tid) or r.get("content") or "").strip()
-                        if content:
-                            parts.append(content[:200])
-                    if parts:
-                        rag_context = "\n参考知识库片段：\n" + "\n---\n".join(parts)
-        except Exception as e:
-            logger.debug("意图分类 RAG 检索跳过: %s", e)
-
-        user_content = f"用户问题：{q}{rag_context}"
+        # 不再做额外的 Milvus/Neo4j 查询，直接用 LLM 判断意图（主流程已并行跑向量搜索）
         try:
             response = self.llm_client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": INTENT_CLASSIFY_SYSTEM},
-                    {"role": "user", "content": user_content},
+                    {"role": "user", "content": f"用户问题：{q}"},
                 ],
                 temperature=0,
                 max_tokens=20,
+                timeout=3,  # 超时即回退 general，不阻塞主流程
             )
             text = (response.choices[0].message.content or "").strip().lower()
             for word in text.split():
@@ -1646,7 +1640,15 @@ class RAGService:
                 if not n_name:
                     continue
                 if rel_type == "HAS_SPOT":
-                    spot_names.append(n_name)
+                    # 只收录有 id 的 Attraction 节点（来自数据库），
+                    # 过滤掉纯文本提取的 :Spot 名称节点（无 id），避免显示未录入的景点
+                    n_id = None
+                    if hasattr(n, 'get'):
+                        n_id = n.get('id')
+                    elif isinstance(n, dict):
+                        n_id = n.get('id') or (n.get('properties') or {}).get('id')
+                    if n_id is not None:
+                        spot_names.append(n_name)
                 elif rel_type == "HAS_FEATURE":
                     feature_names.append(n_name)
                 elif rel_type == "HAS_HONOR":
