@@ -72,6 +72,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
 import { Microphone, Location, Document } from '@element-plus/icons-vue'
 import api from '../api'
 

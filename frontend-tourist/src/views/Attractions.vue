@@ -116,6 +116,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
 import { Search, Picture } from '@element-plus/icons-vue'
 import api from '../api'
 
@@ -182,7 +183,7 @@ watch([selectedScenicId, searchKeyword, pageSize], () => {
 
 // short-lived cache to avoid re-fetching the same scenic spot on back-navigation
 const _attractionsCache = new Map() // scenicId -> { ts, data }
-const CACHE_TTL_MS = 60_000
+const CACHE_TTL_MS = 15 * 60_000 // 15分钟，景点列表在单次会话内几乎不变
 let attractionsAbortController = null
 
 const fetchAttractions = async () => {

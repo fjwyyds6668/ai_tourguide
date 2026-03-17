@@ -108,6 +108,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import Live2DCanvas from '../components/Live2DCanvas.vue'
 import api from '../api'
