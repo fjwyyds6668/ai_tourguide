@@ -10,7 +10,8 @@
       </div>
 
       <template v-else>
-        <div class="table-wrap">
+        <!-- 桌面：表格 -->
+        <div class="table-wrap desktop-only">
           <el-table
             :data="historyList"
             v-loading="loading"
@@ -35,6 +36,19 @@
           </el-table>
         </div>
 
+        <!-- 手机：卡片列表 -->
+        <div class="mobile-only" v-loading="loading">
+          <el-empty v-if="historyList.length === 0" description="暂无对话记录" />
+          <div v-for="row in historyList" :key="row.id" class="history-card">
+            <div class="history-card-q">
+              <span class="history-label">问：</span>{{ row.query_text || '—' }}
+            </div>
+            <div class="history-card-a">
+              <span class="history-label">答：</span>{{ row.response_text || '—' }}
+            </div>
+            <div class="history-card-time">{{ formatTime(row.created_at) || row.created_at || '—' }}</div>
+          </div>
+        </div>
       </template>
     </el-card>
   </div>
@@ -197,12 +211,49 @@ onMounted(() => {
   padding: 40px 0;
 }
 
-@media (max-width: 768px) {
-  .history-page {
-    padding: 12px;
-  }
-  .pagination-wrap {
-    justify-content: center;
-  }
+.desktop-only { display: block; }
+.mobile-only  { display: none; }
+
+@media (max-width: 640px) {
+  .desktop-only { display: none; }
+  .mobile-only  { display: block; }
+  .history-page { padding: 12px; }
+}
+
+.history-card {
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  word-break: break-word;
+}
+
+.history-card-q {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+
+.history-card-a {
+  font-size: 14px;
+  color: #303133;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+}
+
+.history-label {
+  color: #409eff;
+  font-weight: 700;
+  margin-right: 2px;
+}
+
+.history-card-time {
+  font-size: 12px;
+  color: #909399;
+  text-align: right;
 }
 </style>

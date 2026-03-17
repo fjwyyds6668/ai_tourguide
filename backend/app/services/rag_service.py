@@ -828,6 +828,29 @@ class RAGService:
             names.append(t)
         return names[:5]
 
+    @staticmethod
+    def _fast_classify_intent(query: str) -> Optional["QueryIntent"]:
+        """关键词快速意图分类，命中则直接返回，无需 LLM 调用（0ms）。"""
+        q = query.strip()
+        if not q:
+            return QueryIntent.GENERAL
+        route_kw = ("路线", "行程", "规划", "怎么玩", "怎么游", "游览顺序", "先去哪", "先看哪", "游玩路线", "一日游", "半日游")
+        if any(k in q for k in route_kw):
+            return QueryIntent.ROUTE
+        listing_kw = ("有哪些", "有什么景点", "景点有哪", "哪些景点", "列一下", "列举", "所有景点", "全部景点", "包含哪些")
+        if any(k in q for k in listing_kw):
+            return QueryIntent.LISTING
+        detail_kw = ("介绍", "详情", "说说", "讲讲", "是什么", "是啥", "开放时间", "营业时间", "门票", "票价", "怎么去", "交通")
+        if any(k in q for k in detail_kw):
+            return QueryIntent.DETAIL
+        comparison_kw = ("和", "与", "比较", "对比", "区别", "哪个好", "哪个更", "还是")
+        if sum(1 for k in comparison_kw if k in q) >= 2:
+            return QueryIntent.COMPARISON
+        location_kw = ("在哪", "在哪里", "怎么走", "位置", "地址", "地点", "地图")
+        if any(k in q for k in location_kw):
+            return QueryIntent.LOCATION
+        return None  # 不确定，交给 LLM
+
     async def _classify_query_intent(self, query: str) -> QueryIntent:
         """基于 LLM + RAG 的意图分类：先做轻量向量检索提供上下文，再由 LLM 判断意图。"""
         if not query or not isinstance(query, str):
@@ -835,6 +858,13 @@ class RAGService:
         q = query.strip()
         if not q:
             return QueryIntent.GENERAL
+
+        # 快速关键词分类，命中则跳过 LLM（节省 1~2s）
+        fast_result = self._fast_classify_intent(q)
+        if fast_result is not None:
+            logger.debug("意图分类（关键词）: %s -> %s", q[:50], fast_result.value)
+            return fast_result
+
         if not self.llm_client:
             logger.debug("LLM 未配置，意图默认为 general")
             return QueryIntent.GENERAL
@@ -1003,31 +1033,39 @@ class RAGService:
 
     async def _get_attraction_id_by_name(self, attraction_name: str) -> Optional[int]:
         """按景点名称在图里查 Attraction，返回 id；先精确匹配，再 CONTAINS 模糊匹配。"""
-        if not (attraction_name or attraction_name.strip()):
+        result = await self._get_first_attraction_id_by_names([attraction_name])
+        return result
+
+    async def _get_first_attraction_id_by_names(self, names: List[str]) -> Optional[int]:
+        """批量查询景点 id，单次 Cypher 完成精确+模糊匹配，返回第一个命中的 id。
+        替代原来对多个名字的串行 N+1 调用。"""
+        clean = [n.strip() for n in (names or []) if n and n.strip()]
+        if not clean:
             return None
-        name = attraction_name.strip()
         try:
             loop = asyncio.get_event_loop()
-            # 1) 精确匹配
+            # 精确匹配优先，模糊兜底，单次查询
             rows = await loop.run_in_executor(
                 None,
                 neo4j_client.execute_query,
-                "MATCH (a:Attraction) WHERE a.name = $name RETURN a.id AS id LIMIT 1",
-                {"name": name},
+                """
+                UNWIND $names AS nm
+                OPTIONAL MATCH (exact:Attraction) WHERE exact.name = nm
+                OPTIONAL MATCH (fuzzy:Attraction) WHERE fuzzy.name CONTAINS nm
+                WITH nm,
+                     CASE WHEN exact IS NOT NULL THEN exact.id ELSE null END AS exact_id,
+                     CASE WHEN fuzzy IS NOT NULL THEN fuzzy.id ELSE null END  AS fuzzy_id,
+                     CASE WHEN exact IS NOT NULL THEN 0 ELSE 1 END            AS priority
+                WITH coalesce(exact_id, fuzzy_id) AS aid, priority
+                WHERE aid IS NOT NULL
+                RETURN aid AS id ORDER BY priority LIMIT 1
+                """,
+                {"names": clean},
             )
-            if rows and len(rows) > 0 and rows[0].get("id") is not None:
-                return int(rows[0]["id"])
-            # 2) CONTAINS 模糊匹配（如「忘忧」匹配「忘忧谷」）
-            rows = await loop.run_in_executor(
-                None,
-                neo4j_client.execute_query,
-                "MATCH (a:Attraction) WHERE a.name CONTAINS $name RETURN a.id AS id, a.name AS aname ORDER BY size(a.name) LIMIT 1",
-                {"name": name},
-            )
-            if rows and len(rows) > 0 and rows[0].get("id") is not None:
+            if rows and rows[0].get("id") is not None:
                 return int(rows[0]["id"])
         except Exception as e:
-            logger.debug("_get_attraction_id_by_name %s: %s", name, e)
+            logger.debug("_get_first_attraction_id_by_names %s: %s", clean, e)
         return None
 
     async def _fetch_scenic_spot_names(self, limit: int = 5) -> List[str]:
@@ -1129,20 +1167,11 @@ class RAGService:
         当查询含指代词（如「这个景区」）时，优先用 scenic_name（用户选择的景区），
         否则从 conversation_history 解析实体并补充检索。
         """
-        intent = await self._classify_query_intent(query)
-        strategy = self._get_search_strategy(intent)
-
-        effective_top_k = top_k if top_k != 5 else strategy["top_k"]
-        effective_threshold = strategy["relevance_threshold"]
-        graph_depth = strategy["graph_depth"]
-        
-        logger.debug(f"查询意图: {intent.value}, top_k={effective_top_k}, threshold={effective_threshold}, graph_depth={graph_depth}")
-
         q_stripped = (query or "").strip()
         is_ticket_query = any(
             k in q_stripped for k in ("门票", "票价", "成人票", "学生票", "半票", "优惠票", "年卡", "票多少钱", "票多钱", "票多少")
         )
-        
+
         resolved_entities: List[str] = []
         scenic_name_str = (scenic_name or "").strip()
         if scenic_name_str:
@@ -1152,17 +1181,30 @@ class RAGService:
             resolved_entities = self._extract_entities_from_history(conversation_history)
             if resolved_entities:
                 logger.debug(f"指代消解: 从历史解析实体 {resolved_entities}")
-        
-        errors: Dict[str, str] = {}
+
         effective_query = query
         if resolved_entities:
             effective_query = f"{' '.join(resolved_entities[:2])} {query}"
+
+        errors: Dict[str, str] = {}
         try:
-            vector_results = await self.vector_search(effective_query, top_k=effective_top_k)
+            intent, vector_results_raw = await asyncio.gather(
+                self._classify_query_intent(query),
+                self.vector_search(effective_query, top_k=10),
+            )
         except Exception as e:
+            intent = QueryIntent.GENERAL
+            vector_results_raw = []
             errors["milvus"] = str(e)
-            logger.warning("hybrid_search vector_search failed (fallback to empty): %s", e)
-            vector_results = []
+            logger.warning("hybrid_search parallel gather failed: %s", e)
+
+        strategy = self._get_search_strategy(intent)
+        effective_top_k = top_k if top_k != 5 else strategy["top_k"]
+        effective_threshold = strategy["relevance_threshold"]
+        graph_depth = strategy["graph_depth"]
+        vector_results = (vector_results_raw or [])[:effective_top_k]
+
+        logger.debug(f"查询意图: {intent.value}, top_k={effective_top_k}, threshold={effective_threshold}, graph_depth={graph_depth}")
         
         vector_results_relevant = [
             r
@@ -1394,15 +1436,12 @@ class RAGService:
             for n in entity_names[:5]:
                 if n and n.strip() and n.strip() not in names_to_try:
                     names_to_try.append(n.strip())
-            for name in names_to_try[:8]:
-                if not name:
-                    continue
-                aid = await self._get_attraction_id_by_name(name)
-                if aid is not None:
-                    cluster_ctx = await self._get_attraction_cluster_context([aid], max_items=1)
-                    if cluster_ctx:
-                        enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
-                    break
+            # 单次批量查询替代串行 N+1，节省多次 Neo4j 往返
+            aid = await self._get_first_attraction_id_by_names(names_to_try[:8])
+            if aid is not None:
+                cluster_ctx = await self._get_attraction_cluster_context([aid], max_items=1)
+                if cluster_ctx:
+                    enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
         
         return {
             "vector_results": vector_results,

@@ -114,7 +114,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Picture } from '@element-plus/icons-vue'
 import api from '../api'
@@ -137,7 +137,15 @@ watch(searchText, (val) => {
 
 const detailVisible = ref(false)
 const selectedAttraction = ref(null)
-const dialogWidth = computed(() => window.innerWidth <= 600 ? '92%' : '600px')
+const _winW = ref(window.innerWidth)
+let _winResizeTimer = null
+const _onResize = () => {
+  clearTimeout(_winResizeTimer)
+  _winResizeTimer = setTimeout(() => { _winW.value = window.innerWidth }, 100)
+}
+onMounted(() => window.addEventListener('resize', _onResize, { passive: true }))
+onUnmounted(() => { window.removeEventListener('resize', _onResize); clearTimeout(_winResizeTimer) })
+const dialogWidth = computed(() => _winW.value <= 600 ? '92%' : '600px')
 
 const page = ref(1)
 const pageSize = ref(12)

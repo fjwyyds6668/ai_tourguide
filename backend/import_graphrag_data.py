@@ -58,7 +58,7 @@ async def import_attractions(collection_name: str, build_graph: bool, build_attr
                 "latitude": a.latitude,
                 "longitude": a.longitude,
                 "category": a.category,
-                "scenic_spot_id": a.scenic_spot_id,
+                "scenic_spot_id": a.scenicSpotId,
             }
         )
 

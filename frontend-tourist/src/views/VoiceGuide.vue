@@ -168,22 +168,24 @@ onMounted(async () => {
     previousBodyOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
   }
-  // 恢复上次对话记录
   restoreFromSession()
-  await loadCharacters()
+
+  // 角色列表与景区信息并行加载，节省一次网络往返
+  const savedId = localStorage.getItem('current_scenic_spot_id')
+  const idNum = savedId ? Number(savedId) : NaN
+
+  const [, spots] = await Promise.all([
+    loadCharacters(),
+    (!savedId || Number.isNaN(idNum))
+      ? Promise.resolve([])
+      : api.get('/attractions/scenic-spots').then(r => r.data || []).catch(() => []),
+  ])
+
   if (characters.value.length > 0) {
     selectedCharacterId.value = characters.value[0].id
   }
-  try {
-    const savedId = localStorage.getItem('current_scenic_spot_id')
-    if (!savedId) return
-    const idNum = Number(savedId)
-    if (Number.isNaN(idNum)) return
-    const res = await api.get('/attractions/scenic-spots')
-    const spots = res.data || []
+  if (spots.length > 0) {
     currentScenic.value = spots.find((s) => s.id === idNum) || null
-  } catch (e) {
-    console.error('加载当前景区信息失败:', e)
   }
 })
 
@@ -1198,7 +1200,7 @@ const triggerSpeakingMotion = () => {
 /* ── Input area ── */
 .input-area {
   flex-shrink: 0;
-  padding: 10px 12px 12px;
+  padding: 10px 12px max(12px, env(safe-area-inset-bottom, 12px));
   border-top: 1px solid rgba(255,255,255,0.4);
   background: transparent;
 }
@@ -1250,7 +1252,8 @@ const triggerSpeakingMotion = () => {
     padding: 8px;
     height: auto;
     min-height: 100svh;
-    overflow: visible;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .main-area {
@@ -1277,7 +1280,7 @@ const triggerSpeakingMotion = () => {
   }
 
   .bubble-text {
-    font-size: 15px;
+    font-size: 16px;
   }
 }
 
@@ -1304,6 +1307,8 @@ const triggerSpeakingMotion = () => {
   .voice-guide {
     height: auto;
     overflow: auto;
+    padding-left: max(8px, env(safe-area-inset-left, 8px));
+    padding-right: max(8px, env(safe-area-inset-right, 8px));
   }
 
   .avatar-panel {

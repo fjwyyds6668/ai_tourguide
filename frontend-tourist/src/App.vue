@@ -94,13 +94,18 @@ import { Microphone, Location, Document, Fold, Expand } from '@element-plus/icon
 import api from './api'
 
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
-const updateWidth = () => { windowWidth.value = window.innerWidth }
+let _resizeTimer = null
+const updateWidth = () => {
+  clearTimeout(_resizeTimer)
+  _resizeTimer = setTimeout(() => { windowWidth.value = window.innerWidth }, 100)
+}
 onMounted(() => {
-  window.addEventListener('resize', updateWidth)
+  window.addEventListener('resize', updateWidth, { passive: true })
   if (route.path !== '/') loadScenicBackground()
 })
 onUnmounted(() => {
   window.removeEventListener('resize', updateWidth)
+  clearTimeout(_resizeTimer)
 })
 
 const collapsed = ref(false)
@@ -122,20 +127,29 @@ const resolveUrl = (url) => {
 
 // 内页背景：随机取该景区某个景点的图片，每次刷新重新随机
 let lastLoadedScenicId = null
+let _spotsCache = null  // 景区列表缓存，避免多个组件重复请求
 const loadScenicBackground = async () => {
   try {
     const savedId = localStorage.getItem('current_scenic_spot_id')
     if (!savedId || savedId === lastLoadedScenicId) return
     lastLoadedScenicId = savedId
-    const res = await api.get('/attractions', { params: { scenic_spot_id: Number(savedId), limit: 100 } })
-    const images = (res.data || []).map(a => a.image_url).filter(Boolean)
+
+    // 景点列表与景区封面并行请求，取到景点图片后取消对封面的依赖
+    const [attractionsRes, spotsRes] = await Promise.all([
+      api.get('/attractions', { params: { scenic_spot_id: Number(savedId), limit: 100 } }).catch(() => null),
+      _spotsCache
+        ? Promise.resolve({ data: _spotsCache })
+        : api.get('/attractions/scenic-spots').catch(() => null),
+    ])
+
+    if (spotsRes?.data) _spotsCache = spotsRes.data
+
+    const images = (attractionsRes?.data || []).map(a => a.image_url).filter(Boolean)
     if (images.length > 0) {
       const pick = images[Math.floor(Math.random() * images.length)]
       scenicBgImage.value = resolveUrl(pick)
     } else {
-      // 无景点图片时降级用景区封面
-      const spotsRes = await api.get('/attractions/scenic-spots')
-      const spot = (spotsRes.data || []).find(s => String(s.id) === savedId)
+      const spot = (_spotsCache || []).find(s => String(s.id) === savedId)
       scenicBgImage.value = resolveUrl(spot?.cover_image_url || '')
     }
   } catch (e) {
@@ -337,6 +351,8 @@ html, body {
   }
   .layout-inner .main {
     padding-bottom: calc(56px + env(safe-area-inset-bottom, 0));
+    padding-left: env(safe-area-inset-left, 0);
+    padding-right: env(safe-area-inset-right, 0);
   }
   .main-no-header.main-no-scroll {
     overflow: auto !important;
@@ -392,6 +408,7 @@ html, body {
   font-size: 13px;
   gap: 4px;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
   cursor: pointer;
 }
 .bottom-nav .nav-item .el-icon {

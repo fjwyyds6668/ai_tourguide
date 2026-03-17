@@ -29,6 +29,8 @@
             shadow="hover"
             :class="{ disabled: !selectedScenicId }"
             @click="navigateIfSelected('/voice-guide')"
+            @mouseenter="prefetchVoiceGuide"
+            @touchstart.passive="prefetchVoiceGuide"
           >
             <el-icon :size="48"><Microphone /></el-icon>
             <h3>语音导览</h3>
@@ -40,6 +42,8 @@
             shadow="hover"
             :class="{ disabled: !selectedScenicId }"
             @click="navigateIfSelected('/attractions')"
+            @mouseenter="prefetchAttractions"
+            @touchstart.passive="prefetchAttractions"
           >
             <el-icon :size="48"><Location /></el-icon>
             <h3>景点浏览</h3>
@@ -51,6 +55,8 @@
             shadow="hover"
             :class="{ disabled: !selectedScenicId }"
             @click="navigateIfSelected('/history')"
+            @mouseenter="prefetchHistory"
+            @touchstart.passive="prefetchHistory"
           >
             <el-icon :size="48"><Document /></el-icon>
             <h3>对话记录</h3>
@@ -106,21 +112,6 @@ onMounted(async () => {
   if (mainEl && !backgroundImageUrl.value) {
     mainEl.style.background = '#f5f7fa'
   }
-  const prefetch = () => {
-    import(/* webpackChunkName: "voice-guide" */ './VoiceGuide.vue').catch(() => {})
-    import(/* webpackChunkName: "attractions" */ './Attractions.vue').catch(() => {})
-    import(/* webpackChunkName: "history" */ './History.vue').catch(() => {})
-    // 预请求数字人模型主体（最大的文件），进入语音导览时从缓存读取，加快显示
-    const origin = typeof window !== 'undefined' ? window.location.origin : ''
-    const base = `${origin}/sentio/characters/free/Mao/`
-    fetch(`${base}Mao.moc3`).catch(() => {})
-    fetch(`${base}Mao.physics3.json`).catch(() => {})
-  }
-  if (typeof requestIdleCallback !== 'undefined') {
-    requestIdleCallback(prefetch, { timeout: 150 })
-  } else {
-    setTimeout(prefetch, 150)
-  }
 })
 
 onUnmounted(() => {
@@ -134,6 +125,28 @@ const handleScenicChange = (id) => {
   if (!id) return
   localStorage.setItem('current_scenic_spot_id', String(id))
   selectedScenic.value = scenicSpots.value.find((s) => s.id === id) || null
+}
+
+// 用户悬停/触摸卡片时才预取对应路由块，节省手机初始流量
+let _prefetchedVG = false, _prefetchedAT = false, _prefetchedHT = false
+const prefetchVoiceGuide = () => {
+  if (_prefetchedVG) return
+  _prefetchedVG = true
+  import('./VoiceGuide.vue').catch(() => {})
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const base = `${origin}/sentio/characters/free/Mao/`
+  fetch(`${base}Mao.moc3`).catch(() => {})
+  fetch(`${base}Mao.physics3.json`).catch(() => {})
+}
+const prefetchAttractions = () => {
+  if (_prefetchedAT) return
+  _prefetchedAT = true
+  import('./Attractions.vue').catch(() => {})
+}
+const prefetchHistory = () => {
+  if (_prefetchedHT) return
+  _prefetchedHT = true
+  import('./History.vue').catch(() => {})
 }
 
 const navigateIfSelected = (path) => {
@@ -296,6 +309,9 @@ const navigateIfSelected = (path) => {
 .feature-cards .feature-col .el-card:not(.disabled):hover {
   transform: translateY(-3px);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+}
+.feature-cards .feature-col .el-card.disabled {
+  cursor: pointer;
 }
 @media (prefers-reduced-motion: reduce) {
   .feature-cards .feature-col .el-card { transition: none; }

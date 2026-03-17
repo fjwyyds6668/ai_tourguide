@@ -171,13 +171,14 @@ onMounted(() => {
       if (w2 >= 10 && h2 >= 10) doInit()
     })
     resizeObserver.observe(canvas)
-    // 移动端布局稳定更快，缩短超时（桌面 800ms / 移动 400ms）
+    // ResizeObserver 兜底：布局稳定后若仍未初始化则强制触发
+    // 移动端 200ms / 桌面 400ms（布局通常在首帧后即稳定）
     setTimeout(() => {
       if (initDone) return
       const w2 = canvas.clientWidth || canvas.offsetWidth || 0
       const h2 = canvas.clientHeight || canvas.offsetHeight || 0
       if (w2 >= 10 && h2 >= 10) doInit()
-    }, isMobileDevice() ? 400 : 800)
+    }, isMobileDevice() ? 200 : 400)
   })
 })
 
