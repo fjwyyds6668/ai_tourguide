@@ -4,7 +4,7 @@
     <el-row v-if="interactionData" :gutter="16" style="margin: 24px 0">
       <el-col :span="12">
         <el-card>
-          <el-statistic title="总交互次数" :value="interactionData.total">
+          <el-statistic title="总交互次数" :value="interactionData.total" :formatter="(v) => v">
             <template #prefix>
               <el-icon><ChatDotRound /></el-icon>
             </template>

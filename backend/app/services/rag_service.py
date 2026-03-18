@@ -362,7 +362,7 @@ class RAGService:
                 self.llm_client = openai.OpenAI(
                     http_client=httpx.Client(
                         trust_env=False,
-                        timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0),
+                        timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=5.0),
                     ),
                     **client_kwargs,
                 )
@@ -1017,7 +1017,7 @@ class RAGService:
         candidates: List[str] = []
         # 介绍(一下)? XXX、说说 XXX、讲讲 XXX、了解 XXX、XXX 怎么样、XXX 在哪
         patterns = [
-            r"(?:介绍|详情|说说|讲讲|了解)(?:一下|下)?\s*([\u4e00-\u9fa5]{2,10})",
+            r"(?:介绍|详情|说说|讲讲|了解)(?:一下|一|下)?\s*([\u4e00-\u9fa5]{2,10})",
             r"([\u4e00-\u9fa5]{2,10})\s*(?:怎么样|如何|在哪|有什么|好玩吗)",
         ]
         stop = {"介绍", "详情", "说说", "讲讲", "了解", "怎么样", "如何", "有什么", "好玩", "地方", "景区", "景点"}
@@ -1039,8 +1039,8 @@ class RAGService:
         clean = [n.strip() for n in (names or []) if n and n.strip()]
         if not clean:
             return None
+        loop = asyncio.get_event_loop()
         try:
-            loop = asyncio.get_event_loop()
             # 精确匹配优先，模糊兜底，单次查询
             rows = await loop.run_in_executor(
                 None,
@@ -1063,6 +1063,31 @@ class RAGService:
                 return int(rows[0]["id"])
         except Exception as e:
             logger.debug("_get_first_attraction_id_by_names %s: %s", clean, e)
+
+        # 字符重叠兜底：适用于单字打错的情况（如"仙禹洞"→"仙寓洞"）
+        try:
+            all_rows = await loop.run_in_executor(
+                None,
+                neo4j_client.execute_query,
+                "MATCH (a:Attraction) WHERE a.id IS NOT NULL AND a.name IS NOT NULL RETURN a.id AS id, a.name AS name LIMIT 200",
+                {},
+            ) or []
+            all_attractions = [(int(r["id"]), str(r["name"]).strip()) for r in all_rows if r.get("id") and r.get("name")]
+            best_id, best_score = None, 0.0
+            for qname in clean:
+                if len(qname) < 2:
+                    continue
+                q_chars = set(qname)
+                for aid, aname in all_attractions:
+                    common = len(q_chars & set(aname))
+                    score = common / len(qname)
+                    if common >= 2 and score >= 0.6 and score > best_score:
+                        best_score, best_id = score, aid
+            if best_id is not None:
+                logger.debug("_get_first_attraction_id_by_names char-overlap match: %s -> id=%s (score=%.2f)", clean, best_id, best_score)
+                return best_id
+        except Exception as e:
+            logger.debug("_get_first_attraction_id_by_names char-overlap %s: %s", clean, e)
         return None
 
     async def _fetch_scenic_spot_names(self, limit: int = 5) -> List[str]:
@@ -1360,15 +1385,17 @@ class RAGService:
             except Exception as e:
                 logger.warning(f"列举查询兜底查景区景点数量失败: {e}")
 
-        if intent == QueryIntent.DETAIL and scenic_name_str and (not primary_attraction_id or is_ticket_query):
+        query_about_scenic = bool(re.search(r"什么景区|哪个景区|是啥景区|这是什么景区|是哪个景区|啥景区|哪个景点.*景区|介绍.*景区|景区.*介绍|这个景区", (query or "").strip()))
+        scenic_ctx_found = False
+        if intent == QueryIntent.DETAIL and scenic_name_str and (not primary_attraction_id or is_ticket_query or query_about_scenic):
             try:
                 scenic_ctx_detail = await self._get_scenic_spot_cluster_context_by_name(scenic_name_str)
                 if scenic_ctx_detail:
                     enhanced_results = (scenic_ctx_detail + "\n\n" + (enhanced_results or "")).strip()
+                    if query_about_scenic:
+                        scenic_ctx_found = True  # 已注入景区簇，阻止后续景点簇注入
             except Exception as e:
                 logger.warning(f"DETAIL 查询补充景区簇上下文失败: {e}")
-        query_about_scenic = bool(re.search(r"什么景区|哪个景区|是啥景区|这是什么景区|是哪个景区|啥景区|哪个景点.*景区|介绍.*景区|景区.*介绍|这个景区", (query or "").strip()))
-        scenic_ctx_found = False
         if query_about_scenic and not (intent == QueryIntent.DETAIL and scenic_name_str):
             scenic_tasks = []
             if primary_attraction_id is not None:
@@ -1414,31 +1441,23 @@ class RAGService:
                         enhanced_results = scenic_ctx + "\n\n" + (enhanced_results or "")
                         scenic_ctx_found = True
                         break
-        # 票务类问题跳过景点簇注入，避免干扰 LLM 聚焦景区级 ticket_info
+                    
         if (
             not should_expand
-            and primary_attraction_id is not None
-            and not (query_about_scenic and scenic_ctx_found)
-            and not is_ticket_query
-        ):
-            cluster_ctx = await self._get_attraction_cluster_context([primary_attraction_id], max_items=1)
-            if cluster_ctx:
-                enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
-        if (
-            not should_expand
-            and primary_attraction_id is None
             and not (query_about_scenic and scenic_ctx_found)
             and not is_ticket_query
         ):
             intro_candidates = self._extract_attraction_candidates_from_query(query)
             names_to_try = list(dict.fromkeys([n.strip() for n in intro_candidates if n and n.strip()]))
             for n in entity_names[:5]:
-                if n and n.strip() and n.strip() not in names_to_try:
-                    names_to_try.append(n.strip())
-            # 单次批量查询替代串行 N+1，节省多次 Neo4j 往返
-            aid = await self._get_first_attraction_id_by_names(names_to_try[:8])
-            if aid is not None:
-                cluster_ctx = await self._get_attraction_cluster_context([aid], max_items=1)
+                ns = n.strip() if n else ""
+                # 跳过景区名（避免 "蜀南竹海" CONTAINS 匹配到 "蜀南竹海博物馆"）
+                if ns and ns not in names_to_try and ns != scenic_name_str:
+                    names_to_try.append(ns)
+            entity_aid = await self._get_first_attraction_id_by_names(names_to_try[:8]) if names_to_try else None
+            target_aid = entity_aid if entity_aid is not None else primary_attraction_id
+            if target_aid is not None:
+                cluster_ctx = await self._get_attraction_cluster_context([target_aid], max_items=1)
                 if cluster_ctx:
                     enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
         
