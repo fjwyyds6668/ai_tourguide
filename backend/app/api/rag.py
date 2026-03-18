@@ -374,14 +374,8 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
 
         full_answer = ""
         _interaction_saved = False
+        _llm_messages = messages
         try:
-            stream = rag_service.llm_client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=1000,
-                stream=True
-            )
 
             prev_content: str = ""
             accumulated_text = ""
@@ -481,7 +475,14 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             
             def put_stream_in_queue():
                 try:
-                    for c in stream:
+                    _stream = rag_service.llm_client.chat.completions.create(
+                        model=settings.OPENAI_MODEL,
+                        messages=_llm_messages,
+                        temperature=0.7,
+                        max_tokens=1000,
+                        stream=True,
+                    )
+                    for c in _stream:
                         def _put():
                             try:
                                 chunk_queue.put_nowait(c)

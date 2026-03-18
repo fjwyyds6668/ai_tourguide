@@ -253,7 +253,8 @@ class RAGService:
 只输出 JSON 对象，不要解释。
 """
         try:
-            resp = self.llm_client.chat.completions.create(
+            resp = await asyncio.to_thread(
+                self.llm_client.chat.completions.create,
                 model=settings.OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -303,7 +304,8 @@ class RAGService:
 只输出 JSON 对象，不要解释。
 """
         try:
-            resp = self.llm_client.chat.completions.create(
+            resp = await asyncio.to_thread(
+                self.llm_client.chat.completions.create,
                 model=settings.OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -895,15 +897,17 @@ class RAGService:
 
         # 不再做额外的 Milvus/Neo4j 查询，直接用 LLM 判断意图（主流程已并行跑向量搜索）
         try:
-            response = self.llm_client.chat.completions.create(
+            _msgs = [
+                {"role": "system", "content": INTENT_CLASSIFY_SYSTEM},
+                {"role": "user", "content": f"用户问题：{q}"},
+            ]
+            response = await asyncio.to_thread(
+                self.llm_client.chat.completions.create,
                 model=settings.OPENAI_MODEL,
-                messages=[
-                    {"role": "system", "content": INTENT_CLASSIFY_SYSTEM},
-                    {"role": "user", "content": f"用户问题：{q}"},
-                ],
+                messages=_msgs,
                 temperature=0,
                 max_tokens=20,
-                timeout=3,  # 超时即回退 general，不阻塞主流程
+                timeout=3,
             )
             text = (response.choices[0].message.content or "").strip().lower()
             for word in text.split():
@@ -2042,11 +2046,12 @@ class RAGService:
             rag_debug["final_sent_to_llm"] = user_prompt
 
         try:
-            response = self.llm_client.chat.completions.create(
+            response = await asyncio.to_thread(
+                self.llm_client.chat.completions.create,
                 model=settings.OPENAI_MODEL,
                 messages=messages,
                 temperature=0.7,
-                max_tokens=1000
+                max_tokens=1000,
             )
             
             answer = response.choices[0].message.content
