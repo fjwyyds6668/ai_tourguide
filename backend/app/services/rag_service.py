@@ -1360,8 +1360,7 @@ class RAGService:
             except Exception as e:
                 logger.warning(f"列举查询兜底查景区景点数量失败: {e}")
 
-        # DETAIL 意图时直接补充景区结构化属性（ticket_info/opening_hours 等），弥补向量检索弱命中
-        if intent == QueryIntent.DETAIL and scenic_name_str:
+        if intent == QueryIntent.DETAIL and scenic_name_str and (not primary_attraction_id or is_ticket_query):
             try:
                 scenic_ctx_detail = await self._get_scenic_spot_cluster_context_by_name(scenic_name_str)
                 if scenic_ctx_detail:

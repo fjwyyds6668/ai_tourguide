@@ -519,18 +519,15 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                 if chunk.choices and len(chunk.choices) > 0:
                     delta = chunk.choices[0].delta
                     if hasattr(delta, 'content') and delta.content:
-                        content = delta.content
-                        content = _clean_special_symbols(content)
+                        raw_content = delta.content
+                        logger.debug("RAW_CHUNK: %r", raw_content)
+                        content = _clean_special_symbols(raw_content)
+                        if raw_content != content:
+                            logger.debug("CLEANED: %r -> %r", raw_content, content)
                         if not content:
                             continue
                         if content == prev_content:
-                            continue
-                        if full_answer.endswith(content):
-                            prev_content = content
-                            continue
-                        # 防止短片段在最近生成文本中重复出现（如同一句话被多次追加）
-                        if len(content) >= 3 and content in full_answer[-80:]:
-                            prev_content = content
+                            logger.debug("DEDUP_SKIP: %r", content)
                             continue
                         prev_content = content
                         full_answer += content
