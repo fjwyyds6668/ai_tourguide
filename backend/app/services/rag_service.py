@@ -680,7 +680,10 @@ class RAGService:
               WITH name
               MATCH (a)-[r]->(b)
               WHERE a.name CONTAINS name OR b.name CONTAINS name
-              RETURN a, r, b, labels(a) as a_labels, labels(b) as b_labels, type(r) as rel_type
+              WITH a, r, b, labels(a) as a_labels, labels(b) as b_labels, type(r) as rel_type,
+                   CASE WHEN a.name = name THEN 0 ELSE 1 END AS priority
+              ORDER BY priority
+              RETURN a, r, b, a_labels, b_labels, rel_type
               LIMIT $per_limit
             }
             RETURN name as query_name, a, r, b, a_labels, b_labels, rel_type
@@ -1244,7 +1247,7 @@ class RAGService:
         seen_set = set(entity_names)
         for name in resolved_entities:
             if name and name not in seen_set:
-                entity_names = [name] + entity_names
+                entity_names = entity_names + [name]
                 seen_set.add(name)
         
         text_ids_to_fetch = [
