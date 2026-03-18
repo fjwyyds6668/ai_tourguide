@@ -1455,7 +1455,8 @@ class RAGService:
                 if ns and ns not in names_to_try and ns != scenic_name_str:
                     names_to_try.append(ns)
             entity_aid = await self._get_first_attraction_id_by_names(names_to_try[:8]) if names_to_try else None
-            target_aid = entity_aid if entity_aid is not None else primary_attraction_id
+            # 只在明确从查询中识别到景点时才注入簇，避免回退到向量结果首条造成错误注入
+            target_aid = entity_aid
             if target_aid is not None:
                 cluster_ctx = await self._get_attraction_cluster_context([target_aid], max_items=1)
                 if cluster_ctx:
