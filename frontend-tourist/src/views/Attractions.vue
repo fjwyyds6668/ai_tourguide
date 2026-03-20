@@ -249,8 +249,6 @@ const heatInfo = (attraction) => {
   return null
 }
 
-const onScenicChange = () => {}
-
 const viewDetails = async (attraction) => {
   selectedAttraction.value = attraction
   detailVisible.value = true
@@ -296,8 +294,8 @@ watch(selectedScenicId, async (id) => {
 .page-card {
   --el-card-bg-color: rgba(255, 255, 255, 0.45);
   border-radius: 12px;
-  backdrop-filter: blur(18px) saturate(1.8);
-  -webkit-backdrop-filter: blur(18px) saturate(1.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.60) !important;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
 }
@@ -367,12 +365,11 @@ watch(selectedScenicId, async (id) => {
 }
 
 .attraction-card {
-  --el-card-bg-color: rgba(255, 255, 255, 0.48);
+  --el-card-bg-color: rgba(255, 255, 255, 0.72);
   border-radius: 10px;
   cursor: pointer;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
-  backdrop-filter: blur(12px) saturate(1.6);
-  -webkit-backdrop-filter: blur(12px) saturate(1.6);
+  will-change: transform;
   border: 1px solid rgba(255, 255, 255, 0.55) !important;
   width: 100%;
 }
@@ -394,7 +391,7 @@ watch(selectedScenicId, async (id) => {
 .attraction-card:hover {
   transform: translateY(-3px);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.15);
-  --el-card-bg-color: rgba(255, 255, 255, 0.60);
+  --el-card-bg-color: rgba(255, 255, 255, 0.88);
 }
 .skeleton-card {
   cursor: default;
@@ -412,6 +409,10 @@ watch(selectedScenicId, async (id) => {
 
 .card-image-wrap {
   position: relative;
+  aspect-ratio: 4 / 3;
+  background: rgba(200, 200, 200, 0.15);
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .heat-badge {
@@ -488,19 +489,18 @@ watch(selectedScenicId, async (id) => {
 
 .attraction-image {
   width: 100%;
-  height: 200px;
+  height: 100%;
   object-fit: cover;
-  border-radius: 4px;
+  display: block;
 }
 
 .placeholder-image {
   width: 100%;
-  height: 200px;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(255, 255, 255, 0.3);
-  border-radius: 4px;
 }
 
 .description {
