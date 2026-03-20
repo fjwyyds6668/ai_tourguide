@@ -41,7 +41,7 @@ RAG_BASE_SYSTEM_PROMPT = """你是一个专业的景区AI导游助手。请根�
 1. 基于提供的上下文信息回答
 2. 语言简洁明了，适合口语化表达
 3. 如果信息不足，诚实说明
-4. 不要编造信息
+4. 严禁编造信息。价格、票价、日期、时间、距离等所有数字必须与上下文完全一致，逐字引用，不得增减任何数位或修改任何数字
 5. 不要透露任何内部标识符/编号/ID（例如 kb_***、text_id、session_id 等）；自我介绍时也不要输出任何"编号"
 6. 输出内容必须为"干净的纯文本"：
    - 禁止使用任何表情符号、emoji、颜文字（如 🌟、✨、❤️、😊、1️⃣、2️⃣ 等）
@@ -344,7 +344,7 @@ class RAGService:
             self.embedding_model = None
         finally:
             _os.environ.update(_saved)
-            self._model_ready.set()  # 无论成败都解除等待
+            self._model_ready.set()  
     
     def _init_ner(self):
         if JIEBA_AVAILABLE:
@@ -2050,7 +2050,7 @@ class RAGService:
                 self.llm_client.chat.completions.create,
                 model=settings.OPENAI_MODEL,
                 messages=messages,
-                temperature=0.7,
+                temperature=0.3,
                 max_tokens=1000,
             )
             

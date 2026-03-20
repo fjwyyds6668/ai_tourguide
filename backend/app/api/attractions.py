@@ -1,10 +1,12 @@
 """景点 API"""
 import time
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
 import logging
 from app.core.prisma_client import get_prisma
+from sqlalchemy import func as sa_func
 from app.core.database import SessionLocal
 from app.models.interaction import Interaction
 from app.models.user import User
@@ -31,7 +33,9 @@ class AttractionResponse(BaseModel):
     image_url: Optional[str]
     audio_url: Optional[str]
     scenic_spot_id: Optional[int] = None
-    
+    visit_count: int = 0
+    created_at: Optional[datetime] = None
+
     class Config:
         from_attributes = True
 
@@ -80,6 +84,25 @@ async def get_attractions(
         take=min(max(int(limit), 1), 500),
         order={"id": "asc"},
     )
+
+    attraction_ids = [r.id for r in rows]
+    visit_counts: dict[int, int] = {}
+    if attraction_ids:
+        try:
+            db = SessionLocal()
+            try:
+                counts = (
+                    db.query(Interaction.attraction_id, sa_func.count(Interaction.id).label("cnt"))
+                    .filter(Interaction.attraction_id.in_(attraction_ids))
+                    .group_by(Interaction.attraction_id)
+                    .all()
+                )
+                visit_counts = {row[0]: int(row[1]) for row in counts}
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("查询景点热度失败: %s", e)
+
     return [
         AttractionResponse(
             id=r.id,
@@ -92,6 +115,8 @@ async def get_attractions(
             image_url=r.imageUrl,
             audio_url=r.audioUrl,
             scenic_spot_id=getattr(r, "scenicSpotId", None),
+            visit_count=visit_counts.get(r.id, 0),
+            created_at=getattr(r, "createdAt", None),
         )
         for r in rows
     ]

@@ -52,20 +52,30 @@
             class="attraction-col"
           >
             <el-card shadow="hover" class="attraction-card" @click="viewDetails(attraction)">
-              <img
-                v-if="attraction.image_url && !failedImages.has(attraction.id)"
-                :src="imageSrc(attraction.image_url)"
-                class="attraction-image"
-                alt="景点图片"
-                loading="lazy"
-                @error="failedImages.add(attraction.id)"
-              />
-              <div v-else class="placeholder-image">
-                <el-icon :size="48"><Picture /></el-icon>
+              <div class="card-image-wrap">
+                <img
+                  v-if="attraction.image_url && !failedImages.has(attraction.id)"
+                  :src="imageSrc(attraction.image_url)"
+                  class="attraction-image"
+                  alt="景点图片"
+                  loading="lazy"
+                  @error="failedImages.add(attraction.id)"
+                />
+                <div v-else class="placeholder-image">
+                  <el-icon :size="48"><Picture /></el-icon>
+                </div>
               </div>
               <h3>{{ attraction.name }}</h3>
               <p class="description">{{ attraction.description }}</p>
-              <el-tag v-if="attraction.category">{{ attraction.category }}</el-tag>
+              <div class="card-footer">
+                <el-tag v-if="attraction.category">{{ attraction.category }}</el-tag>
+                <span v-if="heatInfo(attraction)" :class="['heat-text', heatInfo(attraction).cls]">
+                  <template v-if="heatInfo(attraction).showBadge">
+                    <span class="heat-count-badge">🔥 {{ attraction.visit_count }}</span>
+                  </template>
+                  <span class="heat-label">{{ heatInfo(attraction).label }}</span>
+                </span>
+              </div>
             </el-card>
           </el-col>
         </el-row>
@@ -183,7 +193,7 @@ watch([selectedScenicId, searchKeyword, pageSize], () => {
 
 // short-lived cache to avoid re-fetching the same scenic spot on back-navigation
 const _attractionsCache = new Map() // scenicId -> { ts, data }
-const CACHE_TTL_MS = 15 * 60_000 // 15分钟，景点列表在单次会话内几乎不变
+const CACHE_TTL_MS = 5 * 60_000 // 5分钟，含热度数据需要更频繁刷新
 let attractionsAbortController = null
 
 const fetchAttractions = async () => {
@@ -220,6 +230,23 @@ const fetchAttractions = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000
+
+// 返回 { label, cls, showBadge } 或 null（不显示任何标签）
+const heatInfo = (attraction) => {
+  const count = attraction.visit_count || 0
+  // 热度优先
+  if (count >= 50) return { label: '爆火', cls: 'heat-blazing', showBadge: true }
+  if (count >= 20) return { label: '热门', cls: 'heat-hot',     showBadge: true }
+  if (count >= 5)  return { label: '人气', cls: 'heat-warm',    showBadge: true }
+  // 新上线：创建时间在一个月内
+  const createdAt = attraction.created_at ? new Date(attraction.created_at) : null
+  if (createdAt && Date.now() - createdAt.getTime() < ONE_MONTH_MS) {
+    return { label: '新上线', cls: 'heat-new', showBadge: false }
+  }
+  return null
 }
 
 const onScenicChange = () => {}
@@ -336,6 +363,7 @@ watch(selectedScenicId, async (id) => {
 
 .attraction-col {
   margin-bottom: 20px;
+  display: flex;
 }
 
 .attraction-card {
@@ -346,10 +374,23 @@ watch(selectedScenicId, async (id) => {
   backdrop-filter: blur(12px) saturate(1.6);
   -webkit-backdrop-filter: blur(12px) saturate(1.6);
   border: 1px solid rgba(255, 255, 255, 0.55) !important;
+  width: 100%;
 }
 .attraction-card :deep(.el-card__body) {
   background: transparent !important;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
+
+.attraction-card h3 {
+  margin: 8px 0 4px;
+}
+
+.description {
+  flex: 1;
+}
+
 .attraction-card:hover {
   transform: translateY(-3px);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.15);
@@ -367,6 +408,82 @@ watch(selectedScenicId, async (id) => {
 @media (prefers-reduced-motion: reduce) {
   .attraction-card { transition: none; }
   .attraction-card:hover { transform: none; }
+}
+
+.card-image-wrap {
+  position: relative;
+}
+
+.heat-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(255, 80, 0, 0.82);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  backdrop-filter: blur(4px);
+  line-height: 1.6;
+}
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 8px;
+  gap: 8px;
+}
+
+.heat-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.heat-new { color: #27ae60; }
+
+.heat-warm { color: #e08030; }
+.heat-warm .heat-count-badge {
+  background: rgba(224, 128, 48, 0.12);
+  border-color: rgba(224, 128, 48, 0.35);
+  color: #e08030;
+}
+
+.heat-hot { color: #d95f10; }
+.heat-hot .heat-count-badge {
+  background: rgba(217, 95, 16, 0.14);
+  border-color: rgba(217, 95, 16, 0.4);
+  color: #d95f10;
+}
+
+.heat-blazing { color: #c0320a; }
+.heat-blazing .heat-count-badge {
+  background: rgba(192, 50, 10, 0.16);
+  border-color: rgba(192, 50, 10, 0.45);
+  color: #c0320a;
+}
+
+.heat-count-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  line-height: 1;
+}
+
+.heat-label {
+  position: relative;
+  top: -1px;
 }
 
 .attraction-image {
