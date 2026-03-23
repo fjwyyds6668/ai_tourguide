@@ -247,14 +247,17 @@ async def get_personalized_recommendation(
     )
 
     try:
-        resp = await asyncio.get_running_loop().run_in_executor(
-            None,
-            lambda: rag_service.llm_client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=600,
-                temperature=0.7,
+        resp = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: rag_service.llm_client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=600,
+                    temperature=0.7,
+                ),
             ),
+            timeout=30.0,
         )
         raw = resp.choices[0].message.content.strip()
         # 兼容 LLM 返回 markdown 代码块的情况
