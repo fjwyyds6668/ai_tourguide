@@ -68,7 +68,7 @@
         </div>
 
         <div class="refresh-row">
-          <el-button @click="load(true)" size="small">重新生成</el-button>
+          <el-button type="primary" @click="load(true)">重新生成</el-button>
         </div>
       </div>
     </el-card>
