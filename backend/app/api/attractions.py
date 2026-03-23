@@ -242,7 +242,7 @@ async def get_personalized_recommendation(
         f"对话记录：\n{conv_text}\n\n"
         f"可选景点：\n{attractions_info}\n\n"
         "请以JSON格式返回，不要包含任何其他内容：\n"
-        '{"recommendation": "个性化推荐说明（200字以内，说明推荐理由和建议游览顺序）", '
+        '{"recommendation": "个性化推荐说明（200字以内，说明推荐理由和建议游览顺序，只写景点名称，不要出现任何ID或数字编号）", '
         '"attraction_ids": [推荐的景点ID列表，最多5个整数]}'
     )
 
@@ -263,7 +263,7 @@ async def get_personalized_recommendation(
         # 兼容 LLM 返回 markdown 代码块的情况
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         data = json.loads(m.group() if m else raw)
-        rec_text = data.get("recommendation", "")
+        rec_text = re.sub(r'[（(]\s*ID\s*[:：]\s*\d+\s*[）)]', '', data.get("recommendation", "")).strip()
         rec_ids = set(int(i) for i in data.get("attraction_ids", []))
     except Exception as e:
         logger.warning("个性化推荐失败: %s", e)
