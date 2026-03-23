@@ -143,28 +143,59 @@ async def list_scenic_spots_public():
     return result
 
 
-@router.get("/recommendations/{user_id}")
-async def get_recommendations(user_id: int, limit: int = 5):
-    # TODO: 基于图数据库的推荐
-    prisma = await get_prisma()
-    rows = await prisma.attraction.find_many(take=limit, order={"id": "asc"})
-    return {
-        "recommendations": [
-            AttractionResponse(
-                id=r.id,
-                name=r.name,
-                description=r.description,
-                location=r.location,
-                latitude=r.latitude,
-                longitude=r.longitude,
-                category=r.category,
-                image_url=r.imageUrl,
-                audio_url=r.audioUrl,
-                scenic_spot_id=getattr(r, "scenicSpotId", None),
+@router.get("/hot", response_model=List[AttractionResponse])
+async def get_hot_attractions(scenic_spot_id: Optional[int] = None, limit: int = 5):
+    """返回访问热度最高的景点，基于 Interaction 表统计。"""
+    limit = min(max(int(limit), 1), 20)
+    try:
+        db = SessionLocal()
+        try:
+            q = (
+                db.query(Interaction.attraction_id, sa_func.count(Interaction.id).label("cnt"))
+                .filter(Interaction.attraction_id.isnot(None))
+                .group_by(Interaction.attraction_id)
+                .order_by(sa_func.count(Interaction.id).desc())
+                .limit(limit * 3)  # 多取一些，再按景区过滤
             )
-            for r in rows
-        ]
-    }
+            hot_rows = q.all()
+            hot_ids = [row[0] for row in hot_rows]
+            visit_counts = {row[0]: int(row[1]) for row in hot_rows}
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("查询热门景点失败: %s", e)
+        hot_ids, visit_counts = [], {}
+
+    if not hot_ids:
+        return []
+
+    prisma = await get_prisma()
+    where: dict = {"id": {"in": hot_ids}}
+    if scenic_spot_id is not None:
+        where["scenicSpotId"] = scenic_spot_id
+
+    rows = await prisma.attraction.find_many(where=where, take=500)
+
+    # 按热度排序，截取 limit 条
+    rows.sort(key=lambda r: visit_counts.get(r.id, 0), reverse=True)
+    rows = rows[:limit]
+
+    return [
+        AttractionResponse(
+            id=r.id,
+            name=r.name,
+            description=r.description,
+            location=r.location,
+            latitude=r.latitude,
+            longitude=r.longitude,
+            category=r.category,
+            image_url=r.imageUrl,
+            audio_url=r.audioUrl,
+            scenic_spot_id=getattr(r, "scenicSpotId", None),
+            visit_count=visit_counts.get(r.id, 0),
+        )
+        for r in rows
+    ]
 
 
 def _record_attraction_visit(attraction_id: int, session_id: Optional[str] = None) -> None:
@@ -196,6 +227,18 @@ async def get_attraction(
 
     background_tasks.add_task(_record_attraction_visit, attraction_id, session_id)
 
+    visit_count = 0
+    try:
+        db = SessionLocal()
+        try:
+            visit_count = db.query(sa_func.count(Interaction.id)).filter(
+                Interaction.attraction_id == attraction_id
+            ).scalar() or 0
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("查询景点热度失败: %s", e)
+
     return AttractionResponse(
         id=r.id,
         name=r.name,
@@ -207,6 +250,7 @@ async def get_attraction(
         image_url=r.imageUrl,
         audio_url=r.audioUrl,
         scenic_spot_id=getattr(r, "scenicSpotId", None),
+        visit_count=visit_count,
     )
 
 @router.post("", response_model=AttractionResponse)

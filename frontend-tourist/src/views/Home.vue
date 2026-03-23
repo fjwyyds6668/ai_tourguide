@@ -24,7 +24,7 @@
       </div>
 
       <el-row :gutter="20" class="feature-cards" style="margin-top: 24px">
-        <el-col :xs="24" :sm="24" :md="8" class="feature-col">
+        <el-col :xs="12" :sm="12" :md="6" class="feature-col">
           <el-card
             shadow="hover"
             :class="{ disabled: !selectedScenicId }"
@@ -37,7 +37,7 @@
             <p>与 AI 导游进行实时语音交互</p>
           </el-card>
         </el-col>
-        <el-col :xs="24" :sm="24" :md="8" class="feature-col">
+        <el-col :xs="12" :sm="12" :md="6" class="feature-col">
           <el-card
             shadow="hover"
             :class="{ disabled: !selectedScenicId }"
@@ -50,7 +50,7 @@
             <p>查看该景区下的所有景点</p>
           </el-card>
         </el-col>
-        <el-col :xs="24" :sm="24" :md="8" class="feature-col">
+        <el-col :xs="12" :sm="12" :md="6" class="feature-col">
           <el-card
             shadow="hover"
             :class="{ disabled: !selectedScenicId }"
@@ -63,6 +63,19 @@
             <p>查看在当前景区的对话记录</p>
           </el-card>
         </el-col>
+        <el-col :xs="12" :sm="12" :md="6" class="feature-col">
+          <el-card
+            shadow="hover"
+            :class="{ disabled: !selectedScenicId }"
+            @click="navigateIfSelected('/map')"
+            @mouseenter="prefetchMap"
+            @touchstart.passive="prefetchMap"
+          >
+            <el-icon :size="48"><MapLocation /></el-icon>
+            <h3>景区地图</h3>
+            <p>查看景区全景地图导览</p>
+          </el-card>
+        </el-col>
       </el-row>
     </el-card>
   </div>
@@ -73,7 +86,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import 'element-plus/es/components/message/style/css'
-import { Microphone, Location, Document } from '@element-plus/icons-vue'
+import { Microphone, Location, Document, MapLocation } from '@element-plus/icons-vue'
 import api from '../api'
 
 const router = useRouter()
@@ -129,7 +142,7 @@ const handleScenicChange = (id) => {
 }
 
 // 用户悬停/触摸卡片时才预取对应路由块，节省手机初始流量
-let _prefetchedVG = false, _prefetchedAT = false, _prefetchedHT = false
+let _prefetchedVG = false, _prefetchedAT = false, _prefetchedHT = false, _prefetchedMP = false
 const prefetchVoiceGuide = () => {
   if (_prefetchedVG) return
   _prefetchedVG = true
@@ -148,6 +161,11 @@ const prefetchHistory = () => {
   if (_prefetchedHT) return
   _prefetchedHT = true
   import('./History.vue').catch(() => {})
+}
+const prefetchMap = () => {
+  if (_prefetchedMP) return
+  _prefetchedMP = true
+  import('./Map.vue').catch(() => {})
 }
 
 const navigateIfSelected = (path) => {

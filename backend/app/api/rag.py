@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.models.interaction import Interaction
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 router = APIRouter()
 

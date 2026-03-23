@@ -20,6 +20,11 @@ const routes = [
     path: '/history',
     name: 'History',
     component: () => import(/* webpackChunkName: "history" */ '../views/History.vue')
+  },
+  {
+    path: '/map',
+    name: 'Map',
+    component: () => import(/* webpackChunkName: "map" */ '../views/Map.vue')
   }
 ]
 

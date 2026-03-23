@@ -62,7 +62,7 @@ async def lifespan(_app: FastAPI):
             from app.services.rag_service import rag_service
             if rag_service.llm_client is None:
                 return
-            await asyncio.get_event_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None,
                 lambda: rag_service.llm_client.chat.completions.create(
                     model=settings.OPENAI_MODEL,

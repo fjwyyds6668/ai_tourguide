@@ -5,6 +5,37 @@
         <span class="card-title">景点列表</span>
       </template>
       
+      <!-- 热门推荐条带 -->
+      <div v-if="hotAttractions.length > 0" class="hot-section">
+        <div class="hot-title">
+          <span>🔥 热门推荐</span>
+        </div>
+        <div class="hot-scroll">
+          <div
+            v-for="item in hotAttractions"
+            :key="'hot-' + item.id"
+            class="hot-card"
+            @click="viewDetails(item)"
+          >
+            <div class="hot-card-img-wrap">
+              <img
+                v-if="item.image_url && !failedImages.has(item.id)"
+                :src="imageSrc(item.image_url)"
+                class="hot-card-img"
+                alt=""
+                loading="lazy"
+                @error="failedImages.add(item.id)"
+              />
+              <div v-else class="hot-card-img-placeholder">
+                <el-icon :size="28"><Picture /></el-icon>
+              </div>
+            </div>
+            <div class="hot-card-name">{{ item.name }}</div>
+            <div class="hot-card-count">{{ item.visit_count }} 次访问</div>
+          </div>
+        </div>
+      </div>
+
       <div class="search-row">
         <el-input
           v-model="searchText"
@@ -131,6 +162,7 @@ import { Search, Picture } from '@element-plus/icons-vue'
 import api from '../api'
 
 const attractions = ref([])
+const hotAttractions = ref([])
 const scenicSpots = ref([])
 const selectedScenicId = ref(null)
 const loading = ref(false)
@@ -195,6 +227,17 @@ watch([selectedScenicId, searchKeyword, pageSize], () => {
 const _attractionsCache = new Map() // scenicId -> { ts, data }
 const CACHE_TTL_MS = 5 * 60_000 // 5分钟，含热度数据需要更频繁刷新
 let attractionsAbortController = null
+
+const fetchHotAttractions = async (scenicId) => {
+  try {
+    const params = { limit: 5 }
+    if (scenicId) params.scenic_spot_id = scenicId
+    const res = await api.get('/attractions/hot', { params })
+    hotAttractions.value = (res.data || []).filter(a => a.visit_count > 0)
+  } catch (e) {
+    hotAttractions.value = []
+  }
+}
 
 const fetchAttractions = async () => {
   if (!selectedScenicId.value) {
@@ -273,14 +316,14 @@ onMounted(async () => {
       selectedScenicId.value = idNum
     }
   }
-  await fetchAttractions()
+  await Promise.all([fetchAttractions(), fetchHotAttractions(selectedScenicId.value)])
 })
 
 watch(selectedScenicId, async (id) => {
   if (!id) return
   localStorage.setItem('current_scenic_spot_id', String(id))
   failedImages.clear()
-  await fetchAttractions()
+  await Promise.all([fetchAttractions(), fetchHotAttractions(id)])
 })
 </script>
 
@@ -310,6 +353,86 @@ watch(selectedScenicId, async (id) => {
   font-weight: 600;
   border-bottom: 1px solid rgba(255, 255, 255, 0.35);
   background: transparent !important;
+}
+
+.hot-section {
+  margin-bottom: 20px;
+}
+
+.hot-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #d95f10;
+  margin-bottom: 10px;
+}
+
+.hot-scroll {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+}
+
+.hot-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+.hot-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.15);
+  border-radius: 4px;
+}
+
+.hot-card {
+  flex: 0 0 120px;
+  cursor: pointer;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255,255,255,0.6);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+
+.hot-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+}
+
+.hot-card-img-wrap {
+  width: 120px;
+  height: 80px;
+  overflow: hidden;
+  background: rgba(200,200,200,0.15);
+}
+
+.hot-card-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.hot-card-img-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #c0c4cc;
+}
+
+.hot-card-name {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 8px 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hot-card-count {
+  font-size: 11px;
+  color: #d95f10;
+  padding: 0 8px 6px;
 }
 
 .search-row {
