@@ -49,6 +49,10 @@
             <el-icon><MapLocation /></el-icon>
             <template #title>景区地图</template>
           </el-menu-item>
+          <el-menu-item index="/recommendations">
+            <el-icon><Star /></el-icon>
+            <template #title>个性推荐</template>
+          </el-menu-item>
         </el-menu>
 
         <div class="aside-footer" :class="{ collapsed }">
@@ -90,6 +94,10 @@
           <el-icon><MapLocation /></el-icon>
           <span>景区地图</span>
         </router-link>
+        <router-link to="/recommendations" class="nav-item" :class="{ active: activePath === '/recommendations' }">
+          <el-icon><Star /></el-icon>
+          <span>个性推荐</span>
+        </router-link>
       </nav>
     </el-container>
   </div>
@@ -98,7 +106,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Microphone, Location, Document, Fold, Expand, MapLocation } from '@element-plus/icons-vue'
+import { Microphone, Location, Document, Fold, Expand, MapLocation, Star } from '@element-plus/icons-vue'
 import api from './api'
 
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)

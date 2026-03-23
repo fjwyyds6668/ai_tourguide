@@ -1,4 +1,7 @@
 """景点 API"""
+import asyncio
+import json
+import re
 import time
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from datetime import datetime
@@ -195,6 +198,91 @@ async def get_hot_attractions(scenic_spot_id: Optional[int] = None, limit: int =
         )
         for r in rows
     ]
+
+
+class RecommendResponse(BaseModel):
+    recommendation: Optional[str] = None
+    attractions: List[AttractionResponse] = []
+
+
+@router.get("/recommend", response_model=RecommendResponse)
+async def get_personalized_recommendation(
+    session_id: str,
+    scenic_spot_id: Optional[int] = None,
+):
+    """根据用户对话历史，调用 LLM 生成个性化景点/路线推荐。"""
+    from app.services.session_service import session_service
+    from app.services.rag_service import rag_service
+    from app.core.config import settings
+
+    history = session_service.get_conversation_history(session_id)
+    if not history:
+        return RecommendResponse()
+
+    prisma = await get_prisma()
+    where: dict = {}
+    if scenic_spot_id is not None:
+        where["scenicSpotId"] = scenic_spot_id
+    all_attractions = await prisma.attraction.find_many(where=where, take=100)
+    if not all_attractions:
+        return RecommendResponse()
+
+    attractions_info = "\n".join([
+        f"ID:{a.id} 名称:{a.name} 类别:{a.category or '未知'} 简介:{(a.description or '')[:60]}"
+        for a in all_attractions
+    ])
+    conv_text = "\n".join([
+        f"{'游客' if m['role'] == 'user' else 'AI导游'}: {m['content']}"
+        for m in history[-20:]
+    ])
+
+    prompt = (
+        "根据以下游客与AI导游的对话，分析游客的兴趣偏好，"
+        "从景点列表中为其量身推荐最合适的景点或游览路线。\n\n"
+        f"对话记录：\n{conv_text}\n\n"
+        f"可选景点：\n{attractions_info}\n\n"
+        "请以JSON格式返回，不要包含任何其他内容：\n"
+        '{"recommendation": "个性化推荐说明（200字以内，说明推荐理由和建议游览顺序）", '
+        '"attraction_ids": [推荐的景点ID列表，最多5个整数]}'
+    )
+
+    try:
+        resp = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: rag_service.llm_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=600,
+                temperature=0.7,
+            ),
+        )
+        raw = resp.choices[0].message.content.strip()
+        # 兼容 LLM 返回 markdown 代码块的情况
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        data = json.loads(m.group() if m else raw)
+        rec_text = data.get("recommendation", "")
+        rec_ids = set(int(i) for i in data.get("attraction_ids", []))
+    except Exception as e:
+        logger.warning("个性化推荐失败: %s", e)
+        return RecommendResponse()
+
+    rec_attractions = [a for a in all_attractions if a.id in rec_ids]
+    # 保持 LLM 返回的顺序
+    id_order = {v: i for i, v in enumerate(data.get("attraction_ids", []))}
+    rec_attractions.sort(key=lambda a: id_order.get(a.id, 99))
+
+    return RecommendResponse(
+        recommendation=rec_text,
+        attractions=[
+            AttractionResponse(
+                id=a.id, name=a.name, description=a.description,
+                location=a.location, latitude=a.latitude, longitude=a.longitude,
+                category=a.category, image_url=a.imageUrl, audio_url=a.audioUrl,
+                scenic_spot_id=getattr(a, "scenicSpotId", None), visit_count=0,
+            )
+            for a in rec_attractions
+        ],
+    )
 
 
 def _record_attraction_visit(attraction_id: int, session_id: Optional[str] = None) -> None:

@@ -5,37 +5,6 @@
         <span class="card-title">景点列表</span>
       </template>
       
-      <!-- 热门推荐条带 -->
-      <div v-if="hotAttractions.length > 0" class="hot-section">
-        <div class="hot-title">
-          <span>🔥 热门推荐</span>
-        </div>
-        <div class="hot-scroll">
-          <div
-            v-for="item in hotAttractions"
-            :key="'hot-' + item.id"
-            class="hot-card"
-            @click="viewDetails(item)"
-          >
-            <div class="hot-card-img-wrap">
-              <img
-                v-if="item.image_url && !failedImages.has(item.id)"
-                :src="imageSrc(item.image_url)"
-                class="hot-card-img"
-                alt=""
-                loading="lazy"
-                @error="failedImages.add(item.id)"
-              />
-              <div v-else class="hot-card-img-placeholder">
-                <el-icon :size="28"><Picture /></el-icon>
-              </div>
-            </div>
-            <div class="hot-card-name">{{ item.name }}</div>
-            <div class="hot-card-count">{{ item.visit_count }} 次访问</div>
-          </div>
-        </div>
-      </div>
-
       <div class="search-row">
         <el-input
           v-model="searchText"
