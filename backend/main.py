@@ -2,7 +2,6 @@
 import os
 import warnings
 
-# 清除系统代理环境变量，确保所有外部请求直连，不受 VPN/代理软件影响
 for _proxy_key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
     os.environ.pop(_proxy_key, None)
 
@@ -20,7 +19,6 @@ from starlette.middleware.gzip import GZipMiddleware
 
 _logger = logging.getLogger(__name__)
 
-# 必须在 Python 启动时设置，对 Prisma 生成器也有效
 if not os.environ.get('PYTHONIOENCODING'):
     os.environ['PYTHONIOENCODING'] = 'utf-8'
 if not os.environ.get('PYTHONUTF8'):
@@ -46,34 +44,58 @@ async def lifespan(_app: FastAPI):
     async def _cleanup_loop() -> None:
         while True:
             try:
-                await asyncio.sleep(600)  # 每 10 分钟清理一次过期的内存会话
+                await asyncio.sleep(600)
                 session_service.cleanup_expired_sessions()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 _logger.warning("Session cleanup error: %s", e)
 
-    async def _warmup_llm() -> None:
-        """预热 LLM 连接，避免第一次问答因 TCP 握手导致延迟。"""
+    async def _warmup_all() -> None:
+        """预热 Embedding / Milvus / Neo4j / LLM，消除第一次问答的冷启动延迟。"""
         await asyncio.sleep(0.5)
+        loop = asyncio.get_running_loop()
+        from app.services.rag_service import rag_service
+
         try:
-            from app.services.rag_service import rag_service
-            if rag_service.llm_client is None:
-                return
-            await asyncio.get_running_loop().run_in_executor(
-                None,
-                lambda: rag_service.llm_client.chat.completions.create(
-                    model=settings.OPENAI_MODEL,
-                    messages=[{"role": "user", "content": "hi"}],
-                    max_tokens=1,
-                ),
-            )
-            _logger.info("LLM connection warmed up")
+            await loop.run_in_executor(None, lambda: rag_service.generate_embedding("预热"))
+            _logger.info("Embedding model warmed up")
         except Exception as e:
-            _logger.warning("LLM warmup failed (non-critical): %s", e)
+            _logger.warning("Embedding warmup failed: %s", e)
+
+        try:
+            await rag_service.vector_search("预热", top_k=1)
+            _logger.info("Milvus warmed up")
+        except Exception as e:
+            _logger.warning("Milvus warmup failed: %s", e)
+
+        try:
+            await loop.run_in_executor(None, lambda: rag_service.graph_search.__func__ and None)
+            from app.core.neo4j_client import neo4j_client
+            await loop.run_in_executor(
+                None,
+                lambda: neo4j_client.execute_query("RETURN 1 AS ping", {}),
+            )
+            _logger.info("Neo4j warmed up")
+        except Exception as e:
+            _logger.warning("Neo4j warmup failed: %s", e)
+
+        try:
+            if rag_service.llm_client is not None:
+                await loop.run_in_executor(
+                    None,
+                    lambda: rag_service.llm_client.chat.completions.create(
+                        model=settings.OPENAI_MODEL,
+                        messages=[{"role": "user", "content": "hi"}],
+                        max_tokens=1,
+                    ),
+                )
+                _logger.info("LLM connection warmed up")
+        except Exception as e:
+            _logger.warning("LLM warmup failed: %s", e)
 
     task = asyncio.create_task(_cleanup_loop())
-    asyncio.create_task(_warmup_llm())
+    asyncio.create_task(_warmup_all())
     yield
     task.cancel()
     try:
