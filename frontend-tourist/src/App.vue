@@ -123,7 +123,6 @@ const router = useRouter()
 const activePath = computed(() => route.path)
 const isHome = computed(() => route.path === '/')
 
-// ── 景区背景图 ──
 const scenicBgImage = ref('')
 const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
 const resolveUrl = (url) => {
@@ -133,16 +132,14 @@ const resolveUrl = (url) => {
   return `${backendOrigin}${url}`
 }
 
-// 内页背景：随机取该景区某个景点的图片，每次刷新重新随机
 let lastLoadedScenicId = null
-let _spotsCache = null  // 景区列表缓存，避免多个组件重复请求
+let _spotsCache = null
 const loadScenicBackground = async () => {
   try {
     const savedId = localStorage.getItem('current_scenic_spot_id')
     if (!savedId || savedId === lastLoadedScenicId) return
     lastLoadedScenicId = savedId
 
-    // 景点列表与景区封面并行请求，取到景点图片后取消对封面的依赖
     const [attractionsRes, spotsRes] = await Promise.all([
       api.get('/attractions', { params: { scenic_spot_id: Number(savedId), limit: 100 } }).catch(() => null),
       _spotsCache
@@ -165,12 +162,10 @@ const loadScenicBackground = async () => {
   }
 }
 
-// 进入内页时加载背景
 watch(isHome, (val) => {
   if (!val) loadScenicBackground()
 })
 
-// scenic_spot_id 变化时才重新加载（避免每次路由切换都检查）
 watch(() => route.path, () => {
   if (route.path === '/') return
   const currentId = localStorage.getItem('current_scenic_spot_id')

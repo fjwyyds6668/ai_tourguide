@@ -6,7 +6,6 @@ import warnings
 for _proxy_key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
     os.environ.pop(_proxy_key, None)
 
-# 必须在其他模块导入前配置：抑制第三方库的已知警告
 warnings.filterwarnings("ignore", category=UserWarning, module="jieba._compat")
 warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub.file_download")
 warnings.filterwarnings("ignore", message=".*resume_download is deprecated.*")
@@ -34,7 +33,6 @@ from app.api import router
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """启动时建表、开启会话清理后台任务，关闭时取消。"""
-    # 自动创建 SQLAlchemy 管理的表（若已存在则跳过）
     try:
         from app.core.database import engine, Base
         from app.models import Attraction, User, Interaction  # noqa: F401 — 注册模型
@@ -57,7 +55,7 @@ async def lifespan(_app: FastAPI):
 
     async def _warmup_llm() -> None:
         """预热 LLM 连接，避免第一次问答因 TCP 握手导致延迟。"""
-        await asyncio.sleep(0.5)  # 仅等待 rag_service 完成同步初始化
+        await asyncio.sleep(0.5)
         try:
             from app.services.rag_service import rag_service
             if rag_service.llm_client is None:
@@ -98,7 +96,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# GZip 压缩，减少 JSON/文本传输体积
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.include_router(router, prefix="/api/v1")

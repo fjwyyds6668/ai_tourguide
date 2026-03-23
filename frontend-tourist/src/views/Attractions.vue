@@ -223,9 +223,8 @@ watch([selectedScenicId, searchKeyword, pageSize], () => {
   page.value = 1
 })
 
-// short-lived cache to avoid re-fetching the same scenic spot on back-navigation
-const _attractionsCache = new Map() // scenicId -> { ts, data }
-const CACHE_TTL_MS = 5 * 60_000 // 5分钟，含热度数据需要更频繁刷新
+const _attractionsCache = new Map()
+const CACHE_TTL_MS = 5 * 60_000
 let attractionsAbortController = null
 
 const fetchHotAttractions = async (scenicId) => {

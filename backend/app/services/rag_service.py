@@ -102,18 +102,13 @@ def _clean_special_symbols(text: str) -> str:
     if not text or not isinstance(text, str):
         return text or ""
     s = text
-    # 移除 Markdown 粗体、斜体符号
-    s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)  # **粗体** -> 粗体
-    s = re.sub(r"\*([^*]+)\*", r"\1", s)  # *斜体* -> 斜体
-    s = re.sub(r"#+\s*", "", s)  # Markdown 标题符号
-    # 移除列表符号（保留内容）
+    s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
+    s = re.sub(r"\*([^*]+)\*", r"\1", s)
+    s = re.sub(r"#+\s*", "", s)
     s = re.sub(r"^[\s]*[-•▪▫]\s+", "", s, flags=re.MULTILINE)
-    s = re.sub(r"^[\s]*[1-9]\d*[\.、]\s+", "", s, flags=re.MULTILINE)  # 数字列表
-    # 移除装饰性符号
+    s = re.sub(r"^[\s]*[1-9]\d*[\.、]\s+", "", s, flags=re.MULTILINE)
     s = re.sub(r"[～~——…•▪▫]+", "", s)
-    # 移除 emoji 数字（如 1️⃣、2️⃣）
     s = re.sub(r"[\u0030-\u0039]\uFE0F\u20E3", "", s)
-    # 移除多余的装饰性标点
     s = re.sub(r"[。]{2,}", "。", s)
     s = re.sub(r"\s{2,}", " ", s).strip()
     return s
@@ -147,7 +142,6 @@ class RAGService:
         self._model_ready = threading.Event()  # RAG 请求到来时等待模型加载完毕
         self._init_ner()
         self._init_llm_client()
-        # 后台线程加载 embedding 模型，不阻塞服务器启动
         threading.Thread(target=self._init_embedding_model, daemon=True).start()
 
     def _log_cache_stats_if_needed(self) -> None:
@@ -183,7 +177,6 @@ class RAGService:
         if expires_at > 0 and _monotonic() >= expires_at:
             self._embedding_cache.pop(key, None)
             return None
-        # LRU：命中时移到队尾（最近使用）
         self._embedding_cache.move_to_end(key)
         return payload
 
@@ -193,7 +186,6 @@ class RAGService:
         if key in self._embedding_cache:
             self._embedding_cache.move_to_end(key)
         elif len(self._embedding_cache) >= EMBEDDING_CACHE_MAX_SIZE:
-            # LRU：驱逐队首（最久未使用）
             self._embedding_cache.popitem(last=False)
         self._embedding_cache[key] = (payload, expires_at)
 
@@ -205,7 +197,6 @@ class RAGService:
         if expires_at > 0 and _monotonic() >= expires_at:
             self._vector_search_cache.pop(key, None)
             return None
-        # LRU：命中时移到队尾
         self._vector_search_cache.move_to_end(key)
         return payload
 
@@ -215,7 +206,6 @@ class RAGService:
         if key in self._vector_search_cache:
             self._vector_search_cache.move_to_end(key)
         elif len(self._vector_search_cache) >= VECTOR_SEARCH_CACHE_MAX_SIZE:
-            # LRU：驱逐队首（最久未使用）
             self._vector_search_cache.popitem(last=False)
         self._vector_search_cache[key] = (payload, expires_at)
 

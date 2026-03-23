@@ -155,7 +155,7 @@ async def get_hot_attractions(scenic_spot_id: Optional[int] = None, limit: int =
                 .filter(Interaction.attraction_id.isnot(None))
                 .group_by(Interaction.attraction_id)
                 .order_by(sa_func.count(Interaction.id).desc())
-                .limit(limit * 3)  # 多取一些，再按景区过滤
+                .limit(limit * 3)
             )
             hot_rows = q.all()
             hot_ids = [row[0] for row in hot_rows]
@@ -176,7 +176,6 @@ async def get_hot_attractions(scenic_spot_id: Optional[int] = None, limit: int =
 
     rows = await prisma.attraction.find_many(where=where, take=500)
 
-    # 按热度排序，截取 limit 条
     rows.sort(key=lambda r: visit_counts.get(r.id, 0), reverse=True)
     rows = rows[:limit]
 

@@ -58,7 +58,6 @@ class SessionService:
             return None
 
         data["last_active"] = datetime.now()
-        # 刷新 TTL，使活跃会话不过期
         self._store.set(
             session_id,
             data,

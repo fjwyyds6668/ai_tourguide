@@ -141,7 +141,6 @@ const handleScenicChange = (id) => {
   selectedScenic.value = scenicSpots.value.find((s) => s.id === id) || null
 }
 
-// 用户悬停/触摸卡片时才预取对应路由块，节省手机初始流量
 let _prefetchedVG = false, _prefetchedAT = false, _prefetchedHT = false, _prefetchedMP = false
 const prefetchVoiceGuide = () => {
   if (_prefetchedVG) return

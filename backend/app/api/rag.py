@@ -487,7 +487,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                             try:
                                 chunk_queue.put_nowait(c)
                             except asyncio.QueueFull:
-                                # 队列满时丢弃最旧的一个，再写入当前chunk
                                 try:
                                     chunk_queue.get_nowait()
                                 except Exception:
