@@ -1278,7 +1278,7 @@ class RAGService:
         graph_results: List[Dict[str, Any]] = []
         subgraph_data = None
         if entity_names:
-            per_entity_limit = 8 if intent == QueryIntent.ROUTE else 5
+            per_entity_limit = 12 if intent == QueryIntent.LISTING else (8 if intent == QueryIntent.ROUTE else 5)
             tasks = [
                 self._graph_search_many(entity_names[:5], per_entity_limit=per_entity_limit),
             ]
@@ -1359,6 +1359,30 @@ class RAGService:
                                     enhanced_results = (enhanced_results or "") + "\n\n" + clusters_ctx
             except Exception as e:
                 logger.warning(f"扩展景区景点失败 (intent={intent.value}): {e}")
+
+        if should_expand and intent in (QueryIntent.LISTING, QueryIntent.ROUTE) and "【景点一簇信息】" not in (enhanced_results or ""):
+            try:
+                candidate_names = list(dict.fromkeys(
+                    ([scenic_name_str] if scenic_name_str else []) +
+                    [e for e in (entity_names or []) if e]
+                ))
+                for cname in candidate_names[:5]:
+                    scenic_aids, attraction_names = await self._get_scenic_attraction_ids_and_names(cname)
+                    if not scenic_aids:
+                        continue
+                    if attraction_names and "根据图数据库，景区「" not in (enhanced_results or ""):
+                        sentence = self._format_scenic_attractions_sentence(cname, attraction_names)
+                        if sentence:
+                            enhanced_results = sentence + "\n\n" + (enhanced_results or "")
+                    clusters_ctx = await self._get_attraction_cluster_context(scenic_aids, max_items=max_attractions)
+                    if clusters_ctx:
+                        if intent == QueryIntent.ROUTE:
+                            enhanced_results = (enhanced_results or "") + "\n\n【路线可选景点】\n" + clusters_ctx
+                        else:
+                            enhanced_results = (enhanced_results or "") + "\n\n" + clusters_ctx
+                    break
+            except Exception as e:
+                logger.warning(f"LISTING/ROUTE 兜底扩展景区景点失败: {e}")
 
         if intent == QueryIntent.LISTING and "根据图数据库，景区「" not in (enhanced_results or ""):
             try:
