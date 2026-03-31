@@ -10,7 +10,6 @@
       </div>
 
       <template v-else>
-        <!-- 桌面：表格 -->
         <div class="table-wrap desktop-only">
           <el-table
             :data="historyList"
@@ -36,7 +35,6 @@
           </el-table>
         </div>
 
-        <!-- 手机：卡片列表 -->
         <div class="mobile-only" v-loading="loading">
           <el-empty v-if="historyList.length === 0" description="暂无对话记录" />
           <div v-for="row in historyList" :key="row.id" class="history-card">
@@ -64,7 +62,6 @@ import { formatTime } from '../utils/format'
 const historyList = ref([])
 const loading = ref(false)
 
-// 从 localStorage 读取当前用户的 session IDs
 const getUserSessionIds = () => {
   try {
     return JSON.parse(localStorage.getItem('tourguide_session_ids') || '[]')
@@ -83,7 +80,6 @@ const loadHistory = async () => {
 
   loading.value = true
   try {
-    // 并行请求所有 session 的历史记录，然后合并
     const results = await Promise.all(
       ids.map(sid =>
         api.get('/history/history', {
@@ -102,7 +98,6 @@ const loadHistory = async () => {
       merged = fallback
     }
 
-    // 合并、去重（按 id）、按时间降序排列
     const seen = new Set()
     merged = merged.filter(r => {
       if (seen.has(r.id)) return false
@@ -145,7 +140,6 @@ onMounted(() => {
   color: var(--rag-black);
 }
 
-/* 表格背景透明，让毛玻璃卡片背景透出 */
 .history-page :deep(.el-table),
 .history-page :deep(.el-table__inner-wrapper),
 .history-page :deep(.el-table__header-wrapper),

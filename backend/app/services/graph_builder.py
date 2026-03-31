@@ -68,7 +68,6 @@ class GraphBuilder:
             except Exception:
                 scenic_name_from_parsed = None
 
-        # 若既无景区 ID 也无景区名称，跳过图构建以避免游离簇
         if not scenic_spot_id and not scenic_name_from_parsed:
             logger.warning(
                 "build_attraction_cluster: 缺少景区上下文(scenic_spot_id / scenic_spot 名称)，"
@@ -115,7 +114,6 @@ class GraphBuilder:
         """
         await self._execute_query_async(q_clean_orphans, {"id": int(att_id)})
 
-        # Attraction 必须挂到某个 ScenicSpot，避免景点子图脱离景区簇
         if scenic_spot_id:
             q_scenic_rel = """
             MATCH (a:Attraction {id: $id})
@@ -146,7 +144,6 @@ class GraphBuilder:
             except Exception as e:
                 logger.warning(f"合并景区子景点 Spot -> Attraction 失败: {e}")
         elif scenic_name_from_parsed:
-            # 无 scenic_spot_id 但有景区名称：按名称挂接，保证簇围绕 ScenicSpot 汇聚
             q_ensure_scenic_by_name = """
             MERGE (s:ScenicSpot {name: $name})
             ON CREATE SET s.scenic_spot_id = coalesce(s.scenic_spot_id, 0)
@@ -292,7 +289,6 @@ class GraphBuilder:
     
     async def create_relationship(self, from_entity: str, to_entity: str,
                                  relation_type: str, properties: Dict = None) -> bool:
-        # 关系类型白名单校验，避免 Cypher 注入
         import re
         rel = None
         if relation_type and isinstance(relation_type, str):
@@ -468,7 +464,6 @@ class GraphBuilder:
         opening_hours = parsed.get("opening_hours")
         transport_info = parsed.get("transport_info")
         service_facilities = parsed.get("service_facilities")
-        # clear_existing=True 时清空原有簇再重建，默认只做增量合并
         if clear_existing:
             if text_id:
                 q_clean_text = """

@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# 景区列表 60s 缓存
 _scenic_spots_cache: Optional[list] = None
 _scenic_spots_cache_time: float = 0
 SCENIC_SPOTS_CACHE_TTL = 60

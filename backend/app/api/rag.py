@@ -25,7 +25,7 @@ logger.setLevel(logging.INFO)
 router = APIRouter()
 
 _HISTORY_BUDGET_CHARS = 1200  # 发送给LLM前的对话历史字符预算（仅裁剪历史，不含本轮问题）
-MAX_RECENT_HISTORY = 20  # 裁剪前保留的最近消息条数
+MAX_RECENT_HISTORY = 20
 
 
 def _trim_conversation_history(
@@ -123,7 +123,6 @@ async def _load_character_prompt_and_voice(character_id: Optional[int]) -> Tuple
         return None, None
 
 
-# 景点名匹配缓存 60s
 _attraction_id_name_cache: Optional[List[Tuple[int, str]]] = None
 _attraction_cache_time: float = 0
 _ATTRACTION_CACHE_TTL = 60.0

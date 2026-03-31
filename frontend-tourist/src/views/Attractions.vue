@@ -19,7 +19,6 @@
       </div>
       
       <div class="attractions-body">
-        <!-- 骨架屏：加载中 -->
         <el-row v-if="loading" :gutter="20">
           <el-col
             :xs="24" :sm="12" :md="8"
@@ -41,7 +40,6 @@
           </el-col>
         </el-row>
 
-        <!-- 正常展示 -->
         <el-row v-else-if="pagedAttractions.length > 0" :gutter="20">
           <el-col
             :xs="24"
@@ -245,14 +243,11 @@ const fetchAttractions = async () => {
 
 const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000
 
-// 返回 { label, cls, showBadge } 或 null（不显示任何标签）
 const heatInfo = (attraction) => {
   const count = attraction.visit_count || 0
-  // 热度优先
   if (count >= 50) return { label: '爆火', cls: 'heat-blazing', showBadge: true }
   if (count >= 20) return { label: '热门', cls: 'heat-hot',     showBadge: true }
   if (count >= 5)  return { label: '人气', cls: 'heat-warm',    showBadge: true }
-  // 新上线：创建时间在一个月内
   const createdAt = attraction.created_at ? new Date(attraction.created_at) : null
   if (createdAt && Date.now() - createdAt.getTime() < ONE_MONTH_MS) {
     return { label: '新上线', cls: 'heat-new', showBadge: false }

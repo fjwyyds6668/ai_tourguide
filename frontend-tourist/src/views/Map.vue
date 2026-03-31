@@ -71,7 +71,6 @@ const imgStyle = computed(() => ({
   cursor: isDragging.value ? 'grabbing' : 'grab',
 }))
 
-// 图片加载后适应容器宽度
 function onImageLoad() {
   error.value = false
 }
@@ -111,13 +110,11 @@ function zoomOut() {
   zoomAt(1 / 1.2, rect.left + rect.width / 2, rect.top + rect.height / 2)
 }
 
-// 鼠标滚轮缩放
 function onWheel(e) {
   const delta = e.deltaY < 0 ? 1.15 : 1 / 1.15
   zoomAt(delta, e.clientX, e.clientY)
 }
 
-// 鼠标拖拽
 const isDragging = ref(false)
 let lastX = 0, lastY = 0
 function onMouseDown(e) {
@@ -137,7 +134,6 @@ function onMouseUp() {
   isDragging.value = false
 }
 
-// 触摸拖拽 + 双指缩放
 let lastTouches = null
 function onTouchStart(e) {
   lastTouches = e.touches

@@ -5,7 +5,6 @@
         <span class="card-title">个性化推荐</span>
       </template>
 
-      <!-- 无对话记录 -->
       <div v-if="!sessionId" class="empty-hint">
         <el-icon :size="56" class="hint-icon"><ChatDotRound /></el-icon>
         <p class="hint-title">还没有对话记录</p>
@@ -13,21 +12,17 @@
         <el-button type="primary" @click="$router.push('/voice-guide')">去聊聊</el-button>
       </div>
 
-      <!-- 加载中 -->
       <div v-else-if="loading" class="loading-area">
         <el-icon class="loading-icon is-loading" :size="40"><Loading /></el-icon>
         <p>AI 正在分析你的对话，生成专属推荐…</p>
       </div>
 
-      <!-- 推荐失败 -->
       <div v-else-if="error" class="empty-hint">
         <p class="hint-desc">推荐生成失败，请稍后重试</p>
         <el-button @click="load">重试</el-button>
       </div>
 
-      <!-- 推荐结果 -->
       <div v-else-if="result">
-        <!-- LLM 推荐文字 -->
         <div class="rec-text-card">
           <div class="rec-text-header">
             <el-icon><Promotion /></el-icon>
@@ -36,7 +31,6 @@
           <p class="rec-text">{{ result.recommendation }}</p>
         </div>
 
-        <!-- 推荐景点卡片 -->
         <div v-if="result.attractions.length > 0" class="rec-grid">
           <el-card
             v-for="(item, index) in result.attractions"
@@ -73,7 +67,6 @@
       </div>
     </el-card>
 
-    <!-- 景点详情弹窗 -->
     <el-dialog v-model="detailVisible" title="景点详情" :width="dialogWidth">
       <div v-if="selected">
         <h3>{{ selected.name }}</h3>
@@ -112,7 +105,6 @@ const getChatLen = () => {
     const raw = sessionStorage.getItem(SESSION_CHAT_KEY)
     if (!raw) return 0
     const arr = JSON.parse(raw)
-    // 只统计 user 消息条数，AI 回复不触发重新生成
     return Array.isArray(arr) ? arr.filter(m => m.role === 'user').length : 0
   } catch { return 0 }
 }
@@ -157,7 +149,6 @@ const viewDetails = async (item) => {
 const load = async (force = false) => {
   if (!sessionId.value) return
 
-  // 命中缓存：同一 session 且对话条数未增加，直接展示
   if (!force) {
     const cache = loadCache()
     if (cache && cache.sessionId === sessionId.value && cache.chatLen === getChatLen() && cache.result) {

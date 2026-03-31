@@ -875,7 +875,6 @@ class RAGService:
         if not q:
             return QueryIntent.GENERAL
 
-        # 快速关键词分类，命中则跳过 LLM（节省 1~2s）
         fast_result = self._fast_classify_intent(q)
         if fast_result is not None:
             logger.debug("意图分类（关键词）: %s -> %s", q[:50], fast_result.value)
@@ -885,7 +884,6 @@ class RAGService:
             logger.debug("LLM 未配置，意图默认为 general")
             return QueryIntent.GENERAL
 
-        # 不再做额外的 Milvus/Neo4j 查询，直接用 LLM 判断意图（主流程已并行跑向量搜索）
         try:
             _msgs = [
                 {"role": "system", "content": INTENT_CLASSIFY_SYSTEM},
@@ -915,41 +913,41 @@ class RAGService:
         """根据意图返回检索策略配置。"""
         strategies = {
             QueryIntent.ROUTE: {
-                "top_k": 10,  # 路线需要更多候选
-                "relevance_threshold": 0.1,  # 降低阈值，允许更多相关结果
-                "graph_depth": 3,  # 深度图查询，找更多关联
-                "expand_scenic_attractions": True,  # 扩展同景区多景点
-                "max_attractions": 15,  # 最多15个景点供路线串联
-                "force_at_least_one": True,  # 即使低分也保留至少一个
+                "top_k": 10,
+                "relevance_threshold": 0.1,
+                "graph_depth": 3,
+                "expand_scenic_attractions": True,
+                "max_attractions": 15,
+                "force_at_least_one": True,
             },
             QueryIntent.LISTING: {
                 "top_k": 8,
                 "relevance_threshold": 0.15,
                 "graph_depth": 2,
                 "expand_scenic_attractions": True,
-                "max_attractions": 30,  # 列表需要更多景点
+                "max_attractions": 30,
                 "force_at_least_one": True,
             },
             QueryIntent.DETAIL: {
-                "top_k": 3,  # 详情查询精准即可
-                "relevance_threshold": 0.1,  # 非归一化L2距离分数较小，降低阈值
-                "graph_depth": 1,  # 浅查询，只查直接关系
-                "expand_scenic_attractions": False,  # 不扩展，专注单点
+                "top_k": 3,
+                "relevance_threshold": 0.1,
+                "graph_depth": 1,
+                "expand_scenic_attractions": False,
                 "max_attractions": 1,
                 "force_at_least_one": True,
             },
             QueryIntent.COMPARISON: {
-                "top_k": 8,  # 比较需要多个实体
+                "top_k": 8,
                 "relevance_threshold": 0.2,
                 "graph_depth": 2,
                 "expand_scenic_attractions": False,
-                "max_attractions": 5,  # 比较类限制数量
+                "max_attractions": 5,
                 "force_at_least_one": True,
             },
             QueryIntent.LOCATION: {
                 "top_k": 5,
                 "relevance_threshold": 0.2,
-                "graph_depth": 2,  # 查位置关系
+                "graph_depth": 2,
                 "expand_scenic_attractions": False,
                 "max_attractions": 1,
                 "force_at_least_one": True,
@@ -957,13 +955,13 @@ class RAGService:
             QueryIntent.FEATURE: {
                 "top_k": 6,
                 "relevance_threshold": 0.2,
-                "graph_depth": 2,  # 查特色/属性关系
+                "graph_depth": 2,
                 "expand_scenic_attractions": False,
                 "max_attractions": 3,
                 "force_at_least_one": True,
             },
             QueryIntent.GENERAL: {
-                "top_k": 5,  # 默认值
+                "top_k": 5,
                 "relevance_threshold": RAG_RELEVANCE_SCORE_THRESHOLD,
                 "graph_depth": 2,
                 "expand_scenic_attractions": False,
@@ -1009,7 +1007,6 @@ class RAGService:
         if len(q) < 2:
             return []
         candidates: List[str] = []
-        # 介绍(一下)? XXX、说说 XXX、讲讲 XXX、了解 XXX、XXX 怎么样、XXX 在哪
         patterns = [
             r"(?:介绍|详情|说说|讲讲|了解)(?:一下|一|下)?\s*([\u4e00-\u9fa5]{2,10})",
             r"([\u4e00-\u9fa5]{2,10})\s*(?:怎么样|如何|在哪|有什么|好玩吗)",
@@ -1035,7 +1032,6 @@ class RAGService:
             return None
         loop = asyncio.get_event_loop()
         try:
-            # 精确匹配优先，模糊兜底，单次查询
             rows = await loop.run_in_executor(
                 None,
                 neo4j_client.execute_query,
@@ -1489,7 +1485,6 @@ class RAGService:
             return ""
 
         scenic_names: set[str] = set()
-        # 优先使用用户选择的景区
         if (scenic_name or "").strip():
             scenic_names.add((scenic_name or "").strip())
         subgraph = rag_results.get("subgraph") or {}
@@ -2105,7 +2100,6 @@ class RAGService:
                             try:
                                 with open(log_path, "r", encoding="utf-8") as f:
                                     lines = [ln for ln in f.readlines() if ln.strip()]
-                                # 仅在行数较多时裁剪，减少写放大；接口仍只保留最近 20 条
                                 if len(lines) > 20:
                                     with open(log_path, "w", encoding="utf-8") as f:
                                         f.writelines(lines[-20:])

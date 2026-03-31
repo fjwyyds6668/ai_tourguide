@@ -14,7 +14,6 @@
     </el-container>
 
     <el-container v-else class="layout layout-inner">
-      <!-- 景区背景图（带透明遮罩） -->
       <div
         v-if="scenicBgImage"
         class="scenic-bg-overlay"
@@ -374,7 +373,6 @@ html, body {
   }
 }
 
-/* ── 景区背景图叠层 ── */
 .scenic-bg-overlay {
   position: fixed;
   top: 0;

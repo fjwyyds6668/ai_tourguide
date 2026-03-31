@@ -1,6 +1,5 @@
 <template>
   <div class="voice-guide">
-    <!-- Role selection strip -->
     <div class="role-strip">
       <span class="role-label">选择导游角色：</span>
       <el-radio-group v-model="selectedCharacterId" @change="handleCharacterChange" class="role-group">
@@ -15,7 +14,6 @@
     </div>
 
     <div class="main-area">
-      <!-- Left: Avatar -->
       <div class="avatar-panel">
         <div class="avatar-wrapper">
           <Live2DCanvas
@@ -25,9 +23,7 @@
         </div>
       </div>
 
-      <!-- Right: Chat -->
       <div class="chat-panel">
-        <!-- Messages -->
         <div class="chat-messages" ref="conversationListRef">
           <div v-if="conversationHistory.length === 0" class="empty-chat">
             <el-icon class="empty-icon"><ChatDotRound /></el-icon>
@@ -36,12 +32,10 @@
           </div>
 
           <template v-for="(msg, index) in conversationHistory" :key="`${msg.timestamp}-${index}`">
-            <!-- System hint: centered warning -->
             <div v-if="msg.role === 'system'" class="message-row system-row">
               <div class="system-bubble">{{ msg.content }}</div>
             </div>
 
-            <!-- User message: right-aligned -->
             <div v-else-if="msg.role === 'user'" class="message-row user-row">
               <div class="bubble user-bubble">
                 <div class="bubble-text">{{ msg.content }}</div>
@@ -50,7 +44,6 @@
               <div class="avatar-dot user-dot">您</div>
             </div>
 
-            <!-- Assistant message: left-aligned -->
             <div v-else class="message-row ai-row">
               <div class="avatar-dot ai-dot">导</div>
               <div class="bubble ai-bubble">
@@ -67,7 +60,6 @@
           </template>
         </div>
 
-        <!-- Input area -->
         <div class="input-area">
           <div class="textarea-wrapper" :class="{ focused: inputFocused }">
             <el-input
@@ -633,7 +625,6 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
 }
 
 const streamGenerateAndSpeak = async (queryText, characterId) => {
-  // 如果有旧音频正在播放，先停止
   if (isSpeaking.value) stopSpeaking()
 
   const msgIndex = conversationHistory.value.length
@@ -927,7 +918,6 @@ const triggerSpeakingMotion = () => {
   gap: 10px;
 }
 
-/* ── Role strip ── */
 .role-strip {
   display: flex;
   align-items: center;
@@ -954,7 +944,6 @@ const triggerSpeakingMotion = () => {
   flex-wrap: wrap;
 }
 
-/* ── Main area ── */
 .main-area {
   display: flex;
   gap: 12px;
@@ -963,7 +952,6 @@ const triggerSpeakingMotion = () => {
   overflow: hidden;
 }
 
-/* ── Avatar panel ── */
 .avatar-panel {
   flex: 0 0 42%;
   min-width: 0;
@@ -981,7 +969,6 @@ const triggerSpeakingMotion = () => {
   box-shadow: 0 2px 12px rgba(0,0,0,0.12);
 }
 
-/* ── Chat panel ── */
 .chat-panel {
   flex: 1;
   min-width: 0;
@@ -996,7 +983,6 @@ const triggerSpeakingMotion = () => {
   overflow: hidden;
 }
 
-/* ── Messages area ── */
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -1015,7 +1001,6 @@ const triggerSpeakingMotion = () => {
   border-radius: 4px;
 }
 
-/* Empty state */
 .empty-chat {
   flex: 1;
   display: flex;
@@ -1045,7 +1030,6 @@ const triggerSpeakingMotion = () => {
   color: #606266;
 }
 
-/* Message rows */
 .message-row {
   display: flex;
   align-items: flex-end;
@@ -1064,7 +1048,6 @@ const triggerSpeakingMotion = () => {
   max-width: 88%;
 }
 
-/* Avatar dots */
 .avatar-dot {
   width: 32px;
   height: 32px;
@@ -1087,7 +1070,6 @@ const triggerSpeakingMotion = () => {
   color: #fff;
 }
 
-/* Bubbles */
 .bubble {
   padding: 10px 14px;
   border-radius: 16px;
@@ -1132,7 +1114,6 @@ const triggerSpeakingMotion = () => {
   text-align: left;
 }
 
-/* System hint bubble */
 .system-row {
   justify-content: center;
 }
@@ -1152,7 +1133,6 @@ const triggerSpeakingMotion = () => {
   line-height: 1.5;
 }
 
-/* Typing cursor animation */
 .typing-cursor {
   display: inline-block;
   animation: blink 0.8s step-end infinite;
@@ -1177,7 +1157,6 @@ const triggerSpeakingMotion = () => {
   backdrop-filter: blur(6px);
   transition: background 0.15s, transform 0.1s;
   box-shadow: 0 1px 4px rgba(245, 108, 108, 0.15);
-  /* 扩大手机触控区 */
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
@@ -1198,7 +1177,6 @@ const triggerSpeakingMotion = () => {
   50% { opacity: 0; }
 }
 
-/* ── Input area ── */
 .input-area {
   flex-shrink: 0;
   padding: 10px 12px max(12px, env(safe-area-inset-bottom, 12px));
@@ -1247,7 +1225,6 @@ const triggerSpeakingMotion = () => {
   background: transparent;
 }
 
-/* ── Responsive ── */
 @media (max-width: 768px) {
   .voice-guide {
     padding: 8px;

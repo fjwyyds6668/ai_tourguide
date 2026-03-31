@@ -333,8 +333,6 @@ class VoiceService:
                         )
                         ws_holder["ws"] = ws
                         ws.on_open = on_open
-                        # ping_interval/ping_timeout 保活；ping_timeout 需足够大，否则合成期间服务端忙时无法及时 pong 会触发 "ping/pong timed out"
-                        # 注意：ping_interval 必须大于 ping_timeout
                         # ping_interval 必须大于 ping_timeout，否则合成期间服务端忙时会触发 "ping/pong timed out"
                         ws.run_forever(
                             sslopt={"cert_reqs": ssl.CERT_NONE},

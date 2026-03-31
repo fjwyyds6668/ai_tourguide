@@ -2,7 +2,6 @@
   <div class="dashboard-page">
     <h1 class="admin-page-title">仪表盘</h1>
 
-    <!-- 顶部统计卡片 -->
     <el-row :gutter="20" class="stats-row">
       <el-col :xs="24" :sm="12" :md="12" :lg="12">
         <el-card class="stat-card stat-card-users" shadow="hover">
@@ -24,7 +23,6 @@
       </el-col>
     </el-row>
 
-    <!-- 景区 & 景点总览 -->
     <div class="section-header">
       <span class="section-title">
         <el-icon class="section-icon"><MapLocation /></el-icon>
@@ -40,7 +38,6 @@
     </div>
 
     <div v-else class="spots-grid">
-      <!-- 已归属景区的分组 -->
       <el-card
         v-for="spot in scenicSpots"
         :key="spot.id"
@@ -79,7 +76,6 @@
         </div>
       </el-card>
 
-      <!-- 未归属景区的景点 -->
       <el-card
         v-if="unassignedAttractions.length"
         class="spot-card spot-card-unassigned"
@@ -175,7 +171,6 @@ onMounted(async () => {
   min-height: 200px;
 }
 
-/* 顶部统计 */
 .stats-row {
   margin-top: 8px;
 }
@@ -221,7 +216,6 @@ onMounted(async () => {
   color: #d97706;
 }
 
-/* 分区标题 */
 .section-header {
   display: flex;
   align-items: center;
@@ -247,12 +241,10 @@ onMounted(async () => {
   color: #9ca3af;
 }
 
-/* 骨架屏占位 */
 .spots-skeleton {
   padding: 16px;
 }
 
-/* 景区卡片网格 */
 .spots-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -308,7 +300,6 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
-/* 景点列表 */
 .attraction-list {
   display: flex;
   flex-direction: column;
