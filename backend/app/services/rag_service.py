@@ -1342,21 +1342,11 @@ class RAGService:
             try:
                 parent_info = await self._get_scenic_spot_by_attraction_id(primary_attraction_id)
                 if parent_info:
-                    s_name = parent_info.get("s_name")
+                    s_name = str(parent_info.get("s_name") or "").strip()
                     if s_name:
-                        s_name_str = str(s_name).strip()
-                        scenic_aids, attraction_names = await self._get_scenic_attraction_ids_and_names(s_name_str)
-                        if attraction_names and "根据图数据库，景区「" not in (enhanced_results or ""):
-                            sentence = self._format_scenic_attractions_sentence(s_name_str, attraction_names)
-                            if sentence:
-                                enhanced_results = sentence + "\n\n" + (enhanced_results or "")
-                        if scenic_aids:
-                            clusters_ctx = await self._get_attraction_cluster_context(scenic_aids, max_items=max_attractions)
-                            if clusters_ctx:
-                                if intent == QueryIntent.ROUTE:
-                                    enhanced_results = (enhanced_results or "") + "\n\n【路线可选景点】\n" + clusters_ctx
-                                else:
-                                    enhanced_results = (enhanced_results or "") + "\n\n" + clusters_ctx
+                        enhanced_results, _ = await self._append_scenic_cluster(
+                            s_name, enhanced_results or "", intent, max_attractions
+                        )
             except Exception as e:
                 logger.warning(f"扩展景区景点失败 (intent={intent.value}): {e}")
 
@@ -1367,20 +1357,12 @@ class RAGService:
                     [e for e in (entity_names or []) if e]
                 ))
                 for cname in candidate_names[:5]:
-                    scenic_aids, attraction_names = await self._get_scenic_attraction_ids_and_names(cname)
-                    if not scenic_aids:
-                        continue
-                    if attraction_names and "根据图数据库，景区「" not in (enhanced_results or ""):
-                        sentence = self._format_scenic_attractions_sentence(cname, attraction_names)
-                        if sentence:
-                            enhanced_results = sentence + "\n\n" + (enhanced_results or "")
-                    clusters_ctx = await self._get_attraction_cluster_context(scenic_aids, max_items=max_attractions)
-                    if clusters_ctx:
-                        if intent == QueryIntent.ROUTE:
-                            enhanced_results = (enhanced_results or "") + "\n\n【路线可选景点】\n" + clusters_ctx
-                        else:
-                            enhanced_results = (enhanced_results or "") + "\n\n" + clusters_ctx
-                    break
+                    updated, found = await self._append_scenic_cluster(
+                        cname, enhanced_results or "", intent, max_attractions
+                    )
+                    if found:
+                        enhanced_results = updated
+                        break
             except Exception as e:
                 logger.warning(f"LISTING/ROUTE 兜底扩展景区景点失败: {e}")
 
@@ -1557,6 +1539,31 @@ class RAGService:
         if hasattr(node, "get"):
             return (node.get("name") or "").strip()
         return ""
+
+    async def _append_scenic_cluster(
+        self,
+        scenic_name: str,
+        enhanced_results: str,
+        intent: "QueryIntent",
+        max_attractions: int,
+    ) -> Tuple[str, bool]:
+        """为指定景区名称查询景点簇并追加到 enhanced_results。
+        返回 (更新后的文本, 是否找到景点数据)。"""
+        scenic_aids, attraction_names = await self._get_scenic_attraction_ids_and_names(scenic_name)
+        if not scenic_aids:
+            return enhanced_results, False
+        ctx = enhanced_results
+        if attraction_names and "根据图数据库，景区「" not in ctx:
+            sentence = self._format_scenic_attractions_sentence(scenic_name, attraction_names)
+            if sentence:
+                ctx = sentence + "\n\n" + ctx
+        clusters_ctx = await self._get_attraction_cluster_context(scenic_aids, max_items=max_attractions)
+        if clusters_ctx:
+            if intent == QueryIntent.ROUTE:
+                ctx = ctx + "\n\n【路线可选景点】\n" + clusters_ctx
+            else:
+                ctx = ctx + "\n\n" + clusters_ctx
+        return ctx, True
 
     async def _get_attraction_cluster_context(self, attraction_ids: List[int], max_items: int = 20) -> str:
         """从 Neo4j 拉取景点一簇（属性+出边），格式化为文本供 LLM。"""
