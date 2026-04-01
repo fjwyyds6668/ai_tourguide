@@ -905,7 +905,10 @@ async def _delete_text_ids_from_milvus(text_ids: List[str], collection_name: str
             chunk = text_ids[i : i + chunk_size]
             parts = [f'text_id == "{tid}"' for tid in chunk]
             expr = " or ".join(parts)
-            collection.delete(expr)
+            try:
+                collection.delete(expr)
+            except Exception as chunk_err:
+                logger.warning(f"Milvus 批量删除分块失败 (offset={i}): {chunk_err}")
 
         collection.flush()
         try:

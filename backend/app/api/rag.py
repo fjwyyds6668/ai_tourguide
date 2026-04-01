@@ -468,7 +468,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                                 yield f"data: {json.dumps({'type': 'tts', 'content': text}, ensure_ascii=False)}\n\n"
             
             yield f"data: {json.dumps({'type': 'attraction_id', 'content': primary_attraction_id}, ensure_ascii=False)}\n\n"
-            chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+            chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
             loop = asyncio.get_running_loop()
             stream_sentinel = object()
             
