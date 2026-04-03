@@ -1,33 +1,24 @@
-"""会话管理服务（多轮对话上下文）。配置 REDIS_URL 时使用 Redis 持久化，否则内存存储。"""
+"""会话管理服务（多轮对话上下文，内存存储）。"""
 import uuid
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 
-from app.core.config import settings
 from app.services.session_store import make_session_store, MemorySessionStore
 
 logger = logging.getLogger(__name__)
 
 _session_timeout_hours = 2
-_store = make_session_store(
-    getattr(settings, "REDIS_URL", None),
-    session_timeout_hours=_session_timeout_hours,
-)
-logger.info(
-    "会话存储: %s",
-    "redis" if not isinstance(_store, MemorySessionStore) else "memory",
-)
+_store = make_session_store(session_timeout_hours=_session_timeout_hours)
 
 
 class SessionService:
-    """会话管理服务（委托给内存或 Redis 存储）"""
+    """会话管理服务。"""
 
     def __init__(self):
         self.max_history = 10
         self.session_timeout = timedelta(hours=_session_timeout_hours)
         self._store = _store
-        self._is_memory = isinstance(_store, MemorySessionStore)
 
     def create_session(self, character_id: Optional[int] = None) -> str:
         session_id = str(uuid.uuid4())
@@ -38,7 +29,7 @@ class SessionService:
             "last_active": datetime.now(),
         }
         self._store.set(session_id, data, ttl_seconds=int(self.session_timeout.total_seconds()))
-        logger.info("Created session: %s (store=%s)", session_id, "redis" if not self._is_memory else "memory")
+        logger.info("Created session: %s", session_id)
         return session_id
 
     def get_session(self, session_id: str) -> Optional[Dict]:
@@ -88,19 +79,15 @@ class SessionService:
         session = self.get_session(session_id)
         if not session:
             return []
-        history = []
-        for msg in session.get("messages", []):
-            history.append({"role": msg["role"], "content": msg["content"]})
-        return history
+        return [{"role": msg["role"], "content": msg["content"]}
+                for msg in session.get("messages", [])]
 
     def clear_session(self, session_id: str):
         self._store.delete(session_id)
         logger.info("Cleared session: %s", session_id)
 
     def cleanup_expired_sessions(self):
-        """清理过期会话（仅内存存储需要，Redis 靠 TTL 自动过期）"""
-        if not self._is_memory:
-            return
+        """清理过期会话。"""
         now = datetime.now()
         for sid in self._store.list_session_ids():
             data = self._store.get(sid)

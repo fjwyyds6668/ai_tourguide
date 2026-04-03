@@ -1,10 +1,8 @@
-"""会话存储抽象：内存 / Redis 可选。配置 REDIS_URL 时使用 Redis，未配置则使用内存。"""
+"""会话存储（内存）。"""
 import json
-import re
-import uuid
 import logging
 from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +60,7 @@ def _deserialize_session(raw: str) -> Optional[Dict]:
 
 
 class MemorySessionStore:
-    """内存会话存储（默认）。"""
+    """内存会话存储。"""
 
     def __init__(self):
         self._store: Dict[str, Dict] = {}
@@ -80,87 +78,5 @@ class MemorySessionStore:
         return list(self._store.keys())
 
 
-class RedisSessionStore:
-    """Redis 会话存储（配置 REDIS_URL 时使用）。"""
-
-    def __init__(self, redis_url: str, default_ttl_seconds: int = 7200):
-        self._redis_url = redis_url
-        self._default_ttl = default_ttl_seconds
-        self._client = None
-
-    def _get_client(self):
-        if self._client is None:
-            try:
-                import redis
-            except ImportError:
-                raise ImportError("请安装 redis: pip install redis")
-            try:
-                self._client = redis.from_url(
-                    self._redis_url,
-                    decode_responses=True,
-                )
-            except Exception as e:
-                logger.error("Redis connection failed: %s", e)
-                raise
-        return self._client
-
-    def _key(self, session_id: str) -> str:
-        return f"session:{session_id}"
-
-    def set(self, session_id: str, data: Dict, ttl_seconds: int = 0) -> None:
-        ttl = ttl_seconds or self._default_ttl
-        raw = _serialize_session(data)
-        client = self._get_client()
-        key = self._key(session_id)
-        client.setex(key, ttl, raw)
-
-    def get(self, session_id: str) -> Optional[Dict]:
-        try:
-            client = self._get_client()
-            raw = client.get(self._key(session_id))
-        except Exception as e:
-            logger.warning("Redis get failed: %s", e)
-            return None
-        if not raw:
-            return None
-        return _deserialize_session(raw)
-
-    def delete(self, session_id: str) -> None:
-        try:
-            self._get_client().delete(self._key(session_id))
-        except Exception as e:
-            logger.warning("Redis delete failed: %s", e)
-
-    def list_session_ids(self) -> List[str]:
-        try:
-            client = self._get_client()
-            keys = client.keys("session:*")
-            return [k.replace("session:", "", 1) for k in keys]
-        except Exception as e:
-            logger.warning("Redis keys failed: %s", e)
-            return []
-
-
-def _sanitize_redis_url(url: str) -> str:
-    """去掉因 .env 换行丢失而拼接到 port 后的下一行变量（如 6379COSYVOICE2_MODEL_PATH=）。"""
-    u = url.strip()
-    m = re.match(r"^(redis://[^:]*:\d+(?:/\d+)?)([A-Z_][A-Z0-9_]*=.*)?$", u, re.IGNORECASE)
-    if m:
-        return m.group(1)
-    return u
-
-
-def make_session_store(redis_url: Optional[str], session_timeout_hours: int = 2):
-    """根据配置返回内存或 Redis 存储。未配置或 redis 未安装时使用内存。"""
-    if not redis_url or not redis_url.strip():
-        return MemorySessionStore()
-    redis_url = _sanitize_redis_url(redis_url)
-    try:
-        import redis  # noqa: F401
-    except ImportError:
-        logger.warning(
-            "REDIS_URL 已配置但未安装 redis 包，会话将使用内存存储。安装: pip install redis"
-        )
-        return MemorySessionStore()
-    ttl = max(3600, int(session_timeout_hours * 3600))
-    return RedisSessionStore(redis_url, default_ttl_seconds=ttl)
+def make_session_store(session_timeout_hours: int = 2) -> MemorySessionStore:
+    return MemorySessionStore()
