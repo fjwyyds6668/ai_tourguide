@@ -6,7 +6,6 @@ try:
     from pymilvus import connections, Collection, utility
     _MILVUS_AVAILABLE = True
 except Exception as e:  # pragma: no cover
-    # 允许在未安装 Milvus 的环境启动服务，向量检索降级为空结果
     connections = None
     Collection = None
     utility = None
@@ -16,11 +15,10 @@ except Exception as e:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 class MilvusClient:
-    def __init__(self):
+    def __init__(self) -> None:
         self.connected = False
-        # 懒连接：不在 import 阶段连接，避免 Milvus 未启动时刷屏报错
 
-    def connect(self):
+    def connect(self) -> None:
         if not _MILVUS_AVAILABLE:
             logger.warning(f"pymilvus not available, Milvus disabled: {_MILVUS_IMPORT_ERROR}")
             self.connected = False
@@ -37,7 +35,7 @@ class MilvusClient:
             logger.error(f"Failed to connect to Milvus: {e}")
             self.connected = False
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         if _MILVUS_AVAILABLE and self.connected:
             connections.disconnect("default")
             self.connected = False
