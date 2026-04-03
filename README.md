@@ -168,6 +168,7 @@ uvicorn main:app --host 0.0.0.0 --port 18000 --reload
 | Neo4j Browser | 30000 | http://localhost:30000 |
 | Neo4j Bolt | 30001 | bolt://localhost:30001 |
 | Milvus | 30002 | localhost:30002 |
+| Milvus Insight (Attu) | 30006 | http://localhost:30006 |
 | MinIO API | 30004 | http://localhost:30004 |
 | MinIO 控制台 | 30005 | http://localhost:30005 |
 
