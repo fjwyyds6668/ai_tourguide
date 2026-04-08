@@ -1840,12 +1840,10 @@ class RAGService:
         budget_chars: int = DEFAULT_CONTEXT_BUDGET_CHARS,
     ) -> tuple[str, List[Dict[str, Any]]]:
         """
-        按论文公式对候选片段进行线性融合评分并在字符预算内构造上下文。
-
         S(c)=α svec(c)+β sgraph(c)+γ sent(c)
         - svec: 来自向量检索 score（已由 distance 换算）
-        - sgraph: 依据图检索命中关系中实体是否在候选片段中出现的"结构支持强度"（启发式归一化）
-        - sent: 依据候选片段是否命中当前景区/指代消解实体的"实体一致性支持"（启发式）
+        - sgraph: 图检索命中实体在候选片段中的出现比例（启发式归一化）
+        - sent: 候选片段与当前景区/消解实体的字符串匹配分
         """
         a = float(alpha)
         b = float(beta)
