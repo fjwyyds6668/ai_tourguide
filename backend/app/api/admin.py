@@ -811,6 +811,7 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                 embedding = await asyncio.to_thread(rag_service.generate_embedding, text)
                 entities = [
                     [text_id],
+                    [text[:65535]],
                     [embedding]
                 ]
                 collection.insert(entities)
@@ -1031,6 +1032,7 @@ async def _upload_items_to_graphrag(
     embeddings = await asyncio.to_thread(rag_service.generate_embeddings_batch, texts)
     entities = [
         [item.text_id for item in items],
+        [item.text[:65535] for item in items],
         embeddings
     ]
     try:

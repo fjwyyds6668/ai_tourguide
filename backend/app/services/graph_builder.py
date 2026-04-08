@@ -174,15 +174,14 @@ class GraphBuilder:
                 )
             except Exception as e:
                 logger.warning(f"按名称关联景点到景区失败: {e}")
-        if text_id and text:
+        if text_id:
             q_text = """
             MERGE (t:Text {id: $text_id})
-            SET t.content = $text
             WITH t
             MATCH (a:Attraction {id: $id})
             MERGE (t)-[:DESCRIBES]->(a)
             """
-            await self._execute_query_async(q_text, {"text_id": text_id, "text": text, "id": int(att_id)})
+            await self._execute_query_async(q_text, {"text_id": text_id, "id": int(att_id)})
         locations = []
         if parsed and isinstance(parsed.get("location"), list):
             locations = [str(x).strip() for x in parsed.get("location") if str(x).strip()]
@@ -272,7 +271,7 @@ class GraphBuilder:
                 q_f = """
                 UNWIND $features AS fname
                 MATCH (a:Attraction {id: $id})
-                MERGE (f:Feature {name: fname, attraction_id: $id})
+                MERGE (f:Feature {name: fname})
                 MERGE (a)-[:HAS_FEATURE]->(f)
                 """
                 await self._execute_query_async(q_f, {"id": int(att_id), "features": feats})
@@ -282,10 +281,38 @@ class GraphBuilder:
                 q_h = """
                 UNWIND $honors AS hname
                 MATCH (a:Attraction {id: $id})
-                MERGE (h:Honor {name: hname, attraction_id: $id})
+                MERGE (h:Honor {name: hname})
                 MERGE (a)-[:HAS_HONOR]->(h)
                 """
                 await self._execute_query_async(q_h, {"id": int(att_id), "honors": hns})
+
+        if text:
+            try:
+                from app.services.rag_service import rag_service
+                entities = rag_service.extract_entities(text)
+                seen = set()
+                for entity in entities:
+                    entity_name = str(entity.get("text") or "").strip()
+                    # 过滤单字、纯数字、已处理过的重复词
+                    if not entity_name or len(entity_name) < 2 or entity_name.isdigit():
+                        continue
+                    if entity_name in seen:
+                        continue
+                    seen.add(entity_name)
+                    entity_type = entity.get("type", "KEYWORD")
+                    if entity_type not in ("LOCATION", "PERSON", "ORG", "OTHER", "KEYWORD", "ENTITY"):
+                        entity_type = "KEYWORD"
+                    q_mention = f"""
+                    MATCH (a:Attraction {{id: $id}})
+                    MERGE (e:{entity_type} {{name: $name}})
+                    MERGE (a)-[:MENTIONS]->(e)
+                    """
+                    await self._execute_query_async(q_mention, {
+                        "id": int(att_id),
+                        "name": entity_name,
+                    })
+            except Exception as e:
+                logger.warning("景点实体提取失败 id=%s: %s", att_id, e)
     
     async def create_relationship(self, from_entity: str, to_entity: str,
                                  relation_type: str, properties: Dict = None) -> bool:
@@ -413,23 +440,7 @@ class GraphBuilder:
                 "name": scenic_name_str,
             })
 
-        for entity in entities:
-            entity_name = entity.get("text")
-            if not entity_name:
-                continue
-            entity_type = entity.get("type", "KEYWORD")
-            if entity_type not in ("LOCATION", "PERSON", "ORG", "OTHER", "KEYWORD", "ENTITY"):
-                entity_type = "KEYWORD"
-            create_entity_query = f"""
-            MATCH (t:Text {{id: $text_id}})
-            MERGE (e:{entity_type} {{name: $name}})
-            MERGE (t)-[:MENTIONS]->(e)
-            RETURN e
-            """
-            await self._execute_query_async(create_entity_query, {
-                "text_id": text_id,
-                "name": str(entity_name).strip(),
-            })
+        # 景区知识文本只建 DESCRIBES 关系，不展开 MENTIONS 节点
 
     async def build_scenic_cluster(
         self,

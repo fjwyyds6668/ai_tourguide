@@ -93,6 +93,23 @@ def _strip_emoji(text: str) -> str:
         s = s.rstrip("，、；：") + "。"
     return s
 
+def _extract_json_str(raw: str) -> str:
+    """从 LLM 返回内容中提取 JSON 字符串，处理 markdown 代码块和多余说明。"""
+    if not raw:
+        return ""
+    s = raw.strip()
+    # 去掉 ```json ... ``` 或 ``` ... ```
+    s = re.sub(r"^```(?:json)?\s*", "", s)
+    s = re.sub(r"\s*```$", "", s)
+    s = s.strip()
+    # 如果还有多余文字，尝试找第一个 { 到最后一个 }
+    start = s.find("{")
+    end = s.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        s = s[start:end + 1]
+    return s
+
+
 def _clean_special_symbols(text: str) -> str:
     """清理特殊符号和 Markdown 格式，确保输出为纯文本"""
     if not text or not isinstance(text, str):
@@ -250,7 +267,7 @@ class RAGService:
                 max_tokens=512,
             )
             raw = resp.choices[0].message.content
-            data = json.loads(raw)
+            data = json.loads(_extract_json_str(raw))
             if not isinstance(data, dict):
                 return None
             scenic_name = data.get("scenic_spot")
@@ -301,7 +318,7 @@ class RAGService:
                 max_tokens=512,
             )
             raw = resp.choices[0].message.content
-            data = json.loads(raw)
+            data = json.loads(_extract_json_str(raw))
             if not isinstance(data, dict):
                 return None
             if data.get("name") and not isinstance(data.get("name"), str):
@@ -549,7 +566,7 @@ class RAGService:
                     anns_field="embedding",
                     param=search_params,
                     limit=top_k,
-                    output_fields=["text_id"],
+                    output_fields=["text_id", "content"],
                 )
             except Exception as e:
                 if "not loaded" in str(e).lower() or "collection not loaded" in str(e).lower():
@@ -561,7 +578,7 @@ class RAGService:
                             anns_field="embedding",
                             param=search_params,
                             limit=top_k,
-                            output_fields=["text_id"],
+                            output_fields=["text_id", "content"],
                         )
                     except Exception as retry_error:
                         logger.error("Retry search failed: %s", retry_error)
@@ -577,6 +594,7 @@ class RAGService:
                         {
                             "id": hit.id,
                             "text_id": hit.entity.get("text_id", ""),
+                            "content": hit.entity.get("content", ""),
                             "distance": hit.distance,
                             "score": 1 / (1 + hit.distance) if hit.distance > 0 else 1.0,
                         }

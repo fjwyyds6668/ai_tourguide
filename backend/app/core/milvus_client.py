@@ -73,6 +73,7 @@ class MilvusClient:
         fields = [
             FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
             FieldSchema(name="text_id", dtype=DataType.VARCHAR, max_length=200),
+            FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=65535),
             FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dimension),
         ]
         schema = CollectionSchema(fields, "Tour guide knowledge base")
