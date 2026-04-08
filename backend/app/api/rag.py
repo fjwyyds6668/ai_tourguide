@@ -365,10 +365,11 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             messages.extend(conversation_history)
         
         user_prompt = f"""用户问题：{request.query}
-上下文信息：
-{context if context else "无额外上下文信息"}
+以下是从知识库检索到的相关信息，请严格依据这些内容作答，不得引用知识库以外的信息：
 
-请基于以上信息回答用户的问题。"""
+{context if context else "知识库中暂无相关信息，请如实告知游客。"}
+
+请用口语化中文回答游客的问题。"""
         messages.append({"role": "user", "content": user_prompt})
 
         full_answer = ""
