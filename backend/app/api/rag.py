@@ -376,7 +376,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
         _llm_messages = messages
         try:
 
-            prev_content: str = ""
             accumulated_text = ""
             completed_audio: Dict[int, str] = {}
             fallback_tts: Dict[int, str] = {}
@@ -478,20 +477,20 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                         model=settings.OPENAI_MODEL,
                         messages=_llm_messages,
                         temperature=0.7,
-                        max_tokens=1000,
+                        max_tokens=2000,
                         stream=True,
                     )
                     for c in _stream:
-                        def _put():
+                        def _put(chunk=c):
                             try:
-                                chunk_queue.put_nowait(c)
+                                chunk_queue.put_nowait(chunk)
                             except asyncio.QueueFull:
                                 try:
                                     chunk_queue.get_nowait()
                                 except Exception:
                                     pass
                                 try:
-                                    chunk_queue.put_nowait(c)
+                                    chunk_queue.put_nowait(chunk)
                                 except Exception:
                                     pass
 
@@ -526,10 +525,6 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                             logger.debug("CLEANED: %r -> %r", raw_content, content)
                         if not content:
                             continue
-                        if content == prev_content:
-                            logger.debug("DEDUP_SKIP: %r", content)
-                            continue
-                        prev_content = content
                         full_answer += content
                         accumulated_text += content
                         
