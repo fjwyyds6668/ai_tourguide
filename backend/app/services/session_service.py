@@ -82,6 +82,22 @@ class SessionService:
         return [{"role": msg["role"], "content": msg["content"]}
                 for msg in session.get("messages", [])]
 
+    def set_spot_list(self, session_id: str, spots: list):
+        """保存本次列举的景点有序列表，供后续序号指代消解使用。"""
+        data = self._store.get(session_id)
+        if not data:
+            return
+        data["last_spot_list"] = spots
+        data["last_active"] = datetime.now()
+        self._store.set(session_id, data, ttl_seconds=int(self.session_timeout.total_seconds()))
+
+    def get_spot_list(self, session_id: str) -> list:
+        """获取上次列举的景点有序列表。"""
+        data = self._store.get(session_id)
+        if not data:
+            return []
+        return data.get("last_spot_list") or []
+
     def clear_session(self, session_id: str):
         self._store.delete(session_id)
         logger.info("Cleared session: %s", session_id)

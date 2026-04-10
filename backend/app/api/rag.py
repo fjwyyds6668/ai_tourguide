@@ -335,6 +335,24 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
         rag_results = None
         primary_attraction_id = None
         context = ""
+        resolved_query = request.query
+        if request.use_rag and rag_service._has_pronoun_reference(request.query):
+            spot_list = await asyncio.to_thread(session_service.get_spot_list, session_id)
+            if spot_list:
+                ordinal_name = rag_service._resolve_ordinal_reference(request.query, None)
+                if not ordinal_name:
+                    import re as _re
+                    cn_map = {"一":1,"二":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10,
+                              "十一":11,"十二":12,"十三":13,"十四":14,"十五":15}
+                    m = _re.search(r"第([一二三四五六七八九十]+|\d+)\s*个", request.query)
+                    if m:
+                        raw = m.group(1)
+                        idx = int(raw) if raw.isdigit() else cn_map.get(raw)
+                        if idx and idx <= len(spot_list):
+                            ordinal_name = spot_list[idx - 1]
+                if ordinal_name:
+                    resolved_query = f"{ordinal_name} {request.query}"
+                    logger.info(f"session 序号消解: {ordinal_name}")
         if request.use_rag:
             needs_context = rag_service._query_needs_context(request.query)
             if not needs_context:
@@ -342,13 +360,21 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             else:
                 try:
                     rag_results = await rag_service.hybrid_search(
-                        request.query,
+                        resolved_query,
                         top_k=5,
                         conversation_history=conversation_history,
                         scenic_name=request.scenic_name,
                     )
                     primary_attraction_id = rag_results.get("primary_attraction_id")
                     context = rag_results.get("enhanced_context", "") or ""
+                    if rag_results.get("intent") == "listing" and context:
+                        import re as _re2
+                        m2 = _re2.search(r"包括：([\u4e00-\u9fa5、]+)。", context)
+                        if m2:
+                            names_from_ctx = [n.strip() for n in m2.group(1).split("、") if n.strip()]
+                            if names_from_ctx:
+                                await asyncio.to_thread(session_service.set_spot_list, session_id, names_from_ctx)
+                                logger.info(f"已从context存储景点列表({len(names_from_ctx)}个)到 session {session_id}")
                 except Exception as e:
                     logger.error(f"RAG search failed: {e}")
                     rag_results = {"errors": {"rag_search": str(e)}}

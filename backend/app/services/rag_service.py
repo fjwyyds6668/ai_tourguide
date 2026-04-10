@@ -812,8 +812,81 @@ class RAGService:
             r"介绍一下这个|介绍一下那个",
             r"这个(地方|景区|景点).*(介绍|怎么样|有什么)",
             r"那个(地方|景区|景点).*(介绍|怎么样|有什么)",
+            r"第[一二三四五六七八九十百\d]+个",
+            r"(上面|刚才|前面).*(第|说的|提到的)",
         ]
         return any(re.search(p, q) for p in patterns)
+
+    async def _resolve_ordinal_from_neo4j(
+        self,
+        query: str,
+        conversation_history: Optional[List[Dict[str, str]]],
+        scenic_name: Optional[str] = None,
+    ) -> Optional[str]:
+        """从 Neo4j 景点有序列表解析序号指代，如"第7个"→"永江休闲度假村"。"""
+        cn_num_map = {
+            "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+            "十一": 11, "十二": 12, "十三": 13, "十四": 14, "十五": 15,
+        }
+        ordinal_match = re.search(r"第([一二三四五六七八九十]+|\d+)\s*个", query)
+        if not ordinal_match:
+            return None
+        raw = ordinal_match.group(1)
+        index = int(raw) if raw.isdigit() else cn_num_map.get(raw)
+        if not index:
+            return None
+        # 确定景区名称
+        name = (scenic_name or "").strip()
+        if not name and conversation_history:
+            entities = self._extract_entities_from_history(conversation_history)
+            name = entities[0] if entities else ""
+        if not name:
+            return None
+        try:
+            _, names = await self._get_scenic_attraction_ids_and_names(name)
+            if names and index <= len(names):
+                return names[index - 1]
+        except Exception as e:
+            logger.debug(f"_resolve_ordinal_from_neo4j 失败: {e}")
+        return None
+
+    @staticmethod
+    def _resolve_ordinal_reference(
+        query: str, conversation_history: Optional[List[Dict[str, str]]]
+    ) -> Optional[str]:
+        """将查询中的序号指代（如"第五个"）解析为对话历史中对应的景点名称。"""
+        if not query or not conversation_history:
+            return None
+        # 提取查询中的序号
+        cn_num_map = {
+            "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+            "十一": 11, "十二": 12, "十三": 13, "十四": 14, "十五": 15,
+        }
+        ordinal_match = re.search(r"第([一二三四五六七八九十]+|\d+)\s*个", query)
+        if not ordinal_match:
+            return None
+        raw = ordinal_match.group(1)
+        index = int(raw) if raw.isdigit() else cn_num_map.get(raw)
+        if not index:
+            return None
+        for msg in reversed(conversation_history[-10:]):
+            if msg.get("role") != "assistant":
+                continue
+            content = msg.get("content", "")
+            matches = re.findall(r"第[一二三四五六七八九十]+[\s，,、]?([^\s，,、（(第\d]{2,15})(?=[，,、（(\d第]|$)", content)
+            if matches and index <= len(matches):
+                return matches[index - 1]
+            matches2 = re.findall(r"\d+[\.、．]\s*([^\s（(，,、\n]{2,15})(?=[（(，,、\n\d]|$)", content)
+            if matches2 and index <= len(matches2):
+                return matches2[index - 1]
+            dun_blocks = re.findall(r"[\u4e00-\u9fa5a-zA-Z0-9]{2,12}(?:、[\u4e00-\u9fa5a-zA-Z0-9]{2,12}){4,}", content)
+            for block in dun_blocks:
+                items = block.split("、")
+                if index <= len(items):
+                    return items[index - 1]
+        return None
 
     def _extract_entities_from_history(
         self, conversation_history: Optional[List[Dict[str, str]]]
@@ -1204,7 +1277,19 @@ class RAGService:
             resolved_entities = [scenic_name_str]
             logger.debug(f"使用用户选择景区: {scenic_name_str}")
         elif self._has_pronoun_reference(query) and conversation_history:
-            resolved_entities = self._extract_entities_from_history(conversation_history)
+            # 优先用 Neo4j 解析序号指代（比解析 LLM 文本更可靠）
+            ordinal_name = await self._resolve_ordinal_from_neo4j(query, conversation_history, scenic_name)
+            if ordinal_name:
+                resolved_entities = [ordinal_name]
+                logger.debug(f"序号指代消解(Neo4j): 第N个 -> {ordinal_name}")
+            else:
+                # fallback: 解析对话历史文本
+                ordinal_name = self._resolve_ordinal_reference(query, conversation_history)
+                if ordinal_name:
+                    resolved_entities = [ordinal_name]
+                    logger.debug(f"序号指代消解(文本): 第N个 -> {ordinal_name}")
+                else:
+                    resolved_entities = self._extract_entities_from_history(conversation_history)
             if resolved_entities:
                 logger.debug(f"指代消解: 从历史解析实体 {resolved_entities}")
 
