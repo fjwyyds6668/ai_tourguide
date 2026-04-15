@@ -229,8 +229,9 @@ lerna-debug.log*
 *~
 .DS_Store
 
-# 日志
-logs/
+# 日志（忽略日志文件，保留目录结构）
+logs/*.log
+logs/*.log.*
 
 # 数据库
 *.db
