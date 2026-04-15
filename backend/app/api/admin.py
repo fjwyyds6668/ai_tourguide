@@ -727,36 +727,38 @@ async def delete_attraction_admin(attraction_id: int, current_user: User = Depen
     existing = await prisma.attraction.find_unique(where={"id": attraction_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Attraction not found")
-    try:
-        await _sync_attraction_to_graphrag(
-            {
-                "id": existing.id,
-                "name": existing.name,
-                "description": existing.description,
-                "location": existing.location,
-                "latitude": existing.latitude,
-                "longitude": existing.longitude,
-                "category": existing.category,
-                "image_url": getattr(existing, "imageUrl", None),
-                "audio_url": getattr(existing, "audioUrl", None),
-                "scenic_spot_id": getattr(existing, "scenicSpotId", None),
-            },
-            operation="delete",
-        )
-    except Exception:
-        pass
+    sync_warnings = await _sync_attraction_to_graphrag(
+        {
+            "id": existing.id,
+            "name": existing.name,
+            "description": existing.description,
+            "location": existing.location,
+            "latitude": existing.latitude,
+            "longitude": existing.longitude,
+            "category": existing.category,
+            "image_url": getattr(existing, "imageUrl", None),
+            "audio_url": getattr(existing, "audioUrl", None),
+            "scenic_spot_id": getattr(existing, "scenicSpotId", None),
+        },
+        operation="delete",
+    )
     await prisma.attraction.delete(where={"id": attraction_id})
-    return {"message": "deleted"}
+    result: dict = {"message": "deleted"}
+    if sync_warnings:
+        result["warnings"] = sync_warnings
+    return result
 
-async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "upsert"):
+async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "upsert") -> list[str]:
+    """同步景点数据到 GraphRAG（Milvus + Neo4j）。返回警告列表，空列表表示全部成功。"""
     if not settings.AUTO_UPDATE_GRAPH_RAG:
         logger.debug("GraphRAG 自动更新已禁用，跳过同步")
-        return
-    
+        return []
+
+    warnings: list[str] = []
     try:
         text_id = f"attraction_{attraction_dict.get('id')}"
         collection_name = settings.GRAPHRAG_COLLECTION_NAME
-        
+
         if operation == "delete":
             try:
                 from pymilvus import utility
@@ -766,8 +768,10 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                     collection.delete(expr)
                     logger.info(f"已从 Milvus 删除景点: {text_id}")
             except Exception as e:
-                logger.warning(f"从 Milvus 删除失败: {e}")
-            
+                msg = f"Milvus 向量数据删除失败，残留数据可能影响检索: {e}"
+                logger.warning(msg)
+                warnings.append(msg)
+
             try:
                 query = """
                 MATCH (t:Text {id: $text_id})
@@ -776,8 +780,10 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                 graph_builder.client.execute_query(query, {"text_id": text_id})
                 logger.info(f"已从 Neo4j 删除文本节点: {text_id}")
             except Exception as e:
-                logger.warning(f"从 Neo4j 删除失败: {e}")
-            
+                msg = f"Neo4j 文本节点删除失败，残留数据可能影响检索: {e}"
+                logger.warning(msg)
+                warnings.append(msg)
+
             try:
                 query = """
                 MATCH (a:Attraction {id: $id})
@@ -792,13 +798,15 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                 graph_builder.client.execute_query(query, {"id": int(attraction_dict.get('id'))})
                 logger.info(f"已从 Neo4j 按簇删除景点节点: {attraction_dict.get('id')}")
             except Exception as e:
-                logger.warning(f"从 Neo4j 删除景点节点失败: {e}")
+                msg = f"Neo4j 景点节点删除失败，残留数据可能影响检索: {e}"
+                logger.warning(msg)
+                warnings.append(msg)
         
         else:
             text = _attraction_to_text(attraction_dict)
             if not text:
                 logger.warning(f"景点 {attraction_dict.get('id')} 文本为空，跳过 GraphRAG 同步")
-                return
+                return warnings
             try:
                 collection = milvus_client.create_collection_if_not_exists(
                     collection_name,
@@ -839,6 +847,7 @@ async def _sync_attraction_to_graphrag(attraction_dict: dict, operation: str = "
                 raise
     except Exception as e:
         logger.error(f"同步景点到 GraphRAG 失败: {e}", exc_info=True)
+    return warnings
 
 def _serialize_metadata(metadata: dict) -> str:
     return json.dumps(metadata or {}, ensure_ascii=False)
