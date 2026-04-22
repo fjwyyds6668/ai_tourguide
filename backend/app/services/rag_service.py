@@ -2168,7 +2168,8 @@ class RAGService:
 3. 用口语化中文回答游客的问题。"""
         messages.append({"role": "user", "content": user_prompt})
         if rag_debug is not None:
-            rag_debug["final_sent_to_llm"] = user_prompt
+            # 管理端不展示"回答规则"段
+            rag_debug["final_sent_to_llm"] = re.sub(r"\n+回答规则：[\s\S]*$", "", user_prompt).rstrip()
 
         try:
             response = await asyncio.to_thread(

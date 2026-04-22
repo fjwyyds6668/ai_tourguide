@@ -4,6 +4,7 @@ import logging
 import asyncio
 import json
 import os
+import re
 import time
 import threading
 from datetime import datetime, timezone
@@ -26,6 +27,13 @@ router = APIRouter()
 
 _HISTORY_BUDGET_CHARS = 1200  # 发送给LLM前的对话历史字符预算（仅裁剪历史，不含本轮问题）
 MAX_RECENT_HISTORY = 20
+
+
+def _strip_answer_rules(prompt: str) -> str:
+    """移除 user_prompt 末尾的"回答规则"段，用于管理端调试面板展示。"""
+    if not prompt:
+        return prompt
+    return re.sub(r"\n+回答规则：[\s\S]*$", "", prompt).rstrip()
 
 
 def _trim_conversation_history(
@@ -609,7 +617,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                             "errors": (rag_results or {}).get("errors", {}),
                             "intent": (rag_results or {}).get("intent"),
                             "strategy": (rag_results or {}).get("strategy"),
-                            "final_sent_to_llm": user_prompt,
+                            "final_sent_to_llm": _strip_answer_rules(user_prompt),
                         }
                     else:
                         rag_debug = {
@@ -620,7 +628,7 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
                             "enhanced_context": "",
                             "entities": [],
                             "skip_rag_reason": "未使用 RAG",
-                            "final_sent_to_llm": user_prompt,
+                            "final_sent_to_llm": _strip_answer_rules(user_prompt),
                         }
 
                     def _io_task():
