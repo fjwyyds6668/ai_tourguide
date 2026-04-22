@@ -1268,9 +1268,12 @@ class RAGService:
         否则从 conversation_history 解析实体并补充检索。
         """
         q_stripped = (query or "").strip()
-        is_ticket_query = any(
-            k in q_stripped for k in ("门票", "票价", "成人票", "学生票", "半票", "优惠票", "年卡", "票多少钱", "票多钱", "票多少")
+        # 门票/淡旺季/开放时间 这类问题共享同一组知识库chunk，检索时统一归类，便于后续扩展查询词
+        TICKET_KEYWORDS = (
+            "门票", "票价", "成人票", "学生票", "半票", "优惠票", "年卡", "票多少钱", "票多钱", "票多少",
+            "旺季", "淡季", "开放时间", "开放几点", "几点开门", "几点关门", "营业时间", "免票", "优惠政策",
         )
+        is_ticket_query = any(k in q_stripped for k in TICKET_KEYWORDS)
 
         resolved_entities: List[str] = []
         scenic_name_str = (scenic_name or "").strip()
@@ -1297,6 +1300,10 @@ class RAGService:
         effective_query = query
         if resolved_entities:
             effective_query = f"{' '.join(resolved_entities[:2])} {query}"
+        # 票价/旺季/开放时间 等短查询在向量空间信号弱，补充"门票"锚点词提高召回率
+        if is_ticket_query and "门票" not in effective_query:
+            effective_query = f"{effective_query} 门票"
+            logger.debug(f"门票类查询扩展: {query!r} -> {effective_query!r}")
 
         errors: Dict[str, str] = {}
         try:
@@ -2151,11 +2158,14 @@ class RAGService:
                 intent_hint = "说明：用户询问的是详情/介绍，请提供全面、详细的景点信息。\n\n"
         
         user_prompt = f"""用户问题：{query}
-{intent_hint}以下是从知识库检索到的相关信息，请严格依据这些内容作答，不得引用知识库以外的信息：
+{intent_hint}以下是从知识库检索到的相关信息：
 
-{out_context if out_context else "知识库中暂无相关信息，请如实告知游客。"}
+{out_context if out_context else "知识库中暂无本轮问题的直接信息。"}
 
-请用口语化中文回答游客的问题。"""
+回答规则：
+1. 若本轮问题是追问（例如对上轮已提及事实的进一步询问），请直接复用【对话历史】里已经确认过的事实作答，不得以"无资料"推脱。
+2. 若知识库信息相关，按知识库内容回答；知识库与对话历史都没有时，才说"这个问题我暂时没有准确资料，建议咨询景区服务中心"。
+3. 用口语化中文回答游客的问题。"""
         messages.append({"role": "user", "content": user_prompt})
         if rag_debug is not None:
             rag_debug["final_sent_to_llm"] = user_prompt

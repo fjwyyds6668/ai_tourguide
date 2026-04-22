@@ -391,11 +391,14 @@ async def generate_answer_stream(request: GenerateRequest, background_tasks: Bac
             messages.extend(conversation_history)
         
         user_prompt = f"""用户问题：{request.query}
-以下是从知识库检索到的相关信息，请严格依据这些内容作答，不得引用知识库以外的信息：
+以下是从知识库检索到的相关信息：
 
-{context if context else "知识库中暂无相关信息，请如实告知游客。"}
+{context if context else "知识库中暂无本轮问题的直接信息。"}
 
-请用口语化中文回答游客的问题。"""
+回答规则：
+1. 若本轮问题是追问（例如对上轮已提及事实的进一步询问），请直接复用【对话历史】里已经确认过的事实作答，不得以"无资料"推脱。
+2. 若知识库信息相关，按知识库内容回答；知识库与对话历史都没有时，才说"这个问题我暂时没有准确资料，建议咨询景区服务中心"。
+3. 用口语化中文回答游客的问题。"""
         messages.append({"role": "user", "content": user_prompt})
 
         full_answer = ""
