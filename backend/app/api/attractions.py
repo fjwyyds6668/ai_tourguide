@@ -215,7 +215,9 @@ async def get_personalized_recommendation(
     from app.core.config import settings
 
     history = session_service.get_conversation_history(session_id)
+    logger.info("推荐接口 session_id=%s history_len=%d scenic_spot_id=%s", session_id, len(history), scenic_spot_id)
     if not history:
+        logger.warning("推荐空返回：session %s 无对话历史", session_id)
         return RecommendResponse()
 
     prisma = await get_prisma()
@@ -224,21 +226,64 @@ async def get_personalized_recommendation(
         where["scenicSpotId"] = scenic_spot_id
     all_attractions = await prisma.attraction.find_many(where=where, take=100)
     if not all_attractions:
+        logger.warning("推荐空返回：scenic_spot_id=%s 下无景点", scenic_spot_id)
         return RecommendResponse()
+    logger.info("候选景点数=%d", len(all_attractions))
 
     attractions_info = "\n".join([
         f"ID:{a.id} 名称:{a.name} 类别:{a.category or '未知'} 简介:{(a.description or '')[:60]}"
         for a in all_attractions
     ])
+
+    # 阶段一：基于全部历史对话提炼用户画像
+    profile_conv = "\n".join([
+        f"{'游客' if m['role'] == 'user' else 'AI导游'}: {m['content']}"
+        for m in history
+    ])
+    profile_prompt = (
+        "下面是一位游客与AI导游的完整对话。请提炼该游客的旅游偏好画像，"
+        "200字以内，使用结构化要点，覆盖以下维度（如对话中未涉及可省略）：\n"
+        "- 偏好（景点类型、氛围、风格等）\n"
+        "- 限制（身体状况、同行人员、时间预算等）\n"
+        "- 明确表达的诉求或避免项\n\n"
+        "只输出画像正文，不要寒暄或解释。\n\n"
+        f"对话记录：\n{profile_conv}"
+    )
+    user_profile: Optional[str] = None
+    try:
+        profile_resp = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: rag_service.llm_client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=[{"role": "user", "content": profile_prompt}],
+                    max_tokens=300,
+                    temperature=0.3,
+                ),
+            ),
+            timeout=30.0,
+        )
+        user_profile = profile_resp.choices[0].message.content.strip()
+        logger.info("用户画像生成成功，长度=%d", len(user_profile or ""))
+    except Exception as e:
+        logger.warning("用户画像生成失败: %s", e)
+
+    # 阶段二：画像负责长期偏好，最近 10 条对话负责当下语境
     conv_text = "\n".join([
         f"{'游客' if m['role'] == 'user' else 'AI导游'}: {m['content']}"
-        for m in history[-20:]
+        for m in history[-10:]
     ])
 
+    context_block = (
+        f"用户画像（基于全部历史对话提炼）：\n{user_profile}\n\n近期对话：\n{conv_text}"
+        if user_profile
+        else f"对话记录：\n{conv_text}"
+    )
+
     prompt = (
-        "根据以下游客与AI导游的对话，分析游客的兴趣偏好，"
+        "根据以下游客信息，分析游客的兴趣偏好，"
         "从景点列表中为其量身推荐最合适的景点或游览路线。\n\n"
-        f"对话记录：\n{conv_text}\n\n"
+        f"{context_block}\n\n"
         f"可选景点：\n{attractions_info}\n\n"
         "请以JSON格式返回，不要包含任何其他内容：\n"
         '{"recommendation": "个性化推荐说明（200字以内，说明推荐理由和建议游览顺序，只写景点名称，不要出现任何ID或数字编号）", '
@@ -259,13 +304,15 @@ async def get_personalized_recommendation(
             timeout=30.0,
         )
         raw = resp.choices[0].message.content.strip()
+        logger.info("阶段二 LLM 原始返回(前200字)=%s", raw[:200])
         # 兼容 LLM 返回 markdown 代码块的情况
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         data = json.loads(m.group() if m else raw)
         rec_text = re.sub(r'[（(]\s*ID\s*[:：]\s*\d+\s*[）)]', '', data.get("recommendation", "")).strip()
         rec_ids = set(int(i) for i in data.get("attraction_ids", []))
+        logger.info("推荐解析成功 rec_text_len=%d rec_ids=%s", len(rec_text), rec_ids)
     except Exception as e:
-        logger.warning("个性化推荐失败: %s", e)
+        logger.warning("个性化推荐失败: %s | raw=%s", e, raw[:200] if 'raw' in dir() else "N/A")
         return RecommendResponse()
 
     rec_attractions = [a for a in all_attractions if a.id in rec_ids]

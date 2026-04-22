@@ -52,16 +52,6 @@ class Settings(BaseSettings):
     GRAPHRAG_EMBEDDING_CACHE_TTL_SECONDS: int = 1800
     GRAPHRAG_VECTOR_SEARCH_CACHE_TTL_SECONDS: int = 300
     GRAPHRAG_CACHE_STATS_LOG_EVERY_N_CALLS: int = 200
-    LOCAL_TTS_ENABLED: bool = False
-    LOCAL_TTS_FORCE: bool = False
-    LOCAL_TTS_ENGINE: str = "cosyvoice2"
-    COSYVOICE2_MODEL_PATH: str = ""
-    COSYVOICE2_DEVICE: str = "cpu"
-    COSYVOICE2_LANGUAGE: str = "zh"
-    COSYVOICE2_SPEAKER: Optional[str] = None
-    COSYVOICE_PROMPT_WAV: str = ""
-    COSYVOICE_PROMPT_TEXT: str = ""
-
     # 游客端访问地址（用于生成扫码入口二维码，如 http://192.168.1.100:5173）
     TOURIST_APP_URL: Optional[str] = None
 

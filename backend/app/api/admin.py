@@ -1728,21 +1728,9 @@ async def upload_admin_avatar(
 
 class TTSConfigResponse(BaseModel):
     xfyun_voice: str
-    local_tts_enabled: bool
-    local_tts_force: bool
-    local_tts_engine: str
-    cosyvoice2_model_path: str
-    cosyvoice2_device: str
-    cosyvoice2_language: str
 
 class TTSConfigUpdateRequest(BaseModel):
     xfyun_voice: Optional[str] = None
-    local_tts_enabled: Optional[bool] = None
-    local_tts_force: Optional[bool] = None
-    local_tts_engine: Optional[str] = None
-    cosyvoice2_model_path: Optional[str] = None
-    cosyvoice2_device: Optional[str] = None
-    cosyvoice2_language: Optional[str] = None
 
 
 
@@ -1760,52 +1748,18 @@ async def get_tts_config(
     env_file = _get_env_file_path()
     
     xfyun_voice = settings.XFYUN_VOICE
-    local_tts_enabled = settings.LOCAL_TTS_ENABLED
-    local_tts_force = settings.LOCAL_TTS_FORCE
-    local_tts_engine = settings.LOCAL_TTS_ENGINE
-    cosyvoice2_model_path = settings.COSYVOICE2_MODEL_PATH
-    cosyvoice2_device = settings.COSYVOICE2_DEVICE
-    cosyvoice2_language = settings.COSYVOICE2_LANGUAGE
-    
+
     if os.path.exists(env_file):
         with open(env_file, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if line.startswith("LOCAL_TTS_ENABLED="):
-                    value = line.split("=", 1)[1].strip()
-                    local_tts_enabled = value.lower() in ("true", "1", "yes")
-                elif line.startswith("XFYUN_VOICE="):
+                if line.startswith("XFYUN_VOICE="):
                     value = line.split("=", 1)[1].strip()
                     if value:
                         xfyun_voice = value
-                elif line.startswith("LOCAL_TTS_FORCE="):
-                    value = line.split("=", 1)[1].strip()
-                    local_tts_force = value.lower() in ("true", "1", "yes")
-                elif line.startswith("LOCAL_TTS_ENGINE="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        local_tts_engine = value
-                elif line.startswith("COSYVOICE2_MODEL_PATH="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        cosyvoice2_model_path = value
-                elif line.startswith("COSYVOICE2_DEVICE="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        cosyvoice2_device = value
-                elif line.startswith("COSYVOICE2_LANGUAGE="):
-                    value = line.split("=", 1)[1].strip()
-                    if value:
-                        cosyvoice2_language = value
-    
+
     return TTSConfigResponse(
         xfyun_voice=xfyun_voice,
-        local_tts_enabled=local_tts_enabled,
-        local_tts_force=local_tts_force,
-        local_tts_engine=local_tts_engine,
-        cosyvoice2_model_path=cosyvoice2_model_path,
-        cosyvoice2_device=cosyvoice2_device,
-        cosyvoice2_language=cosyvoice2_language,
     )
 
 @router.put("/settings/tts")
@@ -1842,58 +1796,10 @@ async def update_tts_config(
                 updated_keys.add("XFYUN_VOICE")
             else:
                 new_lines.append(line)
-        elif stripped.startswith("LOCAL_TTS_ENABLED="):
-            if req.local_tts_enabled is not None:
-                new_lines.append(f"LOCAL_TTS_ENABLED={str(req.local_tts_enabled).lower()}\n")
-                updated_keys.add("LOCAL_TTS_ENABLED")
-            else:
-                new_lines.append(line)
-        elif stripped.startswith("LOCAL_TTS_FORCE="):
-            if req.local_tts_force is not None:
-                new_lines.append(f"LOCAL_TTS_FORCE={str(req.local_tts_force).lower()}\n")
-                updated_keys.add("LOCAL_TTS_FORCE")
-            else:
-                new_lines.append(line)
-        elif stripped.startswith("LOCAL_TTS_ENGINE="):
-            if req.local_tts_engine is not None:
-                new_lines.append(f"LOCAL_TTS_ENGINE={req.local_tts_engine}\n")
-                updated_keys.add("LOCAL_TTS_ENGINE")
-            else:
-                new_lines.append(line)
-        elif stripped.startswith("COSYVOICE2_MODEL_PATH="):
-            if req.cosyvoice2_model_path is not None:
-                new_lines.append(f"COSYVOICE2_MODEL_PATH={req.cosyvoice2_model_path}\n")
-                updated_keys.add("COSYVOICE2_MODEL_PATH")
-            else:
-                new_lines.append(line)
-        elif stripped.startswith("COSYVOICE2_DEVICE="):
-            if req.cosyvoice2_device is not None:
-                new_lines.append(f"COSYVOICE2_DEVICE={req.cosyvoice2_device}\n")
-                updated_keys.add("COSYVOICE2_DEVICE")
-            else:
-                new_lines.append(line)
-        elif stripped.startswith("COSYVOICE2_LANGUAGE="):
-            if req.cosyvoice2_language is not None:
-                new_lines.append(f"COSYVOICE2_LANGUAGE={req.cosyvoice2_language}\n")
-                updated_keys.add("COSYVOICE2_LANGUAGE")
-            else:
-                new_lines.append(line)
         else:
             new_lines.append(line)
     if req.xfyun_voice is not None and "XFYUN_VOICE" not in updated_keys:
         new_lines.append(f"XFYUN_VOICE={req.xfyun_voice}\n")
-    if req.local_tts_enabled is not None and "LOCAL_TTS_ENABLED" not in updated_keys:
-        new_lines.append(f"LOCAL_TTS_ENABLED={str(req.local_tts_enabled).lower()}\n")
-    if req.local_tts_force is not None and "LOCAL_TTS_FORCE" not in updated_keys:
-        new_lines.append(f"LOCAL_TTS_FORCE={str(req.local_tts_force).lower()}\n")
-    if req.local_tts_engine is not None and "LOCAL_TTS_ENGINE" not in updated_keys:
-        new_lines.append(f"LOCAL_TTS_ENGINE={req.local_tts_engine}\n")
-    if req.cosyvoice2_model_path is not None and "COSYVOICE2_MODEL_PATH" not in updated_keys:
-        new_lines.append(f"COSYVOICE2_MODEL_PATH={req.cosyvoice2_model_path}\n")
-    if req.cosyvoice2_device is not None and "COSYVOICE2_DEVICE" not in updated_keys:
-        new_lines.append(f"COSYVOICE2_DEVICE={req.cosyvoice2_device}\n")
-    if req.cosyvoice2_language is not None and "COSYVOICE2_LANGUAGE" not in updated_keys:
-        new_lines.append(f"COSYVOICE2_LANGUAGE={req.cosyvoice2_language}\n")
 
     tmp_file = env_file + ".tmp"
     backup_file = env_file + ".bak"
@@ -1919,12 +1825,6 @@ async def update_tts_config(
         "message": "配置已更新（需要重启后端服务才能生效）",
         "updated": {
             "xfyun_voice": req.xfyun_voice if req.xfyun_voice is not None else settings.XFYUN_VOICE,
-            "local_tts_enabled": req.local_tts_enabled if req.local_tts_enabled is not None else settings.LOCAL_TTS_ENABLED,
-            "local_tts_force": req.local_tts_force if req.local_tts_force is not None else settings.LOCAL_TTS_FORCE,
-            "local_tts_engine": req.local_tts_engine if req.local_tts_engine is not None else settings.LOCAL_TTS_ENGINE,
-            "cosyvoice2_model_path": req.cosyvoice2_model_path if req.cosyvoice2_model_path is not None else settings.COSYVOICE2_MODEL_PATH,
-            "cosyvoice2_device": req.cosyvoice2_device if req.cosyvoice2_device is not None else settings.COSYVOICE2_DEVICE,
-            "cosyvoice2_language": req.cosyvoice2_language if req.cosyvoice2_language is not None else settings.COSYVOICE2_LANGUAGE,
         }
     }
 

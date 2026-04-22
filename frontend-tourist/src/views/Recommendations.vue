@@ -5,7 +5,7 @@
         <span class="card-title">个性化推荐</span>
       </template>
 
-      <div v-if="!sessionId" class="empty-hint">
+      <div v-if="!sessionId || noHistory" class="empty-hint">
         <el-icon :size="56" class="hint-icon"><ChatDotRound /></el-icon>
         <p class="hint-title">还没有对话记录</p>
         <p class="hint-desc">先去和 AI 导游聊聊，告诉它你的兴趣，再回来查看专属推荐</p>
@@ -84,21 +84,29 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Picture, ChatDotRound, Loading, Promotion } from '@element-plus/icons-vue'
-import api from '../api'
+import api, { withAbort } from '../api'
+import {
+  clearSharedRecommendationRequest,
+  getSharedRecommendationRequest,
+  setSharedRecommendationRequest,
+} from '../utils/recommendationRequestState'
 
 const SESSION_ID_KEY = 'vg_session_id'
 const SESSION_CHAT_KEY = 'vg_chat_history'
-const REC_CACHE_KEY = 'vg_rec_cache' // { result, chatLen, sessionId }
+const REC_CACHE_KEY = 'vg_rec_cache' // { status, result, chatLen, scenicSpotId, sessionId, requestId }
+const REC_REQUEST_KEY = 'recommendations-load'
 
 const sessionId = ref(null)
 const result = ref(null)
 const loading = ref(false)
 const error = ref(false)
+const noHistory = ref(false)
 const failedImages = reactive(new Set())
 const detailVisible = ref(false)
 const selected = ref(null)
 const _winW = ref(window.innerWidth)
 const dialogWidth = computed(() => _winW.value <= 600 ? '92%' : '600px')
+let requestSerial = 0
 
 const getChatLen = () => {
   try {
@@ -117,14 +125,42 @@ const loadCache = () => {
   } catch { return null }
 }
 
-const saveCache = (res) => {
+const getScenicSpotId = () => {
+  const raw = localStorage.getItem('current_scenic_spot_id')
+  if (!raw) return null
+  const scenicId = Number(raw)
+  return Number.isFinite(scenicId) ? scenicId : null
+}
+
+const isCurrentCache = (cache) => {
+  if (!cache || !sessionId.value) return false
+  return cache.sessionId === sessionId.value
+    && cache.chatLen === getChatLen()
+    && (cache.scenicSpotId ?? null) === getScenicSpotId()
+}
+
+const getRequestScopeKey = () => JSON.stringify({
+  sessionId: sessionId.value,
+  chatLen: getChatLen(),
+  scenicSpotId: getScenicSpotId(),
+})
+
+const saveCache = ({ status = 'ready', result: nextResult = null, requestId = null } = {}) => {
   try {
     sessionStorage.setItem(REC_CACHE_KEY, JSON.stringify({
-      result: res,
+      status,
+      result: status === 'ready' ? nextResult : null,
       chatLen: getChatLen(),
+      scenicSpotId: getScenicSpotId(),
       sessionId: sessionId.value,
+      requestId,
     }))
   } catch {}
+}
+
+const isLatestRequest = (requestId) => {
+  const cache = loadCache()
+  return Boolean(cache && cache.requestId === requestId && isCurrentCache(cache))
 }
 
 const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
@@ -146,36 +182,96 @@ const viewDetails = async (item) => {
   } catch (_) {}
 }
 
+const requestRecommendations = async ({ force = false } = {}) => {
+  const requestScopeKey = getRequestScopeKey()
+  const ongoingRequest = getSharedRecommendationRequest(requestScopeKey)
+  const shouldReuseOngoing = !force && ongoingRequest
+
+  if (force && ongoingRequest) {
+    clearSharedRecommendationRequest(ongoingRequest.requestId)
+  }
+
+  const requestId = shouldReuseOngoing ? ongoingRequest.requestId : `${Date.now()}-${++requestSerial}`
+  let requestPromise = shouldReuseOngoing ? ongoingRequest.promise : null
+
+  saveCache({ status: 'pending', requestId })
+  loading.value = true
+  error.value = false
+  result.value = null
+
+  try {
+    if (!requestPromise) {
+      const scenicId = getScenicSpotId()
+      const params = { session_id: sessionId.value }
+      if (scenicId != null) params.scenic_spot_id = scenicId
+      requestPromise = setSharedRecommendationRequest({
+        key: requestScopeKey,
+        requestId,
+        promise: api.get('/attractions/recommend', {
+          params,
+          ...withAbort(REC_REQUEST_KEY),
+        }),
+      })
+    }
+
+    const res = await requestPromise
+    if (!isLatestRequest(requestId)) return
+
+    if (res.data?.recommendation) {
+      result.value = res.data
+      saveCache({ status: 'ready', result: res.data, requestId })
+    } else if (!res.data?.attractions || res.data.attractions.length === 0) {
+      // 后端判定无对话历史或无可用景点，不是真正的错误
+      noHistory.value = true
+      saveCache({ status: 'error', requestId })
+    } else {
+      error.value = true
+      saveCache({ status: 'error', requestId })
+    }
+  } catch (err) {
+    if (!isLatestRequest(requestId)) return
+    if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return
+
+    error.value = true
+    saveCache({ status: 'error', requestId })
+  } finally {
+    if (isLatestRequest(requestId)) loading.value = false
+  }
+}
+
 const load = async (force = false) => {
   if (!sessionId.value) return
 
-  if (!force) {
-    const cache = loadCache()
-    if (cache && cache.sessionId === sessionId.value && cache.chatLen === getChatLen() && cache.result) {
+  const shouldForce = force === true || force instanceof Event
+
+  if (getChatLen() === 0) {
+    noHistory.value = true
+    loading.value = false
+    error.value = false
+    result.value = null
+    return
+  }
+  noHistory.value = false
+
+  const cache = loadCache()
+
+  if (!shouldForce && isCurrentCache(cache)) {
+    if (cache.status === 'ready' && cache.result) {
       result.value = cache.result
+      loading.value = false
+      error.value = false
+      return
+    }
+
+    if (cache.status === 'error') {
+      error.value = true
+      loading.value = false
+      result.value = null
       return
     }
   }
 
-  loading.value = true
-  error.value = false
-  result.value = null
-  try {
-    const scenicId = localStorage.getItem('current_scenic_spot_id')
-    const params = { session_id: sessionId.value }
-    if (scenicId) params.scenic_spot_id = Number(scenicId)
-    const res = await api.get('/attractions/recommend', { params })
-    if (res.data?.recommendation) {
-      result.value = res.data
-      saveCache(res.data)
-    } else {
-      error.value = true
-    }
-  } catch (_) {
-    error.value = true
-  } finally {
-    loading.value = false
-  }
+  await requestRecommendations({ force: shouldForce })
 }
 
 onMounted(() => {

@@ -98,7 +98,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import 'element-plus/es/components/message/style/css'
 import { ChatDotRound } from '@element-plus/icons-vue'
@@ -140,6 +140,17 @@ const restoreFromSession = () => {
     if (sid) sessionId.value = sid
   } catch (_) {}
 }
+
+// 自动持久化：流式过程中每次 content 变化都同步 sessionStorage，
+// 避免切走再切回时 AI 气泡消失（切走时 'done' 可能还未触发）
+let _saveSessionRaf = 0
+watch(conversationHistory, () => {
+  if (_saveSessionRaf) return
+  _saveSessionRaf = requestAnimationFrame(() => {
+    _saveSessionRaf = 0
+    saveToSession()
+  })
+}, { deep: true })
 
 let mediaRecorder = null
 let audioChunks = []
@@ -625,7 +636,8 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
 }
 
 const streamGenerateAndSpeak = async (queryText, characterId) => {
-  if (isSpeaking.value) stopSpeaking()
+  // 无条件重置：防止第一条消息的 TTS（可能处于合成中/待播队列中）和第二条重叠
+  stopSpeaking()
 
   const msgIndex = conversationHistory.value.length
   conversationHistory.value.push({
