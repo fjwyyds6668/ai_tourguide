@@ -98,7 +98,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import 'element-plus/es/components/message/style/css'
 import { ChatDotRound } from '@element-plus/icons-vue'
@@ -173,6 +173,7 @@ onMounted(async () => {
     document.body.style.overflow = 'hidden'
   }
   restoreFromSession()
+  nextTick(() => scrollToBottom())
 
   // 角色列表与景区信息并行加载，节省一次网络往返
   const savedId = localStorage.getItem('current_scenic_spot_id')

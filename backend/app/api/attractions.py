@@ -286,7 +286,7 @@ async def get_personalized_recommendation(
         f"{context_block}\n\n"
         f"可选景点：\n{attractions_info}\n\n"
         "请以JSON格式返回，不要包含任何其他内容：\n"
-        '{"recommendation": "个性化推荐说明（200字以内，说明推荐理由和建议游览顺序，只写景点名称，不要出现任何ID或数字编号）", '
+        '{"recommendation": "必须严格按照以下格式输出，不得改变结构：\'根据您[列举2-4个关键偏好因素，如偏好自然景观、宁静氛围、摄影需求等]，为您推荐以下景点：[景点名称，用顿号分隔]。[说明推荐理由和建议游览顺序]\'。总字数不超过500字，只写景点名称，不要出现任何ID或数字编号。", '
         '"attraction_ids": [推荐的景点ID列表，最多5个整数]}'
     )
 
@@ -297,7 +297,7 @@ async def get_personalized_recommendation(
                 lambda: rag_service.llm_client.chat.completions.create(
                     model=settings.OPENAI_MODEL,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=600,
+                    max_tokens=900,
                     temperature=0.7,
                 ),
             ),
