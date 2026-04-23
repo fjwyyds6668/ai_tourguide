@@ -263,10 +263,12 @@ async def get_personalized_recommendation(
             ),
             timeout=30.0,
         )
+        if not profile_resp.choices:
+            raise ValueError("LLM 返回空 choices（画像阶段）")
         user_profile = profile_resp.choices[0].message.content.strip()
         logger.info("用户画像生成成功，长度=%d", len(user_profile or ""))
     except Exception as e:
-        logger.warning("用户画像生成失败: %s", e)
+        logger.warning("用户画像生成失败，将降级为仅使用近期对话: %s", e)
 
     # 阶段二：画像负责长期偏好，最近 10 条对话负责当下语境
     conv_text = "\n".join([
@@ -303,21 +305,29 @@ async def get_personalized_recommendation(
             ),
             timeout=30.0,
         )
+        if not resp.choices:
+            raise ValueError("LLM 返回空 choices（推荐阶段）")
         raw = resp.choices[0].message.content.strip()
         logger.info("阶段二 LLM 原始返回(前200字)=%s", raw[:200])
-        # 兼容 LLM 返回 markdown 代码块的情况
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        # 兼容 LLM 返回 markdown 代码块的情况，用非贪心匹配取第一个完整 JSON 对象
+        m = re.search(r"\{.*?\}", raw, re.DOTALL)
+        if not m:
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
         data = json.loads(m.group() if m else raw)
         rec_text = re.sub(r'[（(]\s*ID\s*[:：]\s*\d+\s*[）)]', '', data.get("recommendation", "")).strip()
-        rec_ids = set(int(i) for i in data.get("attraction_ids", []))
+        attraction_ids_raw = data.get("attraction_ids", [])
+        if not isinstance(attraction_ids_raw, list):
+            attraction_ids_raw = []
+        rec_ids = set(int(i) for i in attraction_ids_raw if str(i).strip().lstrip('-').isdigit())
         logger.info("推荐解析成功 rec_text_len=%d rec_ids=%s", len(rec_text), rec_ids)
     except Exception as e:
-        logger.warning("个性化推荐失败: %s | raw=%s", e, raw[:200] if 'raw' in dir() else "N/A")
+        logger.warning("个性化推荐失败: %s | raw=%s", e, raw[:200] if 'raw' in locals() else "N/A")
         return RecommendResponse()
 
     rec_attractions = [a for a in all_attractions if a.id in rec_ids]
     # 保持 LLM 返回的顺序
-    id_order = {v: i for i, v in enumerate(data.get("attraction_ids", []))}
+    attraction_ids_raw = data.get("attraction_ids", []) if isinstance(data.get("attraction_ids"), list) else []
+    id_order = {v: i for i, v in enumerate(attraction_ids_raw)}
     rec_attractions.sort(key=lambda a: id_order.get(a.id, 99))
 
     return RecommendResponse(

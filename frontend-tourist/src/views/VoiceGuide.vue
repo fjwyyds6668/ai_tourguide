@@ -114,7 +114,7 @@ const processing = ref(false)
 const selectedCharacterId = ref(null)
 const sessionId = ref(null)
 const characters = ref([])
-const MAX_HISTORY_LENGTH = 50
+const MAX_HISTORY_LENGTH = 20
 const conversationHistory = ref([])
 const textInput = ref('')
 const inputFocused = ref(false)
@@ -626,6 +626,11 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
       }
       const blob = synthesizeRes.data
       const audioUrl = URL.createObjectURL(blob)
+      // 队列过长时丢弃最老的条目，防止 ObjectURL/blob 无限积累
+      while (audioQueue.length >= 15) {
+        const old = audioQueue.shift()
+        try { URL.revokeObjectURL(old?.url || old) } catch (_) {}
+      }
       audioQueue.push({ url: audioUrl, blob })
       playAudioQueue()
     } catch (error) {
@@ -633,6 +638,7 @@ const synthesizeAndQueue = async (text, characterId, sessionId, useStreamApi = f
     }
   }).catch(error => {
     console.error('TTS 队列执行失败:', error)
+    return Promise.resolve()
   })
 }
 

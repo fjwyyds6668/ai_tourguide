@@ -1,4 +1,4 @@
-"""GraphRAG 检索服务：图数据库 + 向量检索增强生成"""
+﻿"""GraphRAG 检索服务：图数据库 + 向量检索增强生成"""
 import logging
 import re
 import json
@@ -602,7 +602,7 @@ class RAGService:
                     )
             return out
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         search_results = await loop.run_in_executor(None, _blocking_search)
         
         elapsed_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
@@ -642,7 +642,7 @@ class RAGService:
             LIMIT $limit
             """
         
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             None,
             neo4j_client.execute_query,
@@ -696,7 +696,7 @@ class RAGService:
             RETURN name as query_name, a, r, b, a_labels, b_labels, rel_type
             """
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             rows = await loop.run_in_executor(
                 None,
@@ -735,7 +735,7 @@ class RAGService:
             properties(rel) as rel_properties
         LIMIT 50
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             None,
             neo4j_client.execute_query,
@@ -846,7 +846,7 @@ class RAGService:
             return None
         try:
             _, names = await self._get_scenic_attraction_ids_and_names(name)
-            if names and index <= len(names):
+            if names and 0 < index <= len(names):
                 return names[index - 1]
         except Exception as e:
             logger.debug(f"_resolve_ordinal_from_neo4j 失败: {e}")
@@ -877,15 +877,15 @@ class RAGService:
                 continue
             content = msg.get("content", "")
             matches = re.findall(r"第[一二三四五六七八九十]+[\s，,、]?([^\s，,、（(第\d]{2,15})(?=[，,、（(\d第]|$)", content)
-            if matches and index <= len(matches):
+            if matches and 0 < index <= len(matches):
                 return matches[index - 1]
             matches2 = re.findall(r"\d+[\.、．]\s*([^\s（(，,、\n]{2,15})(?=[（(，,、\n\d]|$)", content)
-            if matches2 and index <= len(matches2):
+            if matches2 and 0 < index <= len(matches2):
                 return matches2[index - 1]
             dun_blocks = re.findall(r"[\u4e00-\u9fa5a-zA-Z0-9]{2,12}(?:、[\u4e00-\u9fa5a-zA-Z0-9]{2,12}){4,}", content)
             for block in dun_blocks:
                 items = block.split("、")
-                if index <= len(items):
+                if 0 < index <= len(items):
                     return items[index - 1]
         return None
 
@@ -1070,7 +1070,7 @@ class RAGService:
             RETURN s.scenic_spot_id AS sid, s.name AS s_name
             LIMIT 1
             """
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             rows = await loop.run_in_executor(
                 None,
                 neo4j_client.execute_query,
@@ -1118,7 +1118,7 @@ class RAGService:
         clean = [n.strip() for n in (names or []) if n and n.strip()]
         if not clean:
             return None
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             rows = await loop.run_in_executor(
                 None,
@@ -1171,7 +1171,7 @@ class RAGService:
     async def _fetch_scenic_spot_names(self, limit: int = 5) -> List[str]:
         """从图库查询景区名称列表（用于兜底列举等），避免多处重复相同 Cypher。"""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             rows = await loop.run_in_executor(
                 None,
                 neo4j_client.execute_query,
@@ -1188,7 +1188,7 @@ class RAGService:
         if not (name or "").strip():
             return None
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             rows = await loop.run_in_executor(
                 None,
                 neo4j_client.execute_query,
@@ -1234,7 +1234,7 @@ class RAGService:
             ORDER BY aid
             LIMIT 200
             """
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             rows = await loop.run_in_executor(
                 None, neo4j_client.execute_query, q, {"name": name}
             ) or []
@@ -1348,7 +1348,7 @@ class RAGService:
             texts_to_extract.extend(text_ids)
         
         if len(texts_to_extract) > 1:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             entities_list = await asyncio.gather(*[
                 loop.run_in_executor(None, self.extract_entities, text)
                 for text in texts_to_extract
@@ -1402,7 +1402,7 @@ class RAGService:
                     errors["neo4j_subgraph"] = str(r1)
         text_contents = {}
         if text_ids_to_fetch:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             try:
                 text_contents = await loop.run_in_executor(
                     None,
@@ -1679,7 +1679,7 @@ class RAGService:
                 OPTIONAL MATCH (a)-[r]->(n)
                 RETURN a, type(r) as rel_type, n
                 """
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 rows = await loop.run_in_executor(
                     None,
                     neo4j_client.execute_query,
@@ -1842,7 +1842,7 @@ class RAGService:
         else:
             return ""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             rows = await loop.run_in_executor(
                 None, neo4j_client.execute_query, query, params
             )
@@ -1864,7 +1864,7 @@ class RAGService:
         if not (entity_name or "").strip():
             return ""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             rows = await loop.run_in_executor(
                 None,
                 neo4j_client.execute_query,
@@ -2218,7 +2218,7 @@ class RAGService:
                         except Exception as e:
                             logger.warning(f"Failed to write RAG context log: {e}")
 
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     await loop.run_in_executor(None, _io_task)
                 except Exception as e:
                     logger.warning(f"Failed to schedule RAG context log write: {e}")

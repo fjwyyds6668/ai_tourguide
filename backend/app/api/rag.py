@@ -140,25 +140,31 @@ _attraction_cache_lock = threading.Lock()  # _save_interaction 在线程池中�
 def _get_attraction_id_name_list() -> List[Tuple[int, str]]:
     global _attraction_id_name_cache, _attraction_cache_time
     now = time.time()
+    # 先在锁外检查缓存，避免无谓争锁
     with _attraction_cache_lock:
         if _attraction_id_name_cache is not None and (now - _attraction_cache_time) < _ATTRACTION_CACHE_TTL:
             return _attraction_id_name_cache
-        from app.core.database import SessionLocal
-        from app.models.attraction import Attraction as AttractionModel
-        db_local = SessionLocal()
-        try:
-            rows = (
-                db_local.query(AttractionModel.id, AttractionModel.name)
-                .filter(AttractionModel.id.isnot(None), AttractionModel.name.isnot(None), AttractionModel.name != "")
-                .limit(200)
-                .all()
-            )
-            out = [(int(row[0]), str(row[1])) for row in rows if row[0] is not None]
-            _attraction_id_name_cache = out
-            _attraction_cache_time = now
-            return out
-        finally:
-            db_local.close()
+
+    # 锁外执行数据库查询，避免持锁期间阻塞其他线程
+    from app.core.database import SessionLocal
+    from app.models.attraction import Attraction as AttractionModel
+    db_local = SessionLocal()
+    try:
+        rows = (
+            db_local.query(AttractionModel.id, AttractionModel.name)
+            .filter(AttractionModel.id.isnot(None), AttractionModel.name.isnot(None), AttractionModel.name != "")
+            .limit(200)
+            .all()
+        )
+        out = [(int(row[0]), str(row[1])) for row in rows if row[0] is not None]
+    finally:
+        db_local.close()
+
+    # 回写缓存时加锁，防止并发写入
+    with _attraction_cache_lock:
+        _attraction_id_name_cache = out
+        _attraction_cache_time = now
+    return out
 
 
 def _save_interaction(
