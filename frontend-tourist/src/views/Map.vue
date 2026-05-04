@@ -53,8 +53,7 @@
 import { computed, ref } from 'vue'
 import { Plus, Minus, PictureFilled } from '@element-plus/icons-vue'
 
-const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18000'
-const mapUrl = `${backendOrigin}/uploads/images/map.jpg`
+const mapUrl = '/uploads/images/map.jpg'
 
 const scale = ref(1)
 const translateX = ref(0)

@@ -261,15 +261,12 @@ const navigateIfSelected = (path) => {
     padding: 16px !important;
     justify-content: center !important;
     align-items: center !important;
+    overflow-y: auto !important;
   }
   .home-card {
-    width: calc(100% - 48px) !important;
-    max-width: 320px !important;
-    max-height: 52vh !important;
+    width: calc(100% - 32px) !important;
+    max-width: 420px !important;
     margin: 0 auto !important;
-    display: flex !important;
-    flex-direction: column !important;
-    overflow: hidden !important;
     padding: 0 !important;
     border-radius: 14px !important;
   }
@@ -285,18 +282,20 @@ const navigateIfSelected = (path) => {
   }
   .home-card :deep(.el-card__header) {
     padding: 10px 12px !important;
-    flex-shrink: 0;
   }
   .home-card :deep(.el-card__body) {
-    padding: 8px 12px 12px !important;
-    overflow-y: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-    flex: 1 !important;
-    min-height: 0 !important;
+    padding: 8px 12px 16px !important;
   }
   .feature-cards {
     margin-top: 12px !important;
-    gap: 0 12px;
+  }
+  .feature-cards :deep(.el-row) {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  .feature-cards :deep(.el-col) {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
   }
   .feature-cards .feature-col .el-card {
     background: rgba(255, 255, 255, 0.55) !important;
@@ -304,7 +303,22 @@ const navigateIfSelected = (path) => {
     -webkit-backdrop-filter: blur(5px) !important;
   }
   .feature-cards .feature-col .el-card :deep(.el-card__body) {
-    padding-top: 14px !important;
+    padding-top: 12px !important;
+    padding-bottom: 12px !important;
+  }
+  .feature-cards .feature-col .el-icon {
+    font-size: 36px !important;
+    width: 36px !important;
+    height: 36px !important;
+  }
+  .feature-cards .feature-col h3 {
+    font-size: 13px !important;
+    margin: 6px 0 4px !important;
+  }
+  .feature-cards .feature-col p {
+    font-size: 11px !important;
+    line-height: 1.4 !important;
+    margin: 0 !important;
   }
 }
 
