@@ -89,7 +89,11 @@ class VoiceService:
             def _run_transcribe() -> str:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
-                    result = self.whisper_model.transcribe(audio_file_path, language="zh")
+                    result = self.whisper_model.transcribe(
+                        audio_file_path,
+                        language="zh",
+                        initial_prompt="以下是普通话简体中文对话。",
+                    )
                 return (result.get("text", "") or "").strip()
 
             loop = asyncio.get_running_loop()
