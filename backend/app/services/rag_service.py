@@ -354,9 +354,35 @@ class RAGService:
         if JIEBA_AVAILABLE:
             try:
                 jieba.initialize()
+                # 加载静态景区专有名词词典
+                _dict_path = os.path.join(os.path.dirname(__file__), "jieba_userdict.txt")
+                if os.path.exists(_dict_path):
+                    jieba.load_userdict(_dict_path)
+                    logger.info("jieba userdict loaded: %s", _dict_path)
+                # 从数据库动态注入景点名，避免新增景点被切碎
+                self._load_attraction_names_to_jieba()
                 logger.info("NER model (jieba) initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize jieba: {e}")
+
+    def _load_attraction_names_to_jieba(self):
+        """从 PostgreSQL 读取所有景点名并注入 jieba，词性标为 ns（地名）。"""
+        if not JIEBA_AVAILABLE:
+            return
+        try:
+            from app.core.database import SessionLocal
+            from app.models.attraction import Attraction
+            db = SessionLocal()
+            try:
+                names = [row[0] for row in db.query(Attraction.name).all() if row[0]]
+                for name in names:
+                    if len(name) >= 2:
+                        jieba.add_word(name, freq=200, tag="ns")
+                logger.info("jieba: injected %d attraction names from DB", len(names))
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("jieba DB injection failed (non-fatal): %s", e)
     
     def _init_llm_client(self):
         try:
@@ -1112,6 +1138,35 @@ class RAGService:
         result = await self._get_first_attraction_id_by_names([attraction_name])
         return result
 
+    async def _get_all_attraction_ids_by_names(self, names: List[str]) -> List[int]:
+        """批量查询景点 id，返回所有命中的 id（每个名字最多一个）。供比较类意图使用。"""
+        clean = [n.strip() for n in (names or []) if n and n.strip()]
+        if not clean:
+            return []
+        loop = asyncio.get_running_loop()
+        try:
+            rows = await loop.run_in_executor(
+                None,
+                neo4j_client.execute_query,
+                """
+                UNWIND $names AS nm
+                OPTIONAL MATCH (exact:Attraction) WHERE exact.name = nm
+                OPTIONAL MATCH (fuzzy:Attraction) WHERE fuzzy.name CONTAINS nm
+                WITH nm,
+                     CASE WHEN exact IS NOT NULL THEN exact.id ELSE null END AS exact_id,
+                     CASE WHEN fuzzy IS NOT NULL THEN fuzzy.id ELSE null END  AS fuzzy_id
+                WITH coalesce(exact_id, fuzzy_id) AS aid
+                WHERE aid IS NOT NULL
+                RETURN DISTINCT aid AS id
+                """,
+                {"names": clean},
+            )
+            if rows:
+                return [int(r["id"]) for r in rows if r.get("id") is not None]
+        except Exception as e:
+            logger.debug("_get_all_attraction_ids_by_names %s: %s", clean, e)
+        return []
+
     async def _get_first_attraction_id_by_names(self, names: List[str]) -> Optional[int]:
         """批量查询景点 id，单次 Cypher 完成精确+模糊匹配，返回第一个命中的 id。
         替代原来对多个名字的串行 N+1 调用。"""
@@ -1557,13 +1612,20 @@ class RAGService:
                 # 跳过景区名（避免 "蜀南竹海" CONTAINS 匹配到 "蜀南竹海博物馆"）
                 if ns and ns not in names_to_try and ns != scenic_name_str:
                     names_to_try.append(ns)
-            entity_aid = await self._get_first_attraction_id_by_names(names_to_try[:8]) if names_to_try else None
-            # 只在明确从查询中识别到景点时才注入簇，避免回退到向量结果首条造成错误注入
-            target_aid = entity_aid
-            if target_aid is not None:
-                cluster_ctx = await self._get_attraction_cluster_context([target_aid], max_items=1)
-                if cluster_ctx:
-                    enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
+            if intent == QueryIntent.COMPARISON and names_to_try:
+                # 比较类意图需要同时拉取所有被提及的景点簇
+                all_aids = await self._get_all_attraction_ids_by_names(names_to_try[:8])
+                if all_aids:
+                    cluster_ctx = await self._get_attraction_cluster_context(all_aids, max_items=len(all_aids))
+                    if cluster_ctx:
+                        enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
+            else:
+                entity_aid = await self._get_first_attraction_id_by_names(names_to_try[:8]) if names_to_try else None
+                # 只在明确从查询中识别到景点时才注入簇，避免回退到向量结果首条造成错误注入
+                if entity_aid is not None:
+                    cluster_ctx = await self._get_attraction_cluster_context([entity_aid], max_items=1)
+                    if cluster_ctx:
+                        enhanced_results = (enhanced_results or "") + "\n\n" + cluster_ctx
         
         return {
             "vector_results": vector_results,
@@ -1789,8 +1851,6 @@ class RAGService:
                 if not n_name:
                     continue
                 if rel_type == "HAS_SPOT":
-                    # 只收录有 id 的 Attraction 节点（来自数据库），
-                    # 过滤掉纯文本提取的 :Spot 名称节点（无 id），避免显示未录入的景点
                     n_id = None
                     if hasattr(n, 'get'):
                         n_id = n.get('id')
